@@ -15,6 +15,7 @@ import (
 	"hetman/internal/edit"
 	"hetman/internal/engine"
 	"hetman/internal/explain"
+	"hetman/internal/language"
 	"hetman/internal/orders"
 	"hetman/internal/schema"
 )
@@ -121,6 +122,7 @@ func opSchema() map[string]any {
 	props["soft"] = map[string]any{"type": "boolean"}
 	props["starters"] = map[string]any{"type": "boolean"}
 	props["on"] = map[string]any{"type": "object", "additionalProperties": str}
+	props["language"] = map[string]any{"type": "string", "enum": language.Codes()}
 	return map[string]any{"type": "object", "properties": props, "required": []string{"op"}, "additionalProperties": false}
 }
 
@@ -164,6 +166,9 @@ func Schema() []byte {
 func Describe(o *orders.Orders, campaigns []int64) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "flow %s, starts at %s\n", o.Flow, o.Start)
+	if l, ok := language.Lookup(o.Language); ok {
+		fmt.Fprintf(&b, "language for the person: %s (%s)\n", l.Code, l.English)
+	}
 	b.WriteString("nodes, in file order:\n")
 	for _, id := range o.Order {
 		n := o.Nodes[id]
@@ -290,7 +295,8 @@ const fieldHelp = `  node: a node id (for new and add: the new node's id); type:
   run: the command as a list, program first; timeout: a duration such as 30s, 5m, 1h;
   checks: declared checks in order; executor, model, effort, tools, attempts, prompt, schema: agent settings;
   outcomes: the outcomes of an agent or human node; on: transitions other than the defaults, as {"outcome": "target"};
-  soft: true for a check that only warns, false for a required one; starters: true to create missing prompt and schema files.
+  soft: true for a check that only warns, false for a required one; starters: true to create missing prompt and schema files;
+  language: the code of the language for the person, one of ` + "%s" + `.
 `
 
 // Prompt is the request for one sentence.
@@ -325,7 +331,7 @@ Answer with "outcome" and one of these:
 		fmt.Fprintf(&b, "  %s: %s (%s)\n", s.Op, s.Summary, strings.Join(parts, "; "))
 	}
 	b.WriteString(`  add needs exactly one of after and before. Fields:
-` + fieldHelp + `
+` + fmt.Sprintf(fieldHelp, strings.Join(language.Codes(), ", ")) + `
 2. "outcome": "query", with "query": a question about a campaign. "kind" is one of:
   where (where it is, what it waits for, since when), history (what ran with what outcome),
   rework (why the flow went back and how many times), failures (what failed and why),

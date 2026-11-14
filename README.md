@@ -227,8 +227,10 @@ nodes:
 ```
 
 - `version` is required and is `0`. `flow` is an optional name (the file name by
-  default). `start` is required. `scribe` optionally names the executor and model
-  the setup assistant may ask (see Setup assistant); the engine ignores it.
+  default). `start` is required. `language` optionally names the language of what
+  the flow addresses to a person (see Language for the person). `scribe` optionally
+  names the executor and model the setup assistant may ask (see Setup assistant);
+  the engine ignores it.
 - Ids and names use letters, digits, `_`, `-` and `.`.
 - `run` is a list: the program followed by its arguments. There is no shell. A
   program with a slash in it is relative to the orders folder; a bare name such as
@@ -374,6 +376,9 @@ expressions, conditions or loops.
 | `{{answers.NODE}}` | the latest answers a person gave at gate or human node NODE: each question, answer and comment, and the chosen outcome |
 | `{{answers.NODE.ID}}` | the answer to question ID there (`yes`, `no`, an option or the text) |
 | `{{answers.NODE.ID.comment}}` | the comment on that answer |
+| `{{language}}` | the English name of the campaign's language for the person (`English` when none is set) |
+| `{{language.native}}` | its own name, in its own script |
+| `{{language.code}}` | its code, such as `hi` |
 | `{{rework}}` | empty on the first visit of the node; when the flow came back to it, the step that sent it back, its outcome and its answer, failed checks or artifacts, and what a person answered there |
 
 A text value is inserted as it is, any other value as indented JSON. A node id may
@@ -383,6 +388,41 @@ exist yet gives empty text. `hetman check` reports an unknown placeholder, an
 `output` of a node that is not an agent, and a field the node's schema rules out,
 at its line in the template. `{{` not followed by a name and `}}` stays as text. The
 prompt of every attempt is stored under `prompts/` in the campaign folder.
+
+**Language for the person.** The top-level key `language: CODE` makes everything
+the flow addresses to a person come in that language: questions, summaries, plans and
+other documents a person reads. Everything else stays English. For every attempt of
+every agent step, Hetman adds this to the end of the rendered prompt (before its own
+notes on asking questions and on a rejected answer), here for `language: hi`:
+
+```
+---
+Write all text meant for a person in Hindi (हिन्दी): questions for the person, summaries, plans and any other document a person is meant to read. Code, code comments, identifiers, commit messages, file names and anything written into the repository stay in English unless this step's prompt says otherwise.
+```
+
+Without the key nothing is added and the prompts are exactly the templates. Every
+command Hetman starts for the campaign (scripts, gates, checks, the notification hook,
+adapters) gets the code in `HETMAN_LANGUAGE`, so it can write its own messages in that
+language; without a language the variable is not set. The code is one of these six,
+the five most spoken languages of the world by total number of speakers (Ethnologue
+200, 2025) and Ukrainian (BCP 47 codes; `hetman check` rejects any other, at its line):
+
+| Code | Language |
+|---|---|
+| `ar` | Arabic (العربية) |
+| `en` | English (English) |
+| `es` | Spanish (español) |
+| `hi` | Hindi (हिन्दी) |
+| `uk` | Ukrainian (українська) |
+| `zh` | Mandarin Chinese (普通话) |
+
+A person can choose another language for themselves without editing the shared file:
+`HETMAN_LANGUAGE=CODE hetman run` overrides the key for that campaign (an empty
+variable is no override, an unknown code is an error and starts nothing). The language
+in effect is recorded in the chronicle when the campaign starts and stays the same on
+`hetman resume`, whatever the file or the variable say by then. `hetman status` and
+the campaign page show it. Hetman's own messages, its page and the wizard stay
+English.
 
 **Attempts.** Each node visit has `max_attempts` attempts. An attempt fails when the
 answer does not match the schema, the adapter reports a transient error, the adapter
@@ -710,6 +750,8 @@ hetman version                          print the version of hetman
 - `-c ID` is the campaign number; the latest campaign by default.
 - `-events` makes `status` also list every chronicle event.
 - `-addr ADDRESS` is where `serve` listens, `127.0.0.1:8740` by default.
+- `HETMAN_LANGUAGE=CODE` in the environment of `check` and `run` overrides the
+  `language` key of the orders (see Language for the person).
 - `-dir DIR` is the folder `scribe skill` writes `SKILL.md` into,
   `.agents/skills/hetman-scribe` in the current folder by default. `-force` replaces
   a different `SKILL.md` that is already there.
@@ -760,6 +802,7 @@ these variables:
 | `HETMAN_RUN_DIR` | Folder for this campaign's files, shared by all its steps |
 | `HETMAN_RESULT_FILE` | Path where the step may write a JSON result |
 | `HETMAN_INPUT_FILE` | Path of `input.json` in `HETMAN_RUN_DIR`: the run input, `{}` without one |
+| `HETMAN_LANGUAGE` | Code of the campaign's language for the person; not set when it has none |
 
 Earlier steps leave files for later ones in `HETMAN_RUN_DIR`: `outputs/NODE.json` (the
 accepted output of an agent node) and `answers/NODE.json` (what a person answered at
@@ -859,6 +902,8 @@ hetman scribe gate-remove GATE CHECK         take a check out of a gate
 hetman scribe ask NODE ID QUESTION [-kind yesno|choice|text] [-options A,B]
                                              add a question to a gate or a human node
 hetman scribe assistant EXECUTOR MODEL [-effort E]   name the model Scribe may ask
+hetman scribe language CODE                  set the language for the person
+hetman scribe unlanguage                     remove it: English, and nothing added to prompts
 ```
 
 `TYPE` is `script`, `gate`, `agent` or `human`. The node flags are `-run CMD` (one
@@ -920,7 +965,9 @@ layer and later a page editor all call.
 
 `hetman scribe` with no arguments asks fixed questions in the terminal and offers
 suggestions taken from the current file (the step to add after, the declared checks
-and executors). On a missing file it starts a new flow. Each change is shown as a
+and executors). On a missing file it starts a new flow. A new flow also gets the language for
+the person, picked by number, by code or by typing its name (`ukrainian`, `українська`);
+Enter keeps English. Each change is shown as a
 diff and written only when confirmed. A session that builds a flow from nothing
 (answers after the colons; an empty answer takes the suggestion in brackets):
 
@@ -931,6 +978,16 @@ Enter takes the suggestion in [brackets]; a number picks from a list.
 
 orders.yaml does not exist yet, so this starts a new flow.
 Flow name [shop]:
+Which language should the flow use for what it addresses to a person (questions, summaries, plans)?
+Code, code comments and everything written into the repository stay in English.
+  0) skip, keep English
+  1) ar  Arabic (العربية)
+  2) en  English (English)
+  3) es  Spanish (español)
+  4) hi  Hindi (हिन्दी)
+  5) uk  Ukrainian (українська)
+  6) zh  Mandarin Chinese (普通话)
+Language: a number, a code or a name [skip]:
 The first step of the flow.
 What kind of step?
   1) script (runs a command)

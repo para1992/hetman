@@ -22,6 +22,12 @@ version: 0
 flow: person-demo
 start: interview
 
+# What the flow addresses to a person (questions, summaries, plans) is
+# written in this language; code and the repository stay English. Every
+# agent prompt says so, and scripts and the hook get HETMAN_LANGUAGE. The
+# stub adapter answers from its plan whatever the language.
+language: es
+
 # Runs whenever a campaign starts waiting for a person. This one only
 # appends what it is given to .hetman/notifications.jsonl; a script that
 # sends it to a messenger, and answers with hetman answer, works the same way.

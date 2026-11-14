@@ -258,13 +258,20 @@ const (
 	RefArtifact = "artifact" // {{artifact.NODE.FILE}}: a file a script or gate listed as an artifact
 	RefRework   = "rework"   // {{rework}}: why the flow came back to this node
 	RefAnswers  = "answers"  // {{answers.NODE}}, {{answers.NODE.ID}}, {{answers.NODE.ID.comment}}: what a person answered
+	RefLanguage = "language" // {{language}}, {{language.native}}, {{language.code}}: the language for the person
+)
+
+// Fields of the language placeholder after "language.".
+const (
+	LanguageNative = "native" // its own name
+	LanguageCode   = "code"   // its BCP 47 code
 )
 
 // Ref is what a placeholder of a prompt template refers to.
 type Ref struct {
 	Kind string
 	Node string   // output and artifact
-	Path []string // fields inside the input or the output; the question id (and "comment") of answers
+	Path []string // fields inside the input or the output; the question id (and "comment") of answers; the language field
 	File string   // artifact
 }
 
@@ -294,6 +301,16 @@ func (o *Orders) Ref(name string) (Ref, error) {
 		return r, nil
 	case RefAnswers:
 		return o.answersRef(name, rest)
+	case RefLanguage:
+		r := Ref{Kind: RefLanguage}
+		switch {
+		case name == RefLanguage:
+			return r, nil
+		case rest == LanguageNative || rest == LanguageCode:
+			r.Path = []string{rest}
+			return r, nil
+		}
+		return r, fmt.Errorf("{{%s}}: use {{language}} (the English name), {{language.native}} (its own name) or {{language.code}}", name)
 	case RefOutput, RefArtifact:
 		node, tail := o.longestNode(rest)
 		if node == "" {
@@ -327,7 +344,7 @@ func (o *Orders) Ref(name string) (Ref, error) {
 		}
 		return r, nil
 	}
-	return Ref{}, fmt.Errorf("{{%s}} is not a known placeholder (use input, output.NODE, artifact.NODE.FILE, answers.NODE or rework)", name)
+	return Ref{}, fmt.Errorf("{{%s}} is not a known placeholder (use input, output.NODE, artifact.NODE.FILE, answers.NODE, language or rework)", name)
 }
 
 // longestNode splits "a.b.c" into the longest node id prefix and the rest.

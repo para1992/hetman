@@ -200,6 +200,11 @@ func TestPersonExample(t *testing.T) {
 		}
 		return string(data)
 	}
+	for _, rel := range []string{"prompts/interview.1.txt", "prompts/interview.3.txt", "prompts/plan.2.txt", "prompts/announce.1.txt"} {
+		if p := read(rel); strings.Count(p, "Write all text meant for a person in Spanish (español):") != 1 {
+			t.Fatalf("%s lacks the language instruction:\n%s", rel, p)
+		}
+	}
 	if p := read("prompts/interview.3.txt"); !strings.Contains(p, "Answer: the start page") || !strings.Contains(p, "You may not ask any more questions") {
 		t.Fatalf("third interview prompt:\n%s", p)
 	}

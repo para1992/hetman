@@ -18,6 +18,7 @@ import (
 	"hetman/internal/edit"
 	"hetman/internal/engine"
 	"hetman/internal/explain"
+	"hetman/internal/language"
 	"hetman/internal/orders"
 	"hetman/internal/scribe"
 	"hetman/internal/wizard"
@@ -42,6 +43,8 @@ var opUsage = []struct{ op, form, example string }{
 	{edit.OpGateRemove, "gate-remove GATE CHECK", "hetman scribe gate-remove ready lint"},
 	{edit.OpAsk, "ask NODE ID QUESTION [-kind yesno|choice|text] [-options A,B]", "hetman scribe ask ready docs 'Are the docs updated?'"},
 	{edit.OpAssistant, "assistant EXECUTOR MODEL [-effort E]", "hetman scribe assistant stub any-model"},
+	{edit.OpLanguage, "language CODE", "hetman scribe language pt"},
+	{edit.OpUnlanguage, "unlanguage", "hetman scribe unlanguage"},
 }
 
 func scribeUsage() string {
@@ -65,6 +68,7 @@ node flags (new, add): -run CMD, -timeout D, -checks A,B, -executor NAME, -model
   -tools A,B, -attempts N, -prompt FILE, -schema FILE, -outcomes A,B, -on OUTCOME=TARGET (repeat),
   -starters (create missing prompt and schema files)
 set and unset fields: run, timeout, idle_timeout, executor, model, effort, tools, attempts, dialogue, prompt, schema
+language codes: ` + strings.Join(language.Codes(), ", ") + `
 flags of every operation:
   -f FILE    orders file (default orders.yaml)
   -dry-run   show the change and the check, write nothing
@@ -241,6 +245,8 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 			op.Prompt = value
 		case "schema":
 			op.Schema = value
+		case "language":
+			op.Language = value
 		case "checks":
 			op.Checks = listOf(value)
 		case "tools":

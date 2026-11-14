@@ -13,13 +13,14 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"hetman/internal/ask"
+	"hetman/internal/language"
 	"hetman/internal/orders"
 	"hetman/internal/schema"
 )
 
 // The order keys are written in, used to place a key that is added.
 var (
-	topOrder      = []string{"version", "flow", "start", "scribe", "notify", "executors", "checks", "nodes"}
+	topOrder      = []string{"version", "flow", "start", "language", "scribe", "notify", "executors", "checks", "nodes"}
 	nodeOrder     = []string{"type", "run", "executor", "prompt", "schema", "model", "effort", "tools", "checks", "ask", "show", "timeout", "idle_timeout", "max_attempts", "dialogue", "on"}
 	checkOrder    = []string{"run", "timeout", "soft"}
 	questionOrder = []string{"id", "question", "kind", "options"}
@@ -251,6 +252,15 @@ func (e *editing) apply() error {
 		return e.addQuestion()
 	case OpAssistant:
 		return e.assistant()
+	case OpLanguage:
+		if _, ok := language.Lookup(e.op.Language); !ok {
+			return fmt.Errorf("%s", language.Unknown(e.op.Language))
+		}
+		e.set(e.root(), "language", str(e.op.Language), topOrder)
+		return nil
+	case OpUnlanguage:
+		e.unset(e.root(), "language")
+		return nil
 	}
 	return fmt.Errorf("unknown operation %q", e.op.Op)
 }

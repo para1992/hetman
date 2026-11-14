@@ -18,6 +18,7 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"hetman/internal/ask"
+	"hetman/internal/language"
 	"hetman/internal/prompt"
 	"hetman/internal/schema"
 )
@@ -68,6 +69,7 @@ type Orders struct {
 	Order     []string // node ids in file order
 	Notify    *Notify  // the notification hook, or nil
 	Scribe    *Scribe  // the model the setup assistant may ask, or nil
+	Language  string   // code of the language text for a person is written in; empty for none
 
 	programs []program // the program of every run list, in file order
 }
@@ -429,7 +431,7 @@ func (p *parser) duration(n *yaml.Node, what string) time.Duration {
 }
 
 func (p *parser) top(root *yaml.Node, o *Orders) {
-	entries, ok := p.mapping(root, "orders", "version", "flow", "start", "scribe", "checks", "executors", "notify", "nodes")
+	entries, ok := p.mapping(root, "orders", "version", "flow", "start", "language", "scribe", "checks", "executors", "notify", "nodes")
 	if !ok {
 		return
 	}
@@ -444,6 +446,14 @@ func (p *parser) top(root *yaml.Node, o *Orders) {
 			}
 		case "flow":
 			o.Flow, _ = p.name(e.value, "flow")
+		case "language":
+			if code, ok := p.scalar(e.value, "language"); ok {
+				if _, known := language.Lookup(code); known {
+					o.Language = code
+				} else {
+					p.errorf(e.value, "language: %s", language.Unknown(code))
+				}
+			}
 		case "start":
 			startN = e.value
 			o.Start, _ = p.name(e.value, "start")

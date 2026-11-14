@@ -10,6 +10,7 @@ import (
 
 	"hetman/internal/chronicle"
 	"hetman/internal/engine"
+	"hetman/internal/language"
 	"hetman/internal/orders"
 )
 
@@ -102,6 +103,13 @@ func (c *command) status(id int64, listEvents bool) int {
 
 	w := c.stdout
 	fmt.Fprintf(w, "campaign %d  flow %s  started %s\n", k.ID, k.Flow, k.Started.Local().Format("2006-01-02 15:04:05"))
+	if len(events) > 0 && events[0].Language != "" {
+		code := events[0].Language
+		if l, ok := language.Lookup(code); ok {
+			code += " " + l.Label()
+		}
+		fmt.Fprintf(w, "language for the person: %s\n", code)
+	}
 	fmt.Fprintf(w, "state: %s\n", c.describe(k.ID, st))
 
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
@@ -388,6 +396,9 @@ func eventLine(e chronicle.Event) string {
 	}
 	if len(e.Input) > 0 {
 		parts = append(parts, "input="+string(e.Input))
+	}
+	if e.Language != "" {
+		parts = append(parts, "language="+e.Language)
 	}
 	if len(e.Output) > 0 {
 		parts = append(parts, "output="+string(e.Output))

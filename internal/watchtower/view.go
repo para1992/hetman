@@ -13,6 +13,7 @@ import (
 	"hetman/internal/chronicle"
 	"hetman/internal/engine"
 	"hetman/internal/explain"
+	"hetman/internal/language"
 	"hetman/internal/orders"
 )
 
@@ -76,8 +77,16 @@ type Campaign struct {
 	Columns       []Column             `json:"columns"`
 	Nodes         map[string][]Attempt `json:"nodes"` // attempt history per node
 	LastSeq       int64                `json:"lastSeq"`
-	Ask           *Ask                 `json:"ask,omitempty"`   // the question open now
-	Words         []explain.Section    `json:"words,omitempty"` // the campaign in plain words
+	Ask           *Ask                 `json:"ask,omitempty"`      // the question open now
+	Words         []explain.Section    `json:"words,omitempty"`    // the campaign in plain words
+	Language      *Language            `json:"language,omitempty"` // the language for the person recorded at the start
+}
+
+// Language is the language for the person a campaign started with.
+type Language struct {
+	Code    string `json:"code"`
+	English string `json:"english,omitempty"` // empty for a code this hetman does not know
+	Native  string `json:"native,omitempty"`
 }
 
 // Ask is one round of questions to a person and, once given, the answers.
@@ -217,6 +226,7 @@ type Event struct {
 	Ident     string    `json:"ident,omitempty"`
 
 	Input    json.RawMessage `json:"input,omitempty"`
+	Language string          `json:"language,omitempty"`
 	Executor string          `json:"executor,omitempty"`
 	Model    string          `json:"model,omitempty"`
 	Effort   string          `json:"effort,omitempty"`
@@ -243,7 +253,7 @@ func eventsJSON(events []chronicle.Event) []Event {
 		out[i] = Event{Seq: e.Seq, At: e.At, Kind: e.Kind, Node: e.Node, Check: e.Check, Attempt: e.Attempt,
 			Outcome: e.Outcome, To: e.To, Error: e.Error, Exit: e.Exit, Ms: e.Millis, Log: e.Log,
 			Artifacts: e.Artifacts, Soft: e.Soft, Pid: e.Pid, Ident: e.Ident,
-			Input: e.Input, Executor: e.Executor, Model: e.Model, Effort: e.Effort, Prompt: e.Prompt,
+			Input: e.Input, Language: e.Language, Executor: e.Executor, Model: e.Model, Effort: e.Effort, Prompt: e.Prompt,
 			Session: e.Session, Output: e.Output, Failure: e.Failure, RetryAt: e.RetryAt,
 			Reason: e.Reason, Questions: e.Questions, Show: e.Show, Outcomes: e.Outcomes, Round: e.Round,
 			Answers: e.Answers, Ask: e.Ask, By: e.By, Via: e.Via}
@@ -257,6 +267,10 @@ func build(k chronicle.Campaign, events []chronicle.Event, o *orders.Orders, cam
 	st := chronicle.Replay(events)
 	c := &Campaign{Summary: Summary{ID: k.ID, Flow: k.Flow, Node: st.Node, HaltRequested: st.HaltRequested && !st.Halted,
 		Error: st.Error, Started: k.Started}, Orders: k.Orders, End: st.End, Nodes: map[string][]Attempt{}}
+	if len(events) > 0 && events[0].Language != "" {
+		l, _ := language.Lookup(events[0].Language)
+		c.Language = &Language{Code: events[0].Language, English: l.English, Native: l.Native}
+	}
 	if st.End == "" && st.Waiting != "" {
 		c.Wait = st.Waiting
 		if !st.WaitUntil.IsZero() {

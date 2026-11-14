@@ -114,6 +114,9 @@ var opCases = []struct {
 	{name: "gate remove", ops: []Op{{Op: OpGateRemove, Node: "ready", Check: "lint"}}},
 	{name: "ask", ops: []Op{{Op: OpAsk, Node: "ready", ID: "docs", Question: "Are the docs updated?"}}},
 	{name: "assistant", ops: []Op{{Op: OpAssistant, Executor: "stub", Model: "small-model", Effort: "low"}}},
+	{name: "language", ops: []Op{{Op: OpLanguage, Language: "hi"}}},
+	{name: "language changed", ops: []Op{{Op: OpLanguage, Language: "hi"}, {Op: OpLanguage, Language: "uk"}}},
+	{name: "language removed", ops: []Op{{Op: OpLanguage, Language: "hi"}, {Op: OpUnlanguage}}},
 }
 
 // TestOperationsOnCommentedFile applies every operation to a file full of
@@ -262,6 +265,7 @@ func TestUnknownNamesChangeNothing(t *testing.T) {
 		{Op: OpAsk, Node: "build", ID: "q", Question: "?"},
 		{Op: OpAsk, Node: "ready", ID: "notes", Question: "Again?"},
 		{Op: OpAssistant, Executor: "ghost", Model: "m"},
+		{Op: OpLanguage, Language: "Spanish"},
 		{Op: OpNew, Type: "script", Node: "x", Run: []string{"true"}},
 	} {
 		d := fixture(t)
@@ -283,6 +287,8 @@ func TestValidate(t *testing.T) {
 		{Op{Op: "move", Node: "a"}, "unknown operation"},
 		{Op{Op: OpRemove}, "remove needs node"},
 		{Op{Op: OpRemove, Node: "a", Model: "m"}, "remove does not take model"},
+		{Op{Op: OpLanguage}, "language needs language"},
+		{Op{Op: OpUnlanguage, Language: "de"}, "unlanguage does not take language"},
 		{Op{Op: OpAdd, Type: "script", Node: "a"}, "exactly one of after and before"},
 		{Op{Op: OpAdd, Type: "script", Node: "a", After: "b", Before: "c"}, "exactly one of after and before"},
 		{Op{Op: OpAdd, Type: "script", Node: "a", Before: "b", Via: "ok"}, "via is given only with after"},
@@ -474,5 +480,37 @@ func TestDiff(t *testing.T) {
 	}
 	if !bytes.HasPrefix([]byte(unified("f", nil, b, false)), []byte("--- /dev/null\n+++ f\n@@ -0,0 +1,10 @@\n")) {
 		t.Fatal(unified("f", nil, b, false))
+	}
+}
+
+// TestLanguage sets, changes and removes the language for the person; an
+// unknown code says which code was probably meant, and removing a language
+// that is not set changes nothing.
+func TestLanguage(t *testing.T) {
+	d := fixture(t)
+	err := d.Apply(Op{Op: OpLanguage, Language: "Spanish"})
+	if err == nil || !strings.Contains(err.Error(), "did you mean es (Spanish)?") {
+		t.Fatalf("unknown code: %v", err)
+	}
+	if err := d.Apply(Op{Op: OpUnlanguage}); err != nil || d.Changed() {
+		t.Fatalf("removing nothing: %v, changed %v", err, d.Changed())
+	}
+	for _, code := range []string{"es", "zh"} {
+		if err := d.Apply(Op{Op: OpLanguage, Language: code}); err != nil {
+			t.Fatal(err)
+		}
+		o, err := d.Check()
+		if err != nil || o.Language != code {
+			t.Fatalf("language %q, %v", o.Language, err)
+		}
+	}
+	if w := (Op{Op: OpLanguage, Language: "zh"}).Words(); w != "write what the flow addresses to a person in Mandarin Chinese (普通话), code zh" {
+		t.Fatalf("words %q", w)
+	}
+	if err := d.Apply(Op{Op: OpUnlanguage}); err != nil {
+		t.Fatal(err)
+	}
+	if o, err := d.Check(); err != nil || o.Language != "" || d.Changed() {
+		t.Fatalf("after removal: %v, changed %v", err, d.Changed())
 	}
 }

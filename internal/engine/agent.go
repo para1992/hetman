@@ -15,6 +15,7 @@ import (
 	"hetman/internal/adapter"
 	"hetman/internal/ask"
 	"hetman/internal/chronicle"
+	"hetman/internal/language"
 	"hetman/internal/orders"
 	"hetman/internal/prompt"
 )
@@ -187,6 +188,10 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 	}
 	c := carry(events[visitStart(events, node.ID):], node.ID, desc.Has(adapter.FeatureResume))
 	left := node.Dialogue - c.rounds // rounds of questions the step may still ask
+	lang, langSet, err := e.language()
+	if err != nil {
+		return e.stop(node.ID, fmt.Sprintf("%s: %v", node.ID, err))
+	}
 	var text string
 	if c.answer != nil {
 		// The person answered the step's questions: the same conversation
@@ -194,13 +199,16 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 		c.session = c.current
 		text = dialogueMessage(c.asked, c.answer, left)
 	} else {
-		text, err = e.render(node, events)
+		text, err = e.render(node, events, lang, langSet)
 		if err != nil {
 			return e.stop(node.ID, fmt.Sprintf("%s: prompt %s: %v", node.ID, filepath.Base(node.Prompt), err))
 		}
-		if left > 0 {
-			text += askInstructions(left)
-		}
+	}
+	if langSet {
+		text += languageInstruction(lang)
+	}
+	if c.answer == nil && left > 0 {
+		text += askInstructions(left)
 	}
 	schemaJSON := node.SchemaJSON
 	if left > 0 {
@@ -430,8 +438,13 @@ func (e *Engine) judge(node *orders.Node, attempt int, r adapterRun, fin *chroni
 	return nil
 }
 
-// render fills in the prompt template of a node.
-func (e *Engine) render(node *orders.Node, events []chronicle.Event) (string, error) {
+// render fills in the prompt template of a node. lang is the campaign's
+// language for the person; when none is set, the language placeholders name
+// the default.
+func (e *Engine) render(node *orders.Node, events []chronicle.Event, lang language.Language, langSet bool) (string, error) {
+	if !langSet {
+		lang, _ = language.Lookup(language.Default)
+	}
 	return node.Template.Render(func(ph prompt.Placeholder) (string, error) {
 		ref, err := e.Orders.Ref(ph.Name)
 		if err != nil {
@@ -478,6 +491,14 @@ func (e *Engine) render(node *orders.Node, events []chronicle.Event) (string, er
 				}
 			}
 			return "", nil
+		case orders.RefLanguage:
+			switch {
+			case len(ref.Path) == 0:
+				return lang.English, nil
+			case ref.Path[0] == orders.LanguageNative:
+				return lang.Native, nil
+			}
+			return lang.Code, nil
 		default:
 			return rework(events, node.ID), nil
 		}
@@ -606,6 +627,17 @@ func rework(events []chronicle.Event, node string) string {
 		fmt.Fprintf(&b, "%s answered the questions of %q:\n%s", who, t.Node, answersText(asked, answer))
 	}
 	return b.String()
+}
+
+// languageInstruction tells an agent step which language to write the text
+// for a person in. It is added to every attempt of a campaign that has a
+// language for the person, and to no attempt of one that has none.
+func languageInstruction(l language.Language) string {
+	return fmt.Sprintf(`
+
+---
+Write all text meant for a person in %s: questions for the person, summaries, plans and any other document a person is meant to read. Code, code comments, identifiers, commit messages, file names and anything written into the repository stay in English unless this step's prompt says otherwise.
+`, l.Label())
 }
 
 // askInstructions tells a dialogue step how it may ask the person.

@@ -383,6 +383,9 @@
       h('div', { class: 'facts' },
         h('span', null, 'started ', h('b', { text: fmtTime(c.started) })),
         h('span', null, 'duration ', h('b', null, liveDur(c.started, c.ended))),
+        c.language ? h('span', { title: 'Text for a person is written in this language' }, 'language ',
+          h('b', { text: c.language.english ? c.language.english + ' (' + c.language.native + ')' : c.language.code }),
+          c.language.english ? ' ' + c.language.code : '') : null,
         pos ? h('span', null, pos) : null),
       c.error ? h('div', { class: 'problem' }, h('b', { text: 'Stopped in the error state: ' }), c.error, '\nFix the cause, then resume.') : null,
       waitNote(c),
@@ -948,6 +951,7 @@
       if (e.failure) det.push('failure=' + e.failure);
       if (e.retryAt) det.push('retry_at=' + fmtTime(e.retryAt, true));
       if (e.input) det.push('input=' + JSON.stringify(e.input));
+      if (e.language) det.push('language=' + e.language);
       if (e.output) det.push('output=' + JSON.stringify(e.output));
       if (e.reason) det.push('reason=' + e.reason);
       if (e.round) det.push('round=' + e.round);

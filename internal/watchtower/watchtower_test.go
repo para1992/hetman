@@ -556,7 +556,7 @@ start: a
 nodes:
   a: {type: script, run: `+arg("exit", "0")+`, on: {ok: done, fail: failed}}
 `)
-	if _, err := w.chron.NewCampaign("test", w.orders, "a", nil); err != nil {
+	if _, err := w.chron.NewCampaign("test", w.orders, "a", nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	attacks := map[string]map[string]string{

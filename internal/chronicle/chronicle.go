@@ -95,6 +95,7 @@ type Details struct {
 	Ident     string   `json:"ident,omitempty"`     // process start time, to tell a reused id apart
 
 	Input    json.RawMessage `json:"input,omitempty"`    // run input, on campaign_started
+	Language string          `json:"language,omitempty"` // code of the language for the person, on campaign_started; empty for none
 	Executor string          `json:"executor,omitempty"` // agent step: executor name
 	Model    string          `json:"model,omitempty"`    // agent step: model string passed through
 	Effort   string          `json:"effort,omitempty"`   // agent step: effort string passed through
@@ -206,8 +207,10 @@ func (c *Chronicle) Close() error { return c.db.Close() }
 const timeFormat = time.RFC3339Nano
 
 // NewCampaign creates a campaign and records its start at node start,
-// together with its run input (a JSON object; nil for none).
-func (c *Chronicle) NewCampaign(flow, ordersPath, start string, input json.RawMessage) (int64, error) {
+// together with its run input (a JSON object; nil for none) and the code of
+// the language for the person (empty for none). Both stay as recorded for
+// the whole campaign.
+func (c *Chronicle) NewCampaign(flow, ordersPath, start string, input json.RawMessage, language string) (int64, error) {
 	tx, err := c.db.Begin()
 	if err != nil {
 		return 0, err
@@ -222,7 +225,7 @@ func (c *Chronicle) NewCampaign(flow, ordersPath, start string, input json.RawMe
 	if err != nil {
 		return 0, err
 	}
-	details, err := json.Marshal(Details{Input: input})
+	details, err := json.Marshal(Details{Input: input, Language: language})
 	if err != nil {
 		return 0, err
 	}

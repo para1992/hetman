@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"hetman/internal/edit"
+	"hetman/internal/language"
 	"hetman/internal/orders"
 )
 
@@ -310,12 +311,62 @@ func (w *wizard) newFlow() ([]edit.Op, error) {
 	if err != nil {
 		return nil, err
 	}
+	lang, err := w.language()
+	if err != nil {
+		return nil, err
+	}
 	fmt.Fprintln(w.out, "The first step of the flow.")
 	op, extra, err := w.step(edit.Op{Op: edit.OpNew, Flow: flow}, false)
 	if err != nil {
 		return nil, err
 	}
-	return append([]edit.Op{op}, extra...), nil
+	ops := append([]edit.Op{op}, extra...)
+	if lang != "" {
+		ops = append(ops, edit.Op{Op: edit.OpLanguage, Language: lang})
+	}
+	return ops, nil
+}
+
+// skipLanguage is the answer that keeps English.
+const skipLanguage = "skip"
+
+// language asks for the language of what the flow addresses to a person
+// and returns its code, or nothing to keep English.
+func (w *wizard) language() (string, error) {
+	fmt.Fprintln(w.out, "Which language should the flow use for what it addresses to a person (questions, summaries, plans)?")
+	fmt.Fprintln(w.out, "Code, code comments and everything written into the repository stay in English.")
+	fmt.Fprintf(w.out, "  0) %s, keep English\n", skipLanguage)
+	for i, l := range language.List {
+		fmt.Fprintf(w.out, "  %d) %s  %s\n", i+1, l.Code, l.Label())
+	}
+	for {
+		s, err := w.ask("Language: a number, a code or a name", skipLanguage)
+		if err != nil {
+			return "", err
+		}
+		if strings.EqualFold(s, skipLanguage) || s == "0" {
+			return "", nil
+		}
+		if n, err := strconv.Atoi(s); err == nil {
+			if n >= 1 && n <= len(language.List) {
+				return language.List[n-1].Code, nil
+			}
+			fmt.Fprintf(w.out, "Pick a number from 0 to %d.\n", len(language.List))
+			continue
+		}
+		switch found := language.Find(s); len(found) {
+		case 1:
+			return found[0].Code, nil
+		case 0:
+			fmt.Fprintf(w.out, "No language in the list is called %q; type a number, a code or a name from the list.\n", s)
+		default:
+			var names []string
+			for _, l := range found {
+				names = append(names, l.Code+" "+l.English)
+			}
+			fmt.Fprintf(w.out, "More than one language matches: %s. Type its code.\n", strings.Join(names, ", "))
+		}
+	}
 }
 
 // place asks where a new node goes.

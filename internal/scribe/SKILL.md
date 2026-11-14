@@ -37,6 +37,7 @@ invent keys; `hetman check` rejects any key it does not know.
 version: 0            # required, always 0
 flow: site            # optional name; defaults to the file name without .yaml
 start: build          # required: the node the flow begins with
+language: es          # optional: the language of what the flow addresses to a person
 
 checks:               # optional: checks that gates can use, declared once
   style: {run: [./checks/style.sh], soft: true}
@@ -145,6 +146,7 @@ Each command gets these environment variables, on top of the normal environment:
 | `HETMAN_RUN_DIR` | A folder for this campaign's files, shared by all its steps |
 | `HETMAN_RESULT_FILE` | Path where the step may write a JSON result |
 | `HETMAN_INPUT_FILE` | Path of a JSON file holding the run input (`{}` when there is none) |
+| `HETMAN_LANGUAGE` | Code of the campaign's language for the person; not set when the flow has none |
 
 Steps hand files to later steps through `HETMAN_RUN_DIR`. Hetman keeps two kinds
 there itself: `outputs/NODE.json`, the accepted output of agent node NODE, and
@@ -217,6 +219,7 @@ nodes:
   | `{{artifact.NODE.FILE}}` | the text of FILE in `HETMAN_RUN_DIR`, if script or gate NODE listed it as an artifact |
   | `{{answers.NODE}}` | what a person last answered at gate or human node NODE: questions, answers, comments, chosen outcome |
   | `{{answers.NODE.ID}}` | the answer to question ID there; `{{answers.NODE.ID.comment}}` its comment |
+  | `{{language}}` | the English name of the language for the person (`English` when none is set); `{{language.native}}` its own name, `{{language.code}}` its code |
   | `{{rework}}` | empty on the first visit; when the flow came back to this node, which step sent it back, with that step's outcome and answer, failed checks, or what a person answered there |
 
   An input field that does not exist stops the campaign in the error state. A node
@@ -228,6 +231,15 @@ nodes:
   templates read through `{{input...}}` and every command reads from
   `HETMAN_INPUT_FILE`. It is stored with the campaign, so a resumed campaign sees the
   same input.
+- **Language for the person.** `language: CODE` at the top level makes what the flow
+  addresses to a person (questions, summaries, plans, other documents a person reads)
+  come in that language, while code, comments, identifiers, commit messages, file
+  names and everything written into the repository stay English. Hetman adds that
+  instruction to every agent prompt itself; do not write it into templates. The code
+  is one of `ar`, `en`, `es`, `hi`, `uk` and `zh`: the five most spoken languages and
+  Ukrainian. Without the key nothing is added. A person can override it for their own
+  runs with the environment variable `HETMAN_LANGUAGE`; a campaign keeps the language
+  it started with.
 - **Attempts.** An answer that does not match the schema, a transient error, a crash,
   a timeout or an idle timeout uses one attempt and the step runs again; after a
   rejected answer the next prompt says what was wrong. When `max_attempts` is used up
@@ -317,6 +329,8 @@ hetman scribe gate-add GATE CHECK [-at N]    put a declared check into a gate, a
 hetman scribe gate-remove GATE CHECK
 hetman scribe ask NODE ID QUESTION [-kind yesno|choice|text] [-options A,B]
 hetman scribe assistant EXECUTOR MODEL [-effort E]   the model hetman scribe may ask
+hetman scribe language CODE                  the language for the person, such as es
+hetman scribe unlanguage                     remove it: English, nothing added to prompts
 ```
 
 Node flags: `-run 'CMD ARGS'` (one string, split at spaces; quote an argument that has
@@ -411,6 +425,9 @@ order, because each answer narrows the next question:
    them.
 6. **Failures.** For each step and gate: "If this fails, should the whole run stop,
    or go back to an earlier step?" Stopping (`failed`) is the usual answer.
+7. **Language.** If the flow asks a person questions or writes documents for one:
+   "In which language should the person read them?" Set it with
+   `hetman scribe language CODE`; leave it out for English.
 
 Stop asking when every step has a command, every outcome has a destination, every
 check is marked required or soft, and you know which steps have side effects. Do not

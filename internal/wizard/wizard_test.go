@@ -50,6 +50,7 @@ nodes:
 // The answers that build fourSteps from nothing.
 var buildFourSteps = []string{
 	"toy",                      // flow name
+	"",                         // no language: keep English
 	"1", "prepare", "", "", "", // a script step: the suggested command, no limit, fail -> failed
 	"",                                         // write it
 	"1", "", "build", "", "", "", "5m", "", "", // add a step after prepare, with a limit
@@ -128,5 +129,39 @@ func TestChangesAndRefusal(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "has no timeout of its own") || o.Nodes["ready"].Timeout != 0 {
 		t.Fatalf("a change the check refuses was written:\n%s", out.String())
+	}
+}
+
+// TestNewFlowLanguage picks the language of a new flow by its name, after
+// answers that match no language or more than one.
+func TestNewFlowLanguage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), orders.DefaultFile)
+	var out bytes.Buffer
+	answers := []string{"toy", "klingon", "7", "ish", "ukrainian", "1", "prepare", "", "", "", "", "quit"}
+	if err := Run(path, input(answers...), &out, true); err != nil {
+		t.Fatal(err)
+	}
+	o, err := orders.Load(path)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if o.Language != "uk" {
+		t.Fatalf("language %q:\n%s", o.Language, out.String())
+	}
+	for _, s := range []string{"0) skip, keep English", "6) zh  Mandarin Chinese (普通话)", `No language in the list is called "klingon"`,
+		"Pick a number from 0 to 6.", "More than one language matches: en English, es Spanish.",
+		"write what the flow addresses to a person in Ukrainian (українська), code uk", "+language: uk"} {
+		if !strings.Contains(out.String(), s) {
+			t.Errorf("transcript lacks %q:\n%s", s, out.String())
+		}
+	}
+	for _, pick := range []string{"5", "uk", "UK", "українська"} {
+		path := filepath.Join(t.TempDir(), orders.DefaultFile)
+		if err := Run(path, input("toy", pick, "1", "prepare", "", "", "", "", "quit"), &bytes.Buffer{}, true); err != nil {
+			t.Fatal(err)
+		}
+		if o, err := orders.Load(path); err != nil || o.Language != "uk" {
+			t.Errorf("pick %q: %v", pick, err)
+		}
 	}
 }

@@ -330,7 +330,7 @@ func TestWizardAsksNoModel(t *testing.T) {
 	dir := filepath.Join(tempDir(t), "toy")
 	os.Mkdir(dir, 0o755)
 	path := filepath.Join(dir, orders.DefaultFile)
-	answers := []string{"toy", "1", "prepare", "", "", "", "",
+	answers := []string{"toy", "", "1", "prepare", "", "", "", "",
 		"1", "", "build", "", "", "", "5m", "", "",
 		"1", "", "test", "", "", "", "", "", "",
 		"2", "ready", "", "", "lint", "", "2", "", "y", "tests", "", "", "1m", "n", "", "",

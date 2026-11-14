@@ -21,6 +21,7 @@ import (
 
 	"hetman/internal/adapter"
 	"hetman/internal/chronicle"
+	"hetman/internal/language"
 	"hetman/internal/orders"
 )
 
@@ -137,6 +138,7 @@ type Engine struct {
 
 	inputMu sync.Mutex // the input file is synced from the drive and from hooks
 	input   []byte     // content of the input file, read from the chronicle once
+	lang    string     // code of the language for the person, read from the chronicle with the input
 }
 
 // InputFile is where the run input is written for every command, relative to
@@ -162,6 +164,9 @@ func (e *Engine) syncInput() (string, error) {
 		if len(events) > 0 && len(events[0].Input) > 0 {
 			raw = events[0].Input
 		}
+		if len(events) > 0 {
+			e.lang = events[0].Language
+		}
 		var b bytes.Buffer
 		if err := json.Indent(&b, raw, "", "  "); err != nil {
 			return "", fmt.Errorf("run input: %v", err)
@@ -170,6 +175,22 @@ func (e *Engine) syncInput() (string, error) {
 		e.input = b.Bytes()
 	}
 	return syncFile(filepath.Join(CampaignDir(e.Orders, e.Campaign), "work", InputFile), e.input)
+}
+
+// language is the language for the person recorded when the campaign
+// started; set is false when the campaign has none.
+func (e *Engine) language() (l language.Language, set bool, err error) {
+	if _, err := e.syncInput(); err != nil {
+		return l, false, err
+	}
+	if e.lang == "" {
+		return l, false, nil
+	}
+	l, ok := language.Lookup(e.lang)
+	if !ok {
+		return l, false, fmt.Errorf("the campaign was started with the language %q, which this hetman does not know", e.lang)
+	}
+	return l, true, nil
 }
 
 // syncOutputs writes the output of the latest accepted attempt of every
@@ -461,7 +482,7 @@ type execResult struct {
 }
 
 // contractEnv are the variables the engine sets; inherited values are dropped.
-var contractEnv = []string{"HETMAN_RUN_ID", "HETMAN_NODE_ID", "HETMAN_CHECK_ID", "HETMAN_ATTEMPT", "HETMAN_RUN_DIR", "HETMAN_RESULT_FILE", "HETMAN_INPUT_FILE", "HETMAN_REASON"}
+var contractEnv = []string{"HETMAN_RUN_ID", "HETMAN_NODE_ID", "HETMAN_CHECK_ID", "HETMAN_ATTEMPT", "HETMAN_RUN_DIR", "HETMAN_RESULT_FILE", "HETMAN_INPUT_FILE", "HETMAN_REASON", "HETMAN_LANGUAGE"}
 
 // exec runs one command under the script contract and maps its exit to an
 // outcome: okName for exit code 0, failName otherwise, timeout when killed
@@ -532,8 +553,10 @@ func (e *Engine) exec(ctx context.Context, nodeID, check string, argv []string, 
 // env is the environment of a step process: the engine's own without any
 // HETMAN_* variable of the contract, plus those that apply. An empty node
 // gives only the campaign variables, an empty result file leaves out
-// HETMAN_RESULT_FILE. The input file is synced first, so every command finds
-// the run input there whatever happened to the file before.
+// HETMAN_RESULT_FILE. HETMAN_LANGUAGE holds the code of the campaign's
+// language for the person, when it has one. The input file is synced first,
+// so every command finds the run input there whatever happened to the file
+// before.
 func (e *Engine) env(nodeID, check string, attempt int, resultFile string) ([]string, error) {
 	input, err := e.syncInput()
 	if err != nil {
@@ -551,6 +574,9 @@ func (e *Engine) env(nodeID, check string, attempt int, resultFile string) ([]st
 		"HETMAN_RUN_DIR="+filepath.Join(CampaignDir(e.Orders, e.Campaign), "work"),
 		"HETMAN_INPUT_FILE="+input,
 	)
+	if e.lang != "" {
+		env = append(env, "HETMAN_LANGUAGE="+e.lang)
+	}
 	if nodeID != "" {
 		env = append(env, "HETMAN_NODE_ID="+nodeID, "HETMAN_ATTEMPT="+strconv.Itoa(attempt))
 	}

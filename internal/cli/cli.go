@@ -16,6 +16,7 @@ import (
 
 	"hetman/internal/chronicle"
 	"hetman/internal/engine"
+	"hetman/internal/language"
 	"hetman/internal/orders"
 	"hetman/internal/scribe"
 )
@@ -73,6 +74,10 @@ flags (serve):
 flags (scribe skill):
   -dir DIR  folder for the skill file (default .agents/skills/hetman-scribe)
   -force    replace a different skill file that is already there
+
+environment (check, run):
+  HETMAN_LANGUAGE=CODE  the language for the person, overriding the language key of the orders
+                        for campaigns started now; a campaign keeps the language it started with
 
 exit codes of run and resume: 0 done, 1 failed, 3 halted, 4 error, 5 waiting for a person, 130 interrupted
 `
@@ -150,8 +155,15 @@ func Main(args []string, stdout, stderr io.Writer) int {
 			return exitUsage
 		}
 	}
+	var lang string
+	if cmd == "check" || cmd == "run" {
+		if lang, err = languageFor(o); err != nil {
+			fmt.Fprintf(stderr, "hetman %s: %v\n", cmd, err)
+			return exitUsage
+		}
+	}
 	if cmd == "check" {
-		fmt.Fprintf(stdout, "%s: ok (flow %s, %d nodes, %d checks)\n", o.Path, o.Flow, len(o.Nodes), len(o.Checks))
+		fmt.Fprintf(stdout, "%s: ok (flow %s, %d nodes, %d checks%s)\n", o.Path, o.Flow, len(o.Nodes), len(o.Checks), languageNote(lang))
 		return exitDone
 	}
 	var runInput json.RawMessage
@@ -174,7 +186,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	c := &command{o: o, chron: chron, stdout: stdout, stderr: stderr}
 	switch cmd {
 	case "run":
-		return c.run(runInput)
+		return c.run(runInput, lang)
 	case "status":
 		return c.status(*campaign, *events)
 	case "halt":
@@ -277,8 +289,36 @@ func readInput(path string) (json.RawMessage, error) {
 	return compact.Bytes(), nil
 }
 
-func (c *command) run(input json.RawMessage) int {
-	id, err := c.chron.NewCampaign(c.o.Flow, c.o.Path, c.o.Start, input)
+// languageEnv names the variable a person sets to override the language
+// for the person without editing the orders.
+const languageEnv = "HETMAN_LANGUAGE"
+
+// languageFor is the code of the language a campaign started now uses: the
+// one in the environment variable when it is set, else the one in the
+// orders, else none.
+func languageFor(o *orders.Orders) (string, error) {
+	code := os.Getenv(languageEnv)
+	if code == "" {
+		return o.Language, nil
+	}
+	if _, ok := language.Lookup(code); !ok {
+		return "", fmt.Errorf("%s: %s", languageEnv, language.Unknown(code))
+	}
+	return code, nil
+}
+
+// languageNote names a campaign's language for the person after other
+// facts; it is empty when there is none.
+func languageNote(code string) string {
+	l, ok := language.Lookup(code)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf(", language %s %s", l.Code, l.Label())
+}
+
+func (c *command) run(input json.RawMessage, lang string) int {
+	id, err := c.chron.NewCampaign(c.o.Flow, c.o.Path, c.o.Start, input, lang)
 	if err != nil {
 		return c.fail(err)
 	}
@@ -287,7 +327,7 @@ func (c *command) run(input json.RawMessage) int {
 		return c.fail(err)
 	}
 	defer release()
-	fmt.Fprintf(c.stdout, "campaign %d started (flow %s)\n", id, c.o.Flow)
+	fmt.Fprintf(c.stdout, "campaign %d started (flow %s%s)\n", id, c.o.Flow, languageNote(lang))
 	return c.drive(id)
 }
 

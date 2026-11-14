@@ -72,7 +72,7 @@ func setup(t *testing.T, config string) *fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ch.Close() })
-	id, err := ch.NewCampaign(o.Flow, o.Path, o.Start, nil)
+	id, err := ch.NewCampaign(o.Flow, o.Path, o.Start, nil, o.Language)
 	if err != nil {
 		t.Fatal(err)
 	}

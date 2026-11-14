@@ -305,3 +305,21 @@ nodes:
 		t.Fatalf("attempt 3 %+v, state %s", last, c.State)
 	}
 }
+
+// TestCampaignLanguage: the page shows the language recorded when the
+// campaign started, and nothing for a campaign without one.
+func TestCampaignLanguage(t *testing.T) {
+	o := parse(t, branchy)
+	ev := []chronicle.Event{{Seq: 1, Kind: chronicle.CampaignStarted, Node: "build", Details: chronicle.Details{Language: "uk"}}}
+	c := build(chronicle.Campaign{ID: 1}, ev, o, t.TempDir(), func() bool { return true })
+	if c.Language == nil || *c.Language != (Language{Code: "uk", English: "Ukrainian", Native: "українська"}) {
+		t.Fatalf("language %+v", c.Language)
+	}
+	if e := eventsJSON(ev); e[0].Language != "uk" {
+		t.Fatalf("event %+v", e[0])
+	}
+	ev[0].Language = ""
+	if c := build(chronicle.Campaign{ID: 1}, ev, o, t.TempDir(), func() bool { return true }); c.Language != nil {
+		t.Fatalf("language %+v", c.Language)
+	}
+}

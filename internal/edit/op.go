@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"hetman/internal/language"
 )
 
 // Operation names.
@@ -23,6 +25,8 @@ const (
 	OpGateRemove = "gate-remove" // remove a check from a gate
 	OpAsk        = "ask"         // add a question to a gate or a human node
 	OpAssistant  = "assistant"   // name the executor and model Scribe may ask
+	OpLanguage   = "language"    // set the language for the person
+	OpUnlanguage = "unlanguage"  // remove the language for the person
 )
 
 // Op is one operation on an orders file. Only the fields its operation
@@ -61,6 +65,7 @@ type Op struct {
 	On       map[string]string `json:"on,omitempty"`       // new node: transitions other than the defaults
 	Soft     *bool             `json:"soft,omitempty"`     // check: soft (true) or required (false)
 	Starters bool              `json:"starters,omitempty"` // agent node: create missing prompt and schema files
+	Language string            `json:"language,omitempty"` // language: a code from the built-in list
 }
 
 // Spec describes one operation for people, the command line and a model.
@@ -105,6 +110,10 @@ var Specs = []Spec{
 		"add a question to a gate (yes or no) or a human node (yesno, choice with options, or text)"},
 	{OpAssistant, []string{"executor", "model"}, []string{"executor", "model"}, []string{"effort"},
 		"name the executor and model Scribe may ask to turn a sentence into one operation"},
+	{OpLanguage, []string{"language"}, []string{"language"}, nil,
+		"write what the flow addresses to a person (questions, summaries, plans) in this language, given by its code; code and the repository stay English"},
+	{OpUnlanguage, nil, nil, nil,
+		"remove the language for the person: the flow uses English and adds no language instruction"},
 }
 
 // SpecOf returns the spec of an operation.
@@ -243,6 +252,13 @@ func (op Op) Words() string {
 			s += " (options " + strings.Join(op.Options, ", ") + ")"
 		}
 		return s
+	case OpLanguage:
+		if l, ok := language.Lookup(op.Language); ok {
+			return fmt.Sprintf("write what the flow addresses to a person in %s, code %s", l.Label(), l.Code)
+		}
+		return "write what the flow addresses to a person in the language " + op.Language
+	case OpUnlanguage:
+		return "remove the language for the person, so that the flow uses English and adds no language instruction"
 	case OpAssistant:
 		s := fmt.Sprintf("let Scribe ask the model %s through the executor %s", op.Model, op.Executor)
 		if op.Effort != "" {

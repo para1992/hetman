@@ -57,7 +57,7 @@ func setupAgent(t *testing.T, config string, files map[string]string, input stri
 	if input != "" {
 		in = json.RawMessage(input)
 	}
-	id, err := ch.NewCampaign(o.Flow, o.Path, o.Start, in)
+	id, err := ch.NewCampaign(o.Flow, o.Path, o.Start, in, o.Language)
 	if err != nil {
 		t.Fatal(err)
 	}
