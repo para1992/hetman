@@ -266,7 +266,15 @@ fails it. A gate with checks has no timeout of its own; each check can have one.
 **Campaign.** One run of a flow, numbered from 1. `hetman run` always starts a new
 campaign. `hetman run -input FILE` gives it a run input: a JSON object that prompt
 templates read. It is stored in the chronicle with the campaign, so a resumed
-campaign sees the same input.
+campaign sees the same input. Every command Hetman starts for the campaign (script
+nodes, gates, checks, the notification hook, adapters) finds the same input in
+`input.json` in `HETMAN_RUN_DIR`, named by `HETMAN_INPUT_FILE`; a campaign without
+input gets `{}`. Hetman writes the file from the chronicle and rewrites it before
+every command whenever it is missing or differs, so a script cannot change the input
+for the steps after it. One generic check can thus serve every task: it reads the
+task from the input and acts on it. `examples/acceptance` shows this with an
+acceptance script written per task, proven valid against a good and a bad fixture,
+frozen by a fingerprint and run by one generic check.
 
 **Chronicle.** The journal of every campaign: each step started and finished, each
 check, each transition, halt and resume. Hetman replays it before every move, so a
@@ -281,7 +289,15 @@ and the files of each campaign live in `.hetman/` next to the orders file:
   campaigns/1/results/   result files, and the answers of agent steps
   campaigns/1/prompts/   the rendered prompt of every agent attempt
   campaigns/1/work/answers/NODE.json   the latest answers given at a gate or human node
+  campaigns/1/work/input.json          the run input (HETMAN_INPUT_FILE)
+  campaigns/1/work/outputs/NODE.json   the output of the latest accepted attempt of agent node NODE
 ```
+
+`results/` keeps the output of every agent attempt, including rejected ones; a script
+that needs what an agent node said reads `outputs/NODE.json` in `HETMAN_RUN_DIR`
+instead. It holds the validated output object and is written, like `input.json`,
+from the chronicle before every step, so it is restored after a crash or an edit;
+it does not exist until the node has an accepted output.
 
 Add `.hetman/` to your version control ignore list.
 
@@ -482,7 +498,7 @@ continued by `hetman serve` itself.
 starts waiting for a person: a question (reason `gate`, `human` or `dialogue`), lost
 connectivity (`offline`), a subscription limit with no time to retry (`limit`), or the
 error state (`error`). It runs in the folder of the orders file, with the variables of
-a step (`HETMAN_RUN_ID`, `HETMAN_NODE_ID`, `HETMAN_RUN_DIR`, ...) plus
+a step (`HETMAN_RUN_ID`, `HETMAN_NODE_ID`, `HETMAN_RUN_DIR`, `HETMAN_INPUT_FILE`, ...) plus
 `HETMAN_REASON`, and reads one line of JSON on its standard input:
 
 ```json
@@ -743,6 +759,11 @@ these variables:
 | `HETMAN_ATTEMPT` | 1 the first time the node runs in this campaign, then 2, 3... |
 | `HETMAN_RUN_DIR` | Folder for this campaign's files, shared by all its steps |
 | `HETMAN_RESULT_FILE` | Path where the step may write a JSON result |
+| `HETMAN_INPUT_FILE` | Path of `input.json` in `HETMAN_RUN_DIR`: the run input, `{}` without one |
+
+Earlier steps leave files for later ones in `HETMAN_RUN_DIR`: `outputs/NODE.json` (the
+accepted output of an agent node) and `answers/NODE.json` (what a person answered at
+a gate or human node).
 
 **Exit code.** 0 means success (`ok`, or `pass` for a gate), anything else failure
 (`fail`, or `blocked`).

@@ -81,7 +81,11 @@ func (e *Engine) describe(ctx context.Context, x *orders.Executor) (adapter.Desc
 		return d, nil
 	}
 	argv := append([]string{e.Orders.Program(x.Run[0])}, x.Run[1:]...)
-	d, err := describe(ctx, argv, e.Orders.Dir, e.env("", "", 0, ""))
+	env, err := e.env("", "", 0, "")
+	if err != nil {
+		return adapter.Description{}, err
+	}
+	d, err := describe(ctx, argv, e.Orders.Dir, env)
 	if err != nil {
 		return d, err
 	}
@@ -214,6 +218,10 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 			return err
 		}
 	}
+	env, err := e.env(node.ID, "", attempt, "")
+	if err != nil {
+		return err
+	}
 	promptRel := PromptFile(node.ID, attempt)
 	if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(promptRel)), []byte(text), 0o644); err != nil {
 		return err
@@ -255,7 +263,7 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 	r := runAdapter(ctx, adapterProc{
 		argv:    append([]string{e.Orders.Program(x.Run[0])}, x.Run[1:]...),
 		dir:     e.Orders.Dir,
-		env:     e.env(node.ID, "", attempt, ""),
+		env:     env,
 		start:   start,
 		log:     logf,
 		stderr:  errf,

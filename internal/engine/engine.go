@@ -6,6 +6,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -133,6 +134,76 @@ type Engine struct {
 
 	outMu sync.Mutex     // progress lines come from the drive and from hooks
 	hooks sync.WaitGroup // notification hooks still running
+
+	inputMu sync.Mutex // the input file is synced from the drive and from hooks
+	input   []byte     // content of the input file, read from the chronicle once
+}
+
+// InputFile is where the run input is written for every command, relative to
+// the campaign's work folder (HETMAN_RUN_DIR). A campaign without input gets
+// an empty object.
+const InputFile = "input.json"
+
+// OutputFile is where the output of the latest accepted attempt of an agent
+// node is written for later steps, relative to the campaign's work folder.
+func OutputFile(node string) string { return "outputs/" + node + ".json" }
+
+// syncInput makes the input file hold the run input recorded in the
+// chronicle, writing it when it is missing or differs, and returns its path.
+func (e *Engine) syncInput() (string, error) {
+	e.inputMu.Lock()
+	defer e.inputMu.Unlock()
+	if e.input == nil {
+		events, err := e.Chron.Events(e.Campaign)
+		if err != nil {
+			return "", err
+		}
+		raw := json.RawMessage("{}")
+		if len(events) > 0 && len(events[0].Input) > 0 {
+			raw = events[0].Input
+		}
+		var b bytes.Buffer
+		if err := json.Indent(&b, raw, "", "  "); err != nil {
+			return "", fmt.Errorf("run input: %v", err)
+		}
+		b.WriteByte('\n')
+		e.input = b.Bytes()
+	}
+	return syncFile(filepath.Join(CampaignDir(e.Orders, e.Campaign), "work", InputFile), e.input)
+}
+
+// syncOutputs writes the output of the latest accepted attempt of every
+// agent node to its output file, where it is missing or differs.
+func (e *Engine) syncOutputs(events []chronicle.Event) error {
+	latest := map[string]json.RawMessage{}
+	for _, ev := range events {
+		if ev.Kind == chronicle.StepFinished && ev.Outcome != "" && len(ev.Output) > 0 {
+			latest[ev.Node] = ev.Output
+		}
+	}
+	work := filepath.Join(CampaignDir(e.Orders, e.Campaign), "work")
+	for node, out := range latest {
+		var b bytes.Buffer
+		if json.Indent(&b, out, "", "  ") != nil {
+			continue
+		}
+		b.WriteByte('\n')
+		if _, err := syncFile(filepath.Join(work, filepath.FromSlash(OutputFile(node))), b.Bytes()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// syncFile writes data to path unless the file already holds exactly that.
+func syncFile(path string, data []byte) (string, error) {
+	if old, err := os.ReadFile(path); err == nil && bytes.Equal(old, data) {
+		return path, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	return path, os.WriteFile(path, data, 0o644)
 }
 
 func (e *Engine) say(format string, args ...any) {
@@ -168,6 +239,9 @@ func (e *Engine) Drive(ctx context.Context) (Result, error) {
 		}
 		events, err := e.Chron.Events(e.Campaign)
 		if err != nil {
+			return 0, err
+		}
+		if err := e.syncFiles(events); err != nil {
 			return 0, err
 		}
 		st := chronicle.Replay(events)
@@ -254,6 +328,15 @@ func (e *Engine) Drive(ctx context.Context) (Result, error) {
 			return 0, err
 		}
 	}
+}
+
+// syncFiles restores the files the engine keeps in the work folder from the
+// chronicle: the run input and the outputs of agent nodes.
+func (e *Engine) syncFiles(events []chronicle.Event) error {
+	if _, err := e.syncInput(); err != nil {
+		return err
+	}
+	return e.syncOutputs(events)
 }
 
 // cleanup makes sure no process of an interrupted attempt still runs before
@@ -378,7 +461,7 @@ type execResult struct {
 }
 
 // contractEnv are the variables the engine sets; inherited values are dropped.
-var contractEnv = []string{"HETMAN_RUN_ID", "HETMAN_NODE_ID", "HETMAN_CHECK_ID", "HETMAN_ATTEMPT", "HETMAN_RUN_DIR", "HETMAN_RESULT_FILE", "HETMAN_REASON"}
+var contractEnv = []string{"HETMAN_RUN_ID", "HETMAN_NODE_ID", "HETMAN_CHECK_ID", "HETMAN_ATTEMPT", "HETMAN_RUN_DIR", "HETMAN_RESULT_FILE", "HETMAN_INPUT_FILE", "HETMAN_REASON"}
 
 // exec runs one command under the script contract and maps its exit to an
 // outcome: okName for exit code 0, failName otherwise, timeout when killed
@@ -392,7 +475,11 @@ func (e *Engine) exec(ctx context.Context, nodeID, check string, argv []string, 
 		r.err = err.Error()
 		return r
 	}
-	env := e.env(nodeID, check, attempt, resultFile)
+	env, err := e.env(nodeID, check, attempt, resultFile)
+	if err != nil {
+		r.err = err.Error()
+		return r
+	}
 	log, err := os.Create(filepath.Join(dir, r.log))
 	if err != nil {
 		r.err = err.Error()
@@ -445,8 +532,13 @@ func (e *Engine) exec(ctx context.Context, nodeID, check string, argv []string, 
 // env is the environment of a step process: the engine's own without any
 // HETMAN_* variable of the contract, plus those that apply. An empty node
 // gives only the campaign variables, an empty result file leaves out
-// HETMAN_RESULT_FILE.
-func (e *Engine) env(nodeID, check string, attempt int, resultFile string) []string {
+// HETMAN_RESULT_FILE. The input file is synced first, so every command finds
+// the run input there whatever happened to the file before.
+func (e *Engine) env(nodeID, check string, attempt int, resultFile string) ([]string, error) {
+	input, err := e.syncInput()
+	if err != nil {
+		return nil, err
+	}
 	env := make([]string, 0, len(os.Environ())+len(contractEnv))
 	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")
@@ -457,6 +549,7 @@ func (e *Engine) env(nodeID, check string, attempt int, resultFile string) []str
 	env = append(env,
 		"HETMAN_RUN_ID="+strconv.FormatInt(e.Campaign, 10),
 		"HETMAN_RUN_DIR="+filepath.Join(CampaignDir(e.Orders, e.Campaign), "work"),
+		"HETMAN_INPUT_FILE="+input,
 	)
 	if nodeID != "" {
 		env = append(env, "HETMAN_NODE_ID="+nodeID, "HETMAN_ATTEMPT="+strconv.Itoa(attempt))
@@ -467,7 +560,7 @@ func (e *Engine) env(nodeID, check string, attempt int, resultFile string) []str
 	if check != "" {
 		env = append(env, "HETMAN_CHECK_ID="+check)
 	}
-	return env
+	return env, nil
 }
 
 func readResult(path string) (string, []string, error) {

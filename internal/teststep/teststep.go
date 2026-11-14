@@ -29,6 +29,9 @@ const TraceFile = "trace.txt"
 //	artifact            write work/out.txt and list it in the result file
 //	badresult           write a result file that is not JSON
 //	env                 write the HETMAN_* variables to work/env.<node>.<attempt>.json
+//	input [MODE]        copy the file named by HETMAN_INPUT_FILE to
+//	                    work/seen.<node>[.<check>].<attempt>.json; MODE "tamper"
+//	                    then overwrites that file, "delete" removes it
 //	spawn TIME          start a grandchild that writes a heartbeat file, then sleep TIME
 //	heartbeat FILE      rewrite FILE with a counter every 20ms, forever
 //	notice DIR          write standard input to DIR/notice.<HETMAN_REASON>.<node>.json
@@ -77,6 +80,22 @@ func Main(args []string) int {
 		}
 		data, _ := json.Marshal(vars)
 		must(os.WriteFile(filepath.Join(runDir, fmt.Sprintf("env.%s.%s.json", node, attempt)), data, 0o644))
+		return 0
+	case "input":
+		name := node
+		if c := os.Getenv("HETMAN_CHECK_ID"); c != "" {
+			name += "." + c
+		}
+		path := os.Getenv("HETMAN_INPUT_FILE")
+		data, err := os.ReadFile(path)
+		must(err)
+		must(os.WriteFile(filepath.Join(runDir, fmt.Sprintf("seen.%s.%s.json", name, attempt)), data, 0o644))
+		switch arg(args, 1) {
+		case "tamper":
+			must(os.WriteFile(path, []byte(`{"tampered": true}`), 0o644))
+		case "delete":
+			must(os.Remove(path))
+		}
 		return 0
 	case "spawn":
 		self, err := os.Executable()

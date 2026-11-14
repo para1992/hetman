@@ -1,0 +1,68 @@
+# One generic acceptance check for any task. An agent step writes the
+# acceptance script of the task named in the run input, with a good and a bad
+# fixture; a gate proves the script valid and freezes it; a script node does
+# the work; the final gate checks that the script is unchanged, then runs
+# lint, tests and the acceptance script. Every check finds the script from the
+# run input file (HETMAN_INPUT_FILE), so the flow names no task.
+#
+# Why this order: self-test first, because the script's verdict on the work
+# means nothing until it has called a known-bad fixture FAIL and a known-good
+# one PASS on every criterion. It must then fail on the project before the
+# work, or it cannot tell done from not done; the freeze records exactly the
+# script that earned trust, and the final gate checks that fingerprint first,
+# as the cheapest check, so lint, tests and acceptance never run on a script
+# that was changed afterwards.
+#
+# The agent step runs through the stub adapter, which runs no model and
+# follows plans/valid.json. Build it once, from the repository root:
+#
+#   go build -o examples/acceptance/bin/stub-adapter ./cmd/hetman-stub-adapter
+#
+# Then, in this folder:
+#
+#   hetman run -input input.json                  done
+#   GREETING=hi hetman run -input input.json      the work is wrong: acceptance blocks
+#   STUB_PLAN=plans/always-passes.json hetman run -input input.json
+#                                                 the script cannot fail: the self-test blocks
+#   EDIT_ACCEPTANCE=1 hetman run -input input.json
+#                                                 the work edits the script: frozen blocks
+#
+# The checks are POSIX shell scripts run through sh (on Windows, from Git
+# Bash or another shell that has sh). The work lands in HETMAN_RUN_DIR, so
+# every campaign starts from an empty project.
+version: 0
+flow: acceptance-demo
+start: write_acceptance
+
+executors:
+  stub: {run: [./bin/stub-adapter, plans/valid.json]}
+
+checks:
+  self_test:    {run: [sh, checks/self-test.sh], timeout: 1m}
+  fails_before: {run: [sh, checks/fails-before.sh], timeout: 1m}
+  freeze:       {run: [sh, checks/freeze.sh], timeout: 1m}
+  frozen:       {run: [sh, checks/frozen.sh], timeout: 1m}
+  lint:         {run: [sh, checks/lint.sh], timeout: 1m}
+  tests:        {run: [sh, checks/tests.sh], timeout: 1m}
+  acceptance:   {run: [sh, checks/acceptance.sh], timeout: 5m}
+
+nodes:
+  write_acceptance:
+    type: agent
+    executor: stub
+    prompt: prompts/acceptance.md
+    schema: schemas/acceptance.json
+    timeout: 5m
+    on: {ok: accept_script, fail: failed}
+  accept_script:
+    type: gate
+    checks: [self_test, fails_before, freeze]
+    on: {pass: work, blocked: failed}
+  work:
+    type: script
+    run: [sh, steps/work.sh]
+    on: {ok: verify, fail: failed}
+  verify:
+    type: gate
+    checks: [frozen, lint, tests, acceptance]
+    on: {pass: done, blocked: failed}

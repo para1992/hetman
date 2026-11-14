@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "properties": {
+    "outcome": {"type": "string", "enum": ["ok"]},
+    "criteria": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["outcome", "criteria"],
+  "additionalProperties": false
+}

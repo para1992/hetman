@@ -1,0 +1,35 @@
+{
+  "nodes": {
+    "write_acceptance": [
+      [
+        {
+          "session": "acceptance-1"
+        },
+        {
+          "log": "writing an acceptance script that passes whatever it is given"
+        },
+        {
+          "write": "acceptance/greet.sh",
+          "text": "#!/bin/sh\n# Acceptance of task greet.\necho \"PASS has-greeting\"\necho \"PASS says-hello\"\n"
+        },
+        {
+          "write": "acceptance/greet/good/greeting.txt",
+          "text": "hello\n"
+        },
+        {
+          "write": "acceptance/greet/bad/greeting.txt",
+          "text": ""
+        },
+        {
+          "result": {
+            "outcome": "ok",
+            "criteria": [
+              "has-greeting",
+              "says-hello"
+            ]
+          }
+        }
+      ]
+    ]
+  }
+}

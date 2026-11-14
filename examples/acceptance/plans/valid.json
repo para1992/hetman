@@ -1,0 +1,35 @@
+{
+  "nodes": {
+    "write_acceptance": [
+      [
+        {
+          "session": "acceptance-1"
+        },
+        {
+          "log": "writing acceptance/greet.sh and its fixtures"
+        },
+        {
+          "write": "acceptance/greet.sh",
+          "text": "#!/bin/sh\n# Acceptance of task greet. Checks the folder given as the argument (by\n# default HETMAN_RUN_DIR); one PASS or FAIL line per criterion.\ndir=${1:-$HETMAN_RUN_DIR}\nstatus=0\nif [ -s \"$dir/greeting.txt\" ]; then echo \"PASS has-greeting\"; else echo \"FAIL has-greeting\"; status=1; fi\nif [ \"$(cat \"$dir/greeting.txt\" 2>/dev/null)\" = hello ]; then echo \"PASS says-hello\"; else echo \"FAIL says-hello\"; status=1; fi\nexit $status\n"
+        },
+        {
+          "write": "acceptance/greet/good/greeting.txt",
+          "text": "hello\n"
+        },
+        {
+          "write": "acceptance/greet/bad/greeting.txt",
+          "text": ""
+        },
+        {
+          "result": {
+            "outcome": "ok",
+            "criteria": [
+              "has-greeting",
+              "says-hello"
+            ]
+          }
+        }
+      ]
+    ]
+  }
+}

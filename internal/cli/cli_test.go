@@ -149,6 +149,37 @@ func steps(events []chronicle.Event) []string {
 
 var arg = teststep.Argv
 
+func TestInputFileAfterAKilledEngine(t *testing.T) {
+	w := newWorld(t, `  a: {type: script, run: `+arg("block", "SYNC")+`, on: {ok: b, fail: failed}}
+  b: {type: script, run: `+arg("input")+`, on: {ok: done, fail: failed}}
+`)
+	input := filepath.Join(w.dir, "input.json")
+	if err := os.WriteFile(input, []byte(`{"task": "T-7"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	engineProc, out := w.process("run", "-input", input)
+	w.waitFor("started.a.1", out)
+	if err := engineProc.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	engineProc.Wait()
+	// Someone edits the input file while nothing runs the campaign.
+	file := filepath.Join(w.work(), "input.json")
+	if data, err := os.ReadFile(file); err != nil || !strings.Contains(string(data), `"T-7"`) {
+		t.Fatalf("input file before the kill: %q (%v)", data, err)
+	}
+	if err := os.WriteFile(file, []byte(`{"task": "other"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w.release()
+	w.call(0, "resume")
+	for _, name := range []string{"seen.b.1.json", "input.json"} {
+		if data, err := os.ReadFile(filepath.Join(w.work(), name)); err != nil || string(data) != "{\n  \"task\": \"T-7\"\n}\n" {
+			t.Fatalf("%s after resume: %q (%v)", name, data, err)
+		}
+	}
+}
+
 func TestKilledEngineResumesInterruptedStep(t *testing.T) {
 	w := newWorld(t, `  a: {type: script, run: `+arg("exit", "0")+`, on: {ok: b, fail: failed}}
   b: {type: script, run: `+arg("block", "SYNC")+`, on: {ok: c, fail: failed}}

@@ -326,7 +326,12 @@ func (e *Engine) runHook(h *orders.Notify, ev chronicle.Event, reason string, pa
 	defer log.Close()
 	cmd := exec.Command(e.Orders.Program(h.Run[0]), h.Run[1:]...)
 	cmd.Dir = e.Orders.Dir
-	cmd.Env = append(e.env(ev.Node, "", ev.Attempt, ""), "HETMAN_REASON="+reason)
+	env, err := e.env(ev.Node, "", ev.Attempt, "")
+	if err != nil {
+		fmt.Fprintln(log, "hetman:", err)
+		return "error", nil, err.Error()
+	}
+	cmd.Env = append(env, "HETMAN_REASON="+reason)
 	cmd.Stdin = bytes.NewReader(payload)
 	cmd.Stdout, cmd.Stderr = log, log
 	configure(cmd)

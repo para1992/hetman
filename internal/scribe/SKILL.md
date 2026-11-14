@@ -144,8 +144,13 @@ Each command gets these environment variables, on top of the normal environment:
 | `HETMAN_ATTEMPT` | 1 the first time this node runs in the campaign, then 2, 3... |
 | `HETMAN_RUN_DIR` | A folder for this campaign's files, shared by all its steps |
 | `HETMAN_RESULT_FILE` | Path where the step may write a JSON result |
+| `HETMAN_INPUT_FILE` | Path of a JSON file holding the run input (`{}` when there is none) |
 
-Steps hand files to later steps through `HETMAN_RUN_DIR`. Output printed by a step is
+Steps hand files to later steps through `HETMAN_RUN_DIR`. Hetman keeps two kinds
+there itself: `outputs/NODE.json`, the accepted output of agent node NODE, and
+`answers/NODE.json`, what a person answered at NODE. Because every command can read
+the run input, one generic check can serve every task: for example a check that
+reads the task id from `HETMAN_INPUT_FILE` and runs that task's acceptance script. Output printed by a step is
 saved as its log and never interpreted.
 
 ### The result file
@@ -220,8 +225,9 @@ nodes:
   transition can send the flow back to. `{{` followed by anything that is not a name
   and `}}` is left as text.
 - **Run input.** `hetman run -input FILE` gives the campaign a JSON object that
-  templates read through `{{input...}}`. It is stored with the campaign, so a resumed
-  campaign sees the same input.
+  templates read through `{{input...}}` and every command reads from
+  `HETMAN_INPUT_FILE`. It is stored with the campaign, so a resumed campaign sees the
+  same input.
 - **Attempts.** An answer that does not match the schema, a transient error, a crash,
   a timeout or an idle timeout uses one attempt and the step runs again; after a
   rejected answer the next prompt says what was wrong. When `max_attempts` is used up

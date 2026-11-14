@@ -155,6 +155,7 @@ nodes:
 		"HETMAN_ATTEMPT":     "1",
 		"HETMAN_RUN_DIR":     filepath.Join(dir, "work"),
 		"HETMAN_RESULT_FILE": filepath.Join(dir, "results", "a.1.json"),
+		"HETMAN_INPUT_FILE":  filepath.Join(dir, "work", InputFile),
 	}
 	if !reflect.DeepEqual(env, want) {
 		t.Fatalf("env %v, want %v", env, want)
