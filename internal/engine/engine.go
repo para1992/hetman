@@ -159,7 +159,12 @@ func (e *Engine) cleanup(events []chronicle.Event, node string, attempt int) err
 		}
 	}
 	if last == nil {
-		return nil
+		// The engine died after starting the attempt but before the
+		// process_started event was committed, so there is no process id to
+		// check. On Linux the kernel and on Windows the job object have
+		// killed the step with the engine; elsewhere its tree is unknown.
+		e.say("no process of %s attempt %d was recorded; nothing to check", node, attempt)
+		return e.record(chronicle.Event{Kind: chronicle.ProcessCleanup, Node: node, Attempt: attempt, Outcome: cleanupUnrecorded})
 	}
 	result := cleanupStale(last.Pid, last.Ident)
 	e.say("process %d of %s attempt %d: %s", last.Pid, node, attempt, result)
@@ -307,6 +312,7 @@ func (e *Engine) exec(ctx context.Context, nodeID, check string, argv []string, 
 		ev := chronicle.Event{Kind: chronicle.ProcessStarted, Node: nodeID, Check: check, Attempt: attempt,
 			Details: chronicle.Details{Pid: pid, Ident: ident}}
 		if err := e.record(ev); err != nil {
+			e.say("cannot record process %d of %s: %v", pid, nodeID, err)
 			fmt.Fprintln(log, "hetman: cannot record the process:", err)
 		}
 	}

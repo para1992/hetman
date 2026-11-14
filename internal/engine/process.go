@@ -14,6 +14,7 @@ const (
 	cleanupKilled     = "killed"     // the old process tree was alive and is now killed
 	cleanupReused     = "reused"     // the id now belongs to an unrelated process; left alone
 	cleanupUnverified = "unverified" // the start time could not be read; left alone
+	cleanupUnrecorded = "unrecorded" // the attempt's process was never recorded; nothing to check
 )
 
 // waitGone waits up to a few seconds for alive to report false. Death after

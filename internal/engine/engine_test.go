@@ -337,6 +337,11 @@ func TestInterruptedStepRunsAgainWithNextAttempt(t *testing.T) {
 	if in := f.events(chronicle.StepInterrupted); len(in) != 1 || in[0].Node != "b" || in[0].Attempt != 1 {
 		t.Fatalf("interrupted events %+v", in)
 	}
+	// No process_started was recorded for b attempt 1, and the chronicle
+	// still says that the attempt was checked.
+	if c := f.events(chronicle.ProcessCleanup); len(c) != 1 || c[0].Outcome != cleanupUnrecorded || c[0].Node != "b" || c[0].Attempt != 1 {
+		t.Fatalf("cleanup events %+v", c)
+	}
 }
 
 func TestHaltTakesEffectBeforeTheNextStep(t *testing.T) {

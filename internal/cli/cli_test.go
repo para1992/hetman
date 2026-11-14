@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -195,30 +196,71 @@ func TestKilledEngineResumesInterruptedStep(t *testing.T) {
 	}
 }
 
+// diagnose renders everything needed to understand a failed campaign from
+// a CI log alone: the full chronicle, the output of every engine process and
+// every step log.
+func (w *world) diagnose(outputs ...string) string {
+	var b strings.Builder
+	b.WriteString("chronicle:\n")
+	for _, e := range w.events() {
+		fmt.Fprintf(&b, "  %d %s\n", e.Seq, eventLine(e))
+	}
+	for i, o := range outputs {
+		fmt.Fprintf(&b, "engine output %d:\n%s\n", i+1, o)
+	}
+	logs, _ := filepath.Glob(filepath.Join(w.dir, ".hetman", "campaigns", "1", "logs", "*.log"))
+	for _, l := range logs {
+		data, _ := os.ReadFile(l)
+		fmt.Fprintf(&b, "log %s:\n%s\n", filepath.Base(l), data)
+	}
+	return b.String()
+}
+
+// waitForEvent waits until the chronicle holds an event matching match.
+func (w *world) waitForEvent(match func(chronicle.Event) bool, out *bytes.Buffer) {
+	w.t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, e := range w.events() {
+			if match(e) {
+				return
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	w.t.Fatalf("timed out waiting for an event\n%s", w.diagnose(out.String()))
+}
+
 func TestResumeKillsProcessesLeftByKilledEngine(t *testing.T) {
 	w := newWorld(t, `  a: {type: script, run: `+arg("orphan", "SYNC")+`, on: {ok: done, fail: failed}}
 `)
 	engineProc, out := w.process("run")
 	w.waitFor("started.a.1", out)
 	w.waitFor("heartbeat", out)
+	// The step can be running before the engine has committed its
+	// process_started event; kill only once the chronicle knows the process.
+	w.waitForEvent(func(e chronicle.Event) bool {
+		return e.Kind == chronicle.ProcessStarted && e.Node == "a" && e.Attempt == 1
+	}, out)
 	if err := engineProc.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
 	engineProc.Wait()
+	killed := out.String()
 	beat := filepath.Join(w.sync, "heartbeat")
 	// On Unix the grandchild outlives the engine; on Windows the job object
 	// kills it together with the engine.
 	if alive := teststep.Beating(beat); alive != (runtime.GOOS != "windows") {
-		t.Fatalf("grandchild alive after engine kill: %v", alive)
+		t.Fatalf("grandchild alive after engine kill: %v\n%s", alive, w.diagnose(killed))
 	}
 
 	resumed := w.call(0, "resume")
 	state, err := os.ReadFile(filepath.Join(w.sync, "old-grandchild"))
 	if err != nil || string(state) != "dead" {
-		t.Fatalf("attempt 2 saw the old grandchild %q (%v); resume output:\n%s", state, err, resumed)
+		t.Fatalf("attempt 2 saw the old grandchild %q (%v)\n%s", state, err, w.diagnose(killed, resumed))
 	}
 	if teststep.Beating(beat) {
-		t.Fatal("old grandchild still alive after resume")
+		t.Fatalf("old grandchild still alive after resume\n%s", w.diagnose(killed, resumed))
 	}
 	var cleanup []chronicle.Event
 	order := []string{}
@@ -233,14 +275,14 @@ func TestResumeKillsProcessesLeftByKilledEngine(t *testing.T) {
 	}
 	want := []string{chronicle.StepStarted, chronicle.ProcessCleanup, chronicle.StepInterrupted, chronicle.StepStarted}
 	if !reflect.DeepEqual(order, want) {
-		t.Fatalf("event order %v, want %v", order, want)
+		t.Fatalf("event order %v, want %v\n%s", order, want, w.diagnose(killed, resumed))
 	}
 	wantOutcome := "killed"
 	if runtime.GOOS == "windows" {
 		wantOutcome = "gone"
 	}
 	if c := cleanup[0]; c.Outcome != wantOutcome || c.Attempt != 1 || c.Pid == 0 || c.Ident == "" {
-		t.Fatalf("cleanup event %+v, want outcome %s", c, wantOutcome)
+		t.Fatalf("cleanup event %+v, want outcome %s\n%s", c, wantOutcome, w.diagnose(killed, resumed))
 	}
 }
 

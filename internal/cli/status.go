@@ -213,6 +213,9 @@ func eventLine(e chronicle.Event) string {
 	if e.Pid != 0 {
 		parts = append(parts, fmt.Sprintf("pid=%d", e.Pid))
 	}
+	if e.Ident != "" {
+		parts = append(parts, "started="+e.Ident)
+	}
 	if e.Exit != nil {
 		parts = append(parts, fmt.Sprintf("exit=%d", *e.Exit))
 	}
