@@ -1,0 +1,356 @@
+// Package engine drives a campaign through the nodes of its orders.
+//
+// The engine owns every transition. Before each move it replays the
+// campaign's events from the chronicle, so a restarted engine continues
+// from exactly where the previous one stopped.
+package engine
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"hetman/internal/chronicle"
+	"hetman/internal/orders"
+)
+
+// Result is how a drive of a campaign ended.
+type Result int
+
+const (
+	Done    Result = iota // reached the done end
+	Failed                // reached the failed end
+	Halted                // stopped by a halt
+	Errored               // stopped in the error state, waiting for a person
+)
+
+func (r Result) String() string {
+	return [...]string{"done", "failed", "halted", "error"}[r]
+}
+
+// ErrInterrupted is returned when the drive was cancelled during a step. The
+// step is left unfinished in the chronicle and runs again on resume.
+var ErrInterrupted = errors.New("interrupted")
+
+// ErrLocked is returned when another process is driving the campaign.
+var ErrLocked = errors.New("campaign is being run by another process")
+
+// StateDir is the folder next to the orders that holds hetman's files.
+func StateDir(o *orders.Orders) string { return filepath.Join(o.Dir, ".hetman") }
+
+// ChroniclePath is the journal file of the orders.
+func ChroniclePath(o *orders.Orders) string { return filepath.Join(StateDir(o), "chronicle.db") }
+
+// CampaignDir holds the files of one campaign: work (HETMAN_RUN_DIR), logs,
+// results and the driver lock.
+func CampaignDir(o *orders.Orders, id int64) string {
+	return filepath.Join(StateDir(o), "campaigns", strconv.FormatInt(id, 10))
+}
+
+// Lock makes the calling process the only driver of a campaign until the
+// returned release is called or the process exits.
+func Lock(o *orders.Orders, id int64) (func(), error) {
+	dir := CampaignDir(o, id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	return lockFile(filepath.Join(dir, "lock"))
+}
+
+// Engine drives one campaign.
+type Engine struct {
+	Orders   *orders.Orders
+	Chron    *chronicle.Chronicle
+	Campaign int64
+	Out      io.Writer // progress lines; nil for none
+}
+
+func (e *Engine) say(format string, args ...any) {
+	if e.Out != nil {
+		fmt.Fprintf(e.Out, "[%d] %s\n", e.Campaign, fmt.Sprintf(format, args...))
+	}
+}
+
+func (e *Engine) record(ev chronicle.Event) error {
+	ev.Campaign = e.Campaign
+	_, err := e.Chron.Append(ev)
+	return err
+}
+
+func (e *Engine) stop(node, msg string) error {
+	e.say("error: %s", msg)
+	return e.record(chronicle.Event{Kind: chronicle.Stopped, Node: node, Details: chronicle.Details{Error: msg}})
+}
+
+// Drive runs the campaign until it ends, halts or stops in the error state.
+// The caller must hold the campaign lock.
+func (e *Engine) Drive(ctx context.Context) (Result, error) {
+	for {
+		if ctx.Err() != nil {
+			return 0, ErrInterrupted
+		}
+		events, err := e.Chron.Events(e.Campaign)
+		if err != nil {
+			return 0, err
+		}
+		st := chronicle.Replay(events)
+		switch {
+		case st.End == orders.Done:
+			e.say("campaign done")
+			return Done, nil
+		case st.End == orders.Failed:
+			e.say("campaign failed")
+			return Failed, nil
+		case st.Error != "":
+			return Errored, nil
+		}
+		node := e.Orders.Nodes[st.Node]
+		if node == nil {
+			if err := e.stop(st.Node, fmt.Sprintf("node %q is not in the orders", st.Node)); err != nil {
+				return 0, err
+			}
+			continue
+		}
+		if st.HasOutcome {
+			if err := e.transition(node, st.Outcome); err != nil {
+				return 0, err
+			}
+			continue
+		}
+		if st.HaltRequested {
+			if !st.Halted {
+				if err := e.record(chronicle.Event{Kind: chronicle.Halted, Node: node.ID}); err != nil {
+					return 0, err
+				}
+			}
+			e.say("halted before %s", node.ID)
+			return Halted, nil
+		}
+		if st.Running {
+			e.say("%s attempt %d was interrupted; running it again", node.ID, st.Attempt)
+			if err := e.record(chronicle.Event{Kind: chronicle.StepInterrupted, Node: node.ID, Attempt: st.Attempt}); err != nil {
+				return 0, err
+			}
+		}
+		if err := e.step(ctx, node, st.Attempts[node.ID]+1); err != nil {
+			return 0, err
+		}
+	}
+}
+
+func (e *Engine) transition(node *orders.Node, outcome string) error {
+	target, ok := node.On[outcome]
+	if !ok {
+		return e.stop(node.ID, fmt.Sprintf("node %q produced outcome %q, which has no transition", node.ID, outcome))
+	}
+	e.say("%s -> %s", node.ID, target)
+	return e.record(chronicle.Event{Kind: chronicle.Transition, Node: node.ID, Outcome: outcome, Details: chronicle.Details{To: target}})
+}
+
+func (e *Engine) step(ctx context.Context, node *orders.Node, attempt int) error {
+	dir := CampaignDir(e.Orders, e.Campaign)
+	for _, sub := range []string{"work", "logs", "results"} {
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
+			return err
+		}
+	}
+	if err := e.record(chronicle.Event{Kind: chronicle.StepStarted, Node: node.ID, Attempt: attempt}); err != nil {
+		return err
+	}
+	e.say("%s attempt %d started", node.ID, attempt)
+	began := time.Now()
+	fin := chronicle.Event{Kind: chronicle.StepFinished, Node: node.ID, Attempt: attempt}
+	if len(node.Checks) > 0 {
+		outcome, msg, err := e.gate(ctx, node, attempt)
+		if err != nil {
+			return err
+		}
+		fin.Outcome, fin.Error = outcome, msg
+	} else {
+		okName, failName := orders.OK, orders.Fail
+		if node.Type == orders.Gate {
+			okName, failName = orders.Pass, orders.Blocked
+		}
+		r := e.exec(ctx, node.ID, "", node.Run, node.Timeout, attempt, okName, failName)
+		if r.interrupted {
+			return ErrInterrupted
+		}
+		fin.Outcome, fin.Error, fin.Exit, fin.Log, fin.Artifacts = r.outcome, r.err, r.exit, r.log, r.artifacts
+	}
+	fin.Millis = time.Since(began).Milliseconds()
+	if err := e.record(fin); err != nil {
+		return err
+	}
+	if fin.Error != "" {
+		return e.stop(node.ID, fmt.Sprintf("%s attempt %d: %s", node.ID, attempt, fin.Error))
+	}
+	e.say("%s finished: %s (%s)", node.ID, fin.Outcome, time.Duration(fin.Millis)*time.Millisecond)
+	return nil
+}
+
+// gate runs the gate's checks in order. A failed required check blocks the
+// gate and skips the rest; a failed soft check is only a warning.
+func (e *Engine) gate(ctx context.Context, node *orders.Node, attempt int) (outcome, errMsg string, err error) {
+	for _, name := range node.Checks {
+		c := e.Orders.Checks[name]
+		began := time.Now()
+		r := e.exec(ctx, node.ID, name, c.Run, c.Timeout, attempt, orders.OK, orders.Fail)
+		if r.interrupted {
+			return "", "", ErrInterrupted
+		}
+		ev := chronicle.Event{Kind: chronicle.CheckFinished, Node: node.ID, Check: name, Attempt: attempt, Outcome: r.outcome,
+			Details: chronicle.Details{Error: r.err, Exit: r.exit, Log: r.log, Artifacts: r.artifacts, Soft: c.Soft,
+				Millis: time.Since(began).Milliseconds()}}
+		if err := e.record(ev); err != nil {
+			return "", "", err
+		}
+		if r.err != "" {
+			return "", fmt.Sprintf("check %s: %s", name, r.err), nil
+		}
+		switch {
+		case r.outcome == orders.OK:
+			e.say("  check %s: ok", name)
+		case c.Soft:
+			e.say("  check %s: %s (soft, warning)", name, r.outcome)
+		default:
+			e.say("  check %s: %s (required, gate blocked)", name, r.outcome)
+			return orders.Blocked, "", nil
+		}
+	}
+	return orders.Pass, "", nil
+}
+
+type execResult struct {
+	outcome     string
+	err         string
+	exit        *int
+	log         string
+	artifacts   []string
+	interrupted bool
+}
+
+// contractEnv are the variables the engine sets; inherited values are dropped.
+var contractEnv = []string{"HETMAN_RUN_ID", "HETMAN_NODE_ID", "HETMAN_CHECK_ID", "HETMAN_ATTEMPT", "HETMAN_RUN_DIR", "HETMAN_RESULT_FILE"}
+
+// exec runs one command under the script contract and maps its exit to an
+// outcome: okName for exit code 0, failName otherwise, timeout when killed
+// for exceeding the timeout, or the name written to the result file.
+func (e *Engine) exec(ctx context.Context, nodeID, check string, argv []string, timeout time.Duration, attempt int, okName, failName string) execResult {
+	dir := CampaignDir(e.Orders, e.Campaign)
+	base := nodeID
+	if check != "" {
+		base += "." + check
+	}
+	base += "." + strconv.Itoa(attempt)
+	var r execResult
+	r.log = filepath.ToSlash(filepath.Join("logs", base+".log"))
+	resultFile := filepath.Join(dir, "results", base+".json")
+	if err := os.Remove(resultFile); err != nil && !errors.Is(err, os.ErrNotExist) {
+		r.err = err.Error()
+		return r
+	}
+	env := make([]string, 0, len(os.Environ())+len(contractEnv))
+	for _, kv := range os.Environ() {
+		name, _, _ := strings.Cut(kv, "=")
+		if !contains(contractEnv, strings.ToUpper(name)) {
+			env = append(env, kv)
+		}
+	}
+	env = append(env,
+		"HETMAN_RUN_ID="+strconv.FormatInt(e.Campaign, 10),
+		"HETMAN_NODE_ID="+nodeID,
+		"HETMAN_ATTEMPT="+strconv.Itoa(attempt),
+		"HETMAN_RUN_DIR="+filepath.Join(dir, "work"),
+		"HETMAN_RESULT_FILE="+resultFile,
+	)
+	if check != "" {
+		env = append(env, "HETMAN_CHECK_ID="+check)
+	}
+	log, err := os.Create(filepath.Join(dir, r.log))
+	if err != nil {
+		r.err = err.Error()
+		return r
+	}
+	defer log.Close()
+	cmd := append([]string{e.program(argv[0])}, argv[1:]...)
+	pr := runProcess(ctx, cmd, e.Orders.Dir, env, log, timeout)
+	switch {
+	case pr.interrupted:
+		r.interrupted = true
+		return r
+	case pr.startErr != nil:
+		r.err = fmt.Sprintf("cannot start %s: %v", argv[0], pr.startErr)
+		fmt.Fprintln(log, "hetman:", r.err)
+		return r
+	}
+	exit := pr.exit
+	r.exit = &exit
+	if pr.timedOut {
+		r.outcome = orders.Timeout
+		fmt.Fprintf(log, "\nhetman: killed after timeout %s\n", timeout)
+		return r
+	}
+	r.outcome = okName
+	if exit != 0 {
+		r.outcome = failName
+	}
+	override, artifacts, err := readResult(resultFile)
+	if err != nil {
+		r.outcome, r.err = "", err.Error()
+		return r
+	}
+	if override != "" {
+		r.outcome = override
+	}
+	r.artifacts = artifacts
+	return r
+}
+
+// program resolves a relative program path against the orders folder. A bare
+// name is looked up on PATH.
+func (e *Engine) program(name string) string {
+	if filepath.IsAbs(name) || !strings.ContainsAny(name, `/\`) {
+		return name
+	}
+	return filepath.Join(e.Orders.Dir, filepath.FromSlash(name))
+}
+
+func readResult(path string) (string, []string, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil, nil
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	var res struct {
+		Outcome   *string  `json:"outcome"`
+		Artifacts []string `json:"artifacts"`
+	}
+	if err := json.Unmarshal(data, &res); err != nil {
+		return "", nil, fmt.Errorf("result file is not valid JSON: %v", err)
+	}
+	if res.Outcome == nil {
+		return "", res.Artifacts, nil
+	}
+	if *res.Outcome == "" || strings.ContainsAny(*res.Outcome, " \t\r\n") {
+		return "", nil, fmt.Errorf("result file: invalid outcome %q", *res.Outcome)
+	}
+	return *res.Outcome, res.Artifacts, nil
+}
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}

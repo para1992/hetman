@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Runs every check a continuous-integration job needs: formatting, vet,
+# build, tests and a cross-build of all release targets. It uses only the
+# vendored dependencies, so it needs no network.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+export GOFLAGS=-mod=vendor
+export GOPROXY=off
+export CGO_ENABLED=0
+
+echo "== gofmt"
+unformatted=$(gofmt -l cmd internal)
+if [ -n "$unformatted" ]; then
+  echo "not formatted:"
+  echo "$unformatted"
+  exit 1
+fi
+
+echo "== go vet"
+for os in linux darwin windows; do
+  GOOS=$os go vet ./...
+done
+
+echo "== go build"
+go build ./...
+
+echo "== go test"
+go test -count=1 ./...
+
+echo "== cross-build"
+out=$(mktemp -d)
+trap 'rm -rf "$out"' EXIT
+for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+  os=${target%/*}
+  arch=${target#*/}
+  ext=""
+  if [ "$os" = windows ]; then ext=".exe"; fi
+  GOOS=$os GOARCH=$arch go build -trimpath -o "$out/hetman-$os-$arch$ext" ./cmd/hetman
+  echo "ok $target"
+done
+
+echo "== all checks passed"
