@@ -211,3 +211,46 @@ func TestAgentRejected(t *testing.T) {
 		})
 	}
 }
+
+func TestScribeSetting(t *testing.T) {
+	base := "version: 0\nstart: a\nexecutors:\n  x: {run: [adapter]}\nnodes:\n  a: {type: script, run: [s], on: {ok: done, fail: failed}}\n"
+	o, err := Parse("/x/orders.yaml", []byte(base+"scribe: {executor: x, model: m, effort: low, timeout: 2m}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := o.Scribe; s == nil || s.Executor != "x" || s.Model != "m" || s.Effort != "low" || s.Timeout != 2*time.Minute {
+		t.Fatalf("scribe %+v", o.Scribe)
+	}
+	if o, _ := Parse("/x/orders.yaml", []byte(base)); o.Scribe != nil {
+		t.Fatal("a scribe setting without the key")
+	}
+	for config, want := range map[string]string{
+		"scribe: {executor: y, model: m}\n": `scribe: executor "y" is not declared`,
+		"scribe: {executor: x}\n":           `scribe: missing key "model" (the setup assistant has no default model)`,
+		"scribe: {model: m, tools: [a]}\n":  `scribe: unknown key "tools"`,
+	} {
+		if _, err := Parse("/x/orders.yaml", []byte(base+config)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v, want %q", config, err, want)
+		}
+	}
+}
+
+func TestParseOverlay(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, DefaultFile)
+	config := "version: 0\nstart: a\nexecutors:\n  x: {run: [adapter]}\nnodes:\n  a: {type: agent, executor: x, prompt: p.md, schema: s.json, on: {ok: done, fail: failed}}\n"
+	if _, err := Parse(path, []byte(config)); err == nil {
+		t.Fatal("missing files accepted")
+	}
+	files := map[string][]byte{
+		filepath.Join(dir, "p.md"):   []byte("Do it.\n"),
+		filepath.Join(dir, "s.json"): []byte(`{"type": "object", "properties": {"outcome": {"type": "string", "enum": ["ok"]}}, "required": ["outcome"]}`),
+	}
+	o, err := ParseOverlay(path, []byte(config), files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.Nodes["a"].Prompt != filepath.Join(dir, "p.md") {
+		t.Fatal(o.Nodes["a"].Prompt)
+	}
+}

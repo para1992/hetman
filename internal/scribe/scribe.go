@@ -1,8 +1,13 @@
-// Package scribe holds the setup assistant: an agent skill that interviews a
-// person about their project and writes the orders for it.
+// Package scribe holds the parts of the setup assistant that involve a model.
 //
-// The skill is a plain Markdown file, SKILL.md, kept next to this source and
-// embedded into the binary so that it can be written into any project.
+// With a model named by the orders, a sentence is mapped to exactly one
+// operation of package edit or one query of package explain; the program
+// checks the answer, shows what it means and acts only on confirmation.
+//
+// The package also holds an agent skill, SKILL.md, for a coding agent that
+// sets a flow up through the same operations. It is kept next to this
+// source and embedded into the binary so that it can be written into any
+// project.
 package scribe
 
 import (

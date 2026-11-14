@@ -28,6 +28,7 @@ import (
 	"hetman/internal/ask"
 	"hetman/internal/chronicle"
 	"hetman/internal/engine"
+	"hetman/internal/explain"
 	"hetman/internal/orders"
 )
 
@@ -258,6 +259,7 @@ func (s *Server) campaign(id int64) (*Campaign, []chronicle.Event, error) {
 	o, problem := s.currentOrders()
 	c := s.build(o, k, events)
 	c.OrdersProblem = problem
+	c.Words = explain.Campaign(k, events, explain.Summary, "", time.Local)
 	return c, events, nil
 }
 

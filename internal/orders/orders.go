@@ -67,6 +67,7 @@ type Orders struct {
 	Nodes     map[string]*Node
 	Order     []string // node ids in file order
 	Notify    *Notify  // the notification hook, or nil
+	Scribe    *Scribe  // the model the setup assistant may ask, or nil
 
 	programs []program // the program of every run list, in file order
 }
@@ -89,6 +90,16 @@ type Check struct {
 type Notify struct {
 	Run     []string
 	Timeout time.Duration
+}
+
+// Scribe names the executor and model the setup assistant may ask to map a
+// sentence to one operation. There is no default: without it the assistant
+// works without a model.
+type Scribe struct {
+	Executor string
+	Model    string
+	Effort   string
+	Timeout  time.Duration // zero for the assistant's own limit
 }
 
 // Executor is an adapter program declared once at the top level.
@@ -247,7 +258,14 @@ var yamlLine = regexp.MustCompile(`^yaml: line (\d+): (.*)$`)
 // Parse checks config data. path is used for positions and as the base of
 // relative paths.
 func Parse(path string, data []byte) (*Orders, error) {
-	p := &parser{file: path}
+	return ParseOverlay(path, data, nil)
+}
+
+// ParseOverlay is Parse with files that are not written yet: a prompt
+// template or schema whose absolute path is a key of files is read from
+// there instead of the disk.
+func ParseOverlay(path string, data []byte, files map[string][]byte) (*Orders, error) {
+	p := &parser{file: path, overlay: files}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		msg := err.Error()
@@ -287,6 +305,7 @@ type parser struct {
 	file     string
 	problems Problems
 	programs []program
+	overlay  map[string][]byte // files read instead of the disk
 }
 
 func (p *parser) errorf(n *yaml.Node, format string, args ...any) {
@@ -410,11 +429,11 @@ func (p *parser) duration(n *yaml.Node, what string) time.Duration {
 }
 
 func (p *parser) top(root *yaml.Node, o *Orders) {
-	entries, ok := p.mapping(root, "orders", "version", "flow", "start", "checks", "executors", "notify", "nodes")
+	entries, ok := p.mapping(root, "orders", "version", "flow", "start", "scribe", "checks", "executors", "notify", "nodes")
 	if !ok {
 		return
 	}
-	var startN, nodesN *yaml.Node
+	var startN, nodesN, scribeN *yaml.Node
 	hasVersion := false
 	for _, e := range entries {
 		switch e.key {
@@ -434,6 +453,8 @@ func (p *parser) top(root *yaml.Node, o *Orders) {
 			p.executors(e.value, o)
 		case "notify":
 			p.notify(e.value, o)
+		case "scribe":
+			scribeN = e.value
 		case "nodes":
 			nodesN = e.value
 		}
@@ -442,6 +463,9 @@ func (p *parser) top(root *yaml.Node, o *Orders) {
 	// them wherever they are declared in the file.
 	if nodesN != nil {
 		p.nodes(nodesN, o)
+	}
+	if scribeN != nil {
+		p.scribe(scribeN, o)
 	}
 	if !hasVersion {
 		p.errorf(root, "missing key \"version\" (use version: 0)")

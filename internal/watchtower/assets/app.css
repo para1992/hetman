@@ -366,3 +366,6 @@ pre.log .note { color: var(--faint); }
 .answer .cmd { color: var(--muted); font-size: 12.5px; }
 .answer .cmd code { user-select: all; word-break: break-all; color: var(--ink); }
 dl.kv.answers { grid-template-columns: minmax(8em, 1.3fr) 1fr; }
+.words { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 4px 16px 10px; box-shadow: var(--shadow); max-width: 70em; }
+.words h3 { margin: 14px 0 6px; font-size: 14px; }
+.words p { margin: 0 0 4px; line-height: 1.45; overflow-wrap: anywhere; }

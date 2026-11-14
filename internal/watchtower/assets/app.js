@@ -191,7 +191,7 @@
   function parseRoute() {
     const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
     if (parts[0] === 'c' && /^\d+$/.test(parts[1] || '')) {
-      const tab = ['pipeline', 'timeline', 'chronicle'].includes(parts[2]) ? parts[2] : 'pipeline';
+      const tab = ['pipeline', 'timeline', 'chronicle', 'words'].includes(parts[2]) ? parts[2] : 'pipeline';
       return { view: 'campaign', id: Number(parts[1]), tab: tab, node: tab === 'pipeline' ? parts[3] || '' : '' };
     }
     return { view: 'list' };
@@ -387,10 +387,11 @@
       c.error ? h('div', { class: 'problem' }, h('b', { text: 'Stopped in the error state: ' }), c.error, '\nFix the cause, then resume.') : null,
       waitNote(c),
       c.ordersProblem ? h('div', { class: 'problem soft', text: c.ordersProblem }) : null,
-      h('nav', { class: 'tabs' }, ['pipeline', 'timeline', 'chronicle'].map((t) =>
-        h('a', { href: href(c.id, t), 'aria-current': r.tab === t ? 'page' : false, text: t[0].toUpperCase() + t.slice(1) }))),
+      h('nav', { class: 'tabs' }, ['pipeline', 'timeline', 'chronicle', 'words'].map((t) =>
+        h('a', { href: href(c.id, t), 'aria-current': r.tab === t ? 'page' : false, text: TAB_TEXT[t] }))),
     ];
     if (r.tab === 'timeline') out.push(timeline(c));
+    else if (r.tab === 'words') out.push(words(c));
     else if (r.tab === 'chronicle') out.push(chronicle());
     else out.push(pipeline(c), legend());
     if (r.tab === 'pipeline' && r.node) out.push(...card(c, r.node));
@@ -914,6 +915,16 @@
     if (s < 60) return s + 's';
     if (s < 3600) return Math.floor(s / 60) + 'm' + (s % 60 ? ' ' + (s % 60) + 's' : '');
     return Math.floor(s / 3600) + 'h' + (Math.floor(s / 60) % 60 ? ' ' + (Math.floor(s / 60) % 60) + 'm' : '');
+  }
+
+  // ---- in words ----------------------------------------------------------
+
+  const TAB_TEXT = { pipeline: 'Pipeline', timeline: 'Timeline', chronicle: 'Chronicle', words: 'In words' };
+
+  // The campaign told in sentences built by the server from the chronicle.
+  function words(c) {
+    return h('div', { class: 'words' }, ...(c.words || []).map((s) =>
+      h('section', null, h('h3', { text: s.title }), ...s.lines.map((l) => h('p', { text: l })))));
   }
 
   // ---- chronicle ---------------------------------------------------------

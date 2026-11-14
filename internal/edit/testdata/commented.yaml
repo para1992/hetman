@@ -1,0 +1,47 @@
+# Release flow of a small service.
+# Edited by hand and with hetman scribe.
+version: 0
+flow: release   # the name shown on the page
+start: build
+
+# Adapters that run agent steps.
+executors:
+  stub:   {run: [./bin/stub, plan.json]}   # no real model
+
+checks:
+  # quick ones first
+  lint:   {run: [sh, checks/lint.sh], soft: true}
+  tests:  {run: [sh, checks/tests.sh], timeout: 20m}
+
+nodes:
+  # Compile everything.
+  build:
+    type: script
+    run: [sh, steps/build.sh, "--mode=fast"]   # quoted on purpose
+    timeout: 5m
+    on: {ok: review, fail: failed, timeout: failed}
+
+  # A model reads the change.
+  review:
+    type: agent
+    executor: stub
+    prompt: prompts/review.md
+    schema: schemas/review.json
+    on:
+      approved: ready
+      needs_rework: build   # back for another round
+      fail: failed
+
+  ready:
+    type: gate
+    checks: [lint, tests]
+    ask:
+      - id: notes
+        question: 'Are the release notes written?'
+    on: {pass: ship, blocked: build}
+
+  ship:
+    type: script
+    run: [sh, steps/ship.sh]
+    on: {ok: done, fail: failed, again: ship}   # the end
+# Nothing after this line is part of the flow.

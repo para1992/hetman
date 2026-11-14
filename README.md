@@ -227,7 +227,8 @@ nodes:
 ```
 
 - `version` is required and is `0`. `flow` is an optional name (the file name by
-  default). `start` is required.
+  default). `start` is required. `scribe` optionally names the executor and model
+  the setup assistant may ask (see Setup assistant); the engine ignores it.
 - Ids and names use letters, digits, `_`, `-` and `.`.
 - `run` is a list: the program followed by its arguments. There is no shell. A
   program with a slash in it is relative to the orders folder; a bare name such as
@@ -677,7 +678,14 @@ hetman resume [-f FILE] [-c ID]         continue a halted, stopped or interrupte
 hetman answer [-f FILE] [-c ID] [-a ID=ANSWER ...] [-comment ID=TEXT ...] [-outcome NAME] [-ask N] [-by NAME]
                                         answer what a campaign asks a person
 hetman serve  [-f FILE] [-addr ADDRESS] show every campaign live on a web page (Watchtower)
-hetman scribe [-dir DIR] [-force]       write the setup assistant skill for a coding agent
+hetman scribe [-f FILE]                 the setup wizard (see Setup assistant)
+hetman scribe OPERATION ARGS [-f FILE] [-dry-run] [-force]
+                                        one operation on the orders file
+hetman scribe [-f FILE] [-yes] "SENTENCE"
+                                        one sentence to one operation or question, through a model
+hetman scribe explain [-f FILE] [-c ID] [-kind KIND] [-node NODE]
+                                        explain a campaign in plain words
+hetman scribe skill [-dir DIR] [-force] write the setup assistant skill for a coding agent
 hetman version                          print the version of hetman
 ```
 
@@ -686,11 +694,11 @@ hetman version                          print the version of hetman
 - `-c ID` is the campaign number; the latest campaign by default.
 - `-events` makes `status` also list every chronicle event.
 - `-addr ADDRESS` is where `serve` listens, `127.0.0.1:8740` by default.
-- `-dir DIR` is the folder `scribe` writes `SKILL.md` into,
+- `-dir DIR` is the folder `scribe skill` writes `SKILL.md` into,
   `.agents/skills/hetman-scribe` in the current folder by default. `-force` replaces
   a different `SKILL.md` that is already there.
 
-`scribe` and `version` need no orders file.
+`scribe skill`, `scribe new` and `version` need no orders file.
 
 `hetman check` prints `FILE: ok (...)` or one line per problem as
 `FILE:LINE:COLUMN: message`; a problem in a prompt template or a schema names that
@@ -796,26 +804,374 @@ answered, the card shows the answers, who gave them and when.
 
 ## Setup assistant
 
-Scribe is the setup assistant: `SKILL.md`, an instruction file for a coding agent,
-built into the binary. Given to an agent, it interviews a person about their project
-in plain language, writes `orders.yaml` and any small check scripts they ask for, and
-runs `hetman check` until the file is accepted. The result is an ordinary orders file
-that can be read and edited by hand.
+Scribe, the setup assistant, builds and changes `orders.yaml` and tells what a
+campaign did. It is deliberately simple: the program does the work, and a model, when
+one is used at all, only picks one item from a short list. It has three layers, each
+usable without the next:
 
-To hand it to an agent, run this in the project folder:
+1. **Operations**: a fixed set of commands that change the orders file.
+2. **The wizard**: `hetman scribe` asks fixed questions and makes the operations. No
+   model.
+3. **A sentence**: `hetman scribe "add a gate with the lint check after build"` asks a
+   model, named in the orders, which operation the sentence means; the program checks
+   the answer, shows the change and applies it once you confirm.
 
-```sh
-$ hetman scribe
-wrote .agents/skills/hetman-scribe/SKILL.md
+It also explains campaigns in plain words, in the terminal and on the Watchtower page,
+and it can write an instruction file for a coding agent that sets a flow up with the
+same operations. Scribe never changes campaign state.
+
+### Operations
+
+```
+hetman scribe new TYPE NODE [-flow NAME] [node flags]       start a new orders file with its first node
+hetman scribe add TYPE NODE (-after NODE [-via OUTCOME] | -before NODE) [node flags]
+hetman scribe remove NODE                    remove a node and connect around it
+hetman scribe rename NODE NEW                rename a node wherever it is referenced
+hetman scribe link NODE OUTCOME TARGET       set or change a transition
+hetman scribe unlink NODE OUTCOME            remove a transition
+hetman scribe set NODE FIELD VALUE           set a field of a node
+hetman scribe unset NODE FIELD               remove a field of a node
+hetman scribe check NAME [-run CMD] [-timeout D] [-soft | -required]   declare a check, or change one
+hetman scribe executor NAME -run CMD         declare an executor, or change its command
+hetman scribe gate-add GATE CHECK [-at N]    put a declared check into a gate, at position N from 1
+hetman scribe gate-remove GATE CHECK         take a check out of a gate
+hetman scribe ask NODE ID QUESTION [-kind yesno|choice|text] [-options A,B]
+                                             add a question to a gate or a human node
+hetman scribe assistant EXECUTOR MODEL [-effort E]   name the model Scribe may ask
 ```
 
-Agents that read skills from `.agents/skills` find it there. For an agent that looks
-in another folder, pass that folder with `-dir`, or point the agent at the file. Then
-ask the agent to set up a Hetman flow for the project.
+`TYPE` is `script`, `gate`, `agent` or `human`. The node flags are `-run CMD` (one
+string split at spaces; quotes keep spaces in an argument), `-timeout D`,
+`-checks A,B`, `-executor NAME`, `-model M`, `-effort E`, `-tools A,B`, `-attempts N`,
+`-prompt FILE`, `-schema FILE`, `-outcomes A,B` (of an agent or human node),
+`-on OUTCOME=TARGET` (repeatable) and `-starters`. The fields of `set` are `run`,
+`timeout`, `idle_timeout`, `executor`, `model`, `effort`, `tools`, `attempts`,
+`dialogue`, `prompt` and `schema`; `unset` takes the optional ones of these.
+`hetman scribe help` lists everything.
 
-Running `hetman scribe` again prints `PATH is up to date` when the file is the same.
-When it differs (an older version, or your own edits), it is left alone and the
-command fails; `hetman scribe -force` replaces it.
+How the flow is wired:
+
+- A node's main outcome is `ok`, else `pass`, else its first outcome that is not
+  `fail`, `timeout` or `blocked`.
+- `add -after X` makes X's main outcome (or `-via OUTCOME`) lead to the new node; the
+  new node's main outcome leads where X's did. `add -before Y` makes the start, if it
+  was Y, and every main outcome that led to Y lead to the new node, whose main outcome
+  leads to Y; loops back to Y stay as they are. Every other outcome of a new node
+  leads to `failed` unless `-on` says otherwise.
+- `remove` makes every transition that led to the node lead where its main outcome
+  led, and moves the start the same way.
+- `rename` changes the node's key, the start, every transition and every placeholder
+  that names it in a prompt template (`{{output.NODE}}`, `{{artifact.NODE...}}`,
+  `{{answers.NODE...}}`).
+- `set NODE timeout` on a script, or a gate with `run`, adds `timeout: failed` when
+  the node has no transition for `timeout`; `unset NODE timeout` removes it.
+- For an agent node, `-prompt` and `-schema` default to `prompts/NODE.md` and
+  `schemas/NODE.json`. An existing schema gives the outcomes. `-starters` creates a
+  minimal template and schema where those files do not exist; an existing file is
+  never written over.
+
+Every operation, from the command line or not, works the same way:
+
+- It edits the file in place. Everything outside the lines it changes stays byte for
+  byte as it was: comments, blank lines, key order, quoting, alignment, line ends
+  (CR LF stays CR LF). New entries take the style of their neighbours: a node written
+  as a block gets a block, a node on one line gets one line, transitions in braces get
+  braces. A comment directly above a removed node goes with it; a comment at the end
+  of a changed line stays. New lines are not aligned with their neighbours.
+- If an entry is written in a form that cannot be edited in place (a multi-line
+  string, an anchor, a block list changed into another), the whole file is written
+  out by the YAML library instead and a note says so. That keeps the comments and the
+  key order, but not blank lines, alignment or quoting.
+- It runs the orders check on the result. If the result would not pass, nothing is
+  written, the problems are printed and the command exits with 2. A program in a
+  `run` list that does not exist yet is only a warning, since the script may be
+  written after the step that runs it; `hetman check` still requires it.
+- It prints the change as a unified diff. `-dry-run` prints it and writes nothing.
+- `-force` writes a result that does not pass the check. It is for a state meant to
+  be finished by the next operation: a gate that only asks a person is added with
+  `-force` and then given its question with `ask`; a flow whose first step is an
+  agent step is started with `-force` and then given its executor.
+
+The operations are one Go package, `internal/edit`, which the wizard, the sentence
+layer and later a page editor all call.
+
+### The wizard
+
+`hetman scribe` with no arguments asks fixed questions in the terminal and offers
+suggestions taken from the current file (the step to add after, the declared checks
+and executors). On a missing file it starts a new flow. Each change is shown as a
+diff and written only when confirmed. A session that builds a flow from nothing
+(answers after the colons; an empty answer takes the suggestion in brackets):
+
+```
+$ mkdir shop && cd shop && hetman scribe
+Scribe wizard for orders.yaml. No model is used.
+Enter takes the suggestion in [brackets]; a number picks from a list.
+
+orders.yaml does not exist yet, so this starts a new flow.
+Flow name [shop]:
+The first step of the flow.
+What kind of step?
+  1) script (runs a command)
+  2) agent (a model does the work)
+  3) human (a person decides)
+Choice [script (runs a command)]: 1
+Step name (letters, digits, - _ .): prepare
+Command to run (program and arguments) [sh steps/prepare.sh]:
+Time limit, such as 5m (Enter for none):
+If it fails, go to
+  1) prepare
+  2) done
+  3) failed
+Choice [failed]:
+
+The change:
+  - create a new flow named shop whose first step is the script node prepare, running sh steps/prepare.sh
+--- /dev/null
++++ orders.yaml
+@@ -0,0 +1,9 @@
++version: 0
++flow: shop
++start: prepare
++
++nodes:
++  prepare:
++    type: script
++    run: [sh, steps/prepare.sh]
++    on: {ok: done, fail: failed}
+Write it? (y/n) [y]:
+Wrote orders.yaml.
+
+What next?
+  1) add a step
+  2) add a gate
+  ...
+  11) quit
+Choice [quit]: 1
+...                                   (build after prepare with a limit of 5m, then
+...                                    test after build, whose failure goes back to build)
+Choice [quit]: 2
+Gate name [gate]: ready
+Where does it go?
+  1) after a step
+  2) before a step
+Choice [after a step]:
+After which step?
+  1) prepare
+  2) build
+  3) test
+Choice [test]:
+Declare the checks the gate runs, cheapest first.
+Check name: lint
+Command to run (program and arguments) [sh checks/lint.sh]:
+If it fails, should the gate block or only warn?
+  1) required (blocks the gate)
+  2) soft (only warns)
+Choice [required (blocks the gate)]: soft
+Time limit, such as 1m (Enter for none):
+Declare another check for this gate? (y/n) [n]: y
+Check name: tests
+Command to run (program and arguments) [sh checks/tests.sh]:
+If it fails, should the gate block or only warn?
+  1) required (blocks the gate)
+  2) soft (only warns)
+Choice [required (blocks the gate)]:
+Time limit, such as 1m (Enter for none): 1m
+Declare another check for this gate? (y/n) [n]:
+If the gate blocks, go to
+  ...
+Choice [failed]:
+
+The change:
+  - declare or change the check lint, running sh checks/lint.sh, soft (it only warns)
+  - declare or change the check tests, running sh checks/tests.sh, with the timeout 1m, required (it blocks the gate)
+  - add the gate node ready after test, with the checks lint, tests
+--- orders.yaml
++++ orders.yaml
+@@ -3,4 +3,8 @@
+ start: prepare
+ 
++checks:
++  lint: {run: [sh, checks/lint.sh], soft: true}
++  tests: {run: [sh, checks/tests.sh], timeout: 1m}
++
+ nodes:
+   prepare:
+@@ -16,3 +20,7 @@
+     type: script
+     run: [sh, steps/test.sh]
+-    on: {ok: done, fail: build}
++    on: {ok: ready, fail: build}
++  ready:
++    type: gate
++    checks: [lint, tests]
++    on: {pass: done, blocked: failed}
+Write it? (y/n) [y]:
+Wrote orders.yaml.
+...                                   (publish after ready)
+Choice [quit]:
+```
+
+Then two operations change it: a blocked gate sends the flow back to `build`, and the
+gate gets a better name.
+
+```
+$ hetman scribe link ready blocked build
+Make the outcome blocked of ready lead to build.
+--- orders.yaml
++++ orders.yaml
+@@ -24,5 +24,5 @@
+     type: gate
+     checks: [lint, tests]
+-    on: {pass: publish, blocked: failed}
++    on: {pass: publish, blocked: build}
+   publish:
+     type: script
+Wrote /path/to/shop/orders.yaml.
+$ hetman scribe rename ready checked
+Rename the node ready to checked everywhere it is referenced.
+--- orders.yaml
++++ orders.yaml
+@@ -20,6 +20,6 @@
+     type: script
+     run: [sh, steps/test.sh]
+-    on: {ok: ready, fail: build}
+-  ready:
++    on: {ok: checked, fail: build}
++  checked:
+     type: gate
+     checks: [lint, tests]
+Wrote /path/to/shop/orders.yaml.
+```
+
+When the input is not a terminal, the wizard writes every answer it reads after its
+question, so that a scripted session reads like a typed one.
+
+### A sentence, through a model
+
+A sentence works only when the orders name the executor and model Scribe may use;
+there is no default:
+
+```yaml
+scribe: {executor: stub, model: any-model}   # also effort, and timeout (5m when not given)
+```
+
+`hetman scribe assistant EXECUTOR MODEL` writes it. Without it, `hetman scribe
+"..."` says so and points to the wizard and the operations.
+
+For a sentence Hetman sends one request through the adapter protocol, as for an agent
+step, with run and node id `scribe`, no tools and no session. The prompt holds the
+sentence, a compact description of the flow (each node with its type, checks,
+executor and model, questions, timeout and transitions; the declared checks and
+executors; the campaign numbers), the list of operations with their fields, and the
+query kinds below. The model never sees the text of the file. The schema of the
+answer allows exactly one of:
+
+- `{"outcome": "operation", "operation": {"op": "add", "type": "gate", "node": "lint_gate", "after": "build", "checks": ["lint"]}}`
+- `{"outcome": "query", "query": {"kind": "rework", "campaign": 3, "node": "build"}}`
+- `{"outcome": "unclear", "choices": [{"question": "Do you mean ...?", "operation": {...}}, ...]}`, at most three
+
+The program checks the answer against the schema and the rules of the operation. An
+answer that does not fit is asked for once more, with the reason; a second one that
+does not fit ends it. An operation that names something the file does not have, or
+whose result would not pass the orders check, is refused. In all those cases nothing
+is written. An unclear answer lists its interpretations and you pick one, or none;
+nothing is guessed. A clear operation is shown in plain words with its diff and
+applied only after you answer `y`; `-yes` applies it without asking (an unclear
+answer still changes nothing). A query is answered by the explanation below; the
+model writes none of the answer. The prompt, log and diagnostics of the last request
+are in `.hetman/scribe/`.
+
+```
+$ hetman scribe "add an agent step named notes before publish, run by stub"
+Scribe proposes: add the agent node notes before publish, through the executor stub.
+--- orders.yaml
++++ orders.yaml
+@@ -29,5 +29,11 @@
+     type: gate
+     checks: [lint, tests]
+-    on: {pass: publish, blocked: build}
++    on: {pass: notes, blocked: build}
++  notes:
++    type: agent
++    executor: stub
++    prompt: prompts/notes.md
++    schema: schemas/notes.json
++    on: {ok: publish, fail: failed}
+   publish:
+     type: script
+--- /dev/null
++++ prompts/notes.md
+...
+Apply this change? [y/N] y
+Wrote /path/to/shop/orders.yaml.
+
+$ hetman scribe "make the checks stricter"
+The sentence can mean more than one thing. Did you mean:
+  1) Should lint block the gate instead of only warning?
+     (declare or change the check lint, required (it blocks the gate))
+  2) Should tests get less time, 30s instead of 1m?
+     (declare or change the check tests, with the timeout 30s)
+  0) none of these
+Choice [0-2]: 0
+Nothing was changed.
+```
+
+The stub adapter (`cmd/hetman-stub-adapter`) can answer by the text of the prompt
+(`"when"` in its plan), so all of this can be tried without a model.
+
+### Campaigns in plain words
+
+```
+hetman scribe explain [-f FILE] [-c ID] [-kind KIND] [-node NODE]
+```
+
+tells a campaign in sentences built by fixed templates from its chronicle events
+alone: where it is, what it waits for and since when, what ran with what outcome, why
+the flow went back and how many times, what failed with the recorded reason, and which
+soft checks warned. The kinds are `where`, `history`, `rework`, `failures`,
+`warnings` and `summary` (all of them, the default); `-node` keeps the parts about
+one node. It never states anything the chronicle does not hold.
+
+```
+$ hetman scribe explain -c 2
+Where it is:
+  Campaign 2 of flow shop started at 2026-11-14 23:39:11 at prepare.
+  It has been stopped at notes since 2026-11-14 23:40:24: attempt 1 lost connectivity (network is unreachable). The attempt does not count; the step runs again when the campaign is resumed.
+
+What ran:
+  2026-11-14 23:39:11  prepare attempt 1 finished with ok after 0s. The flow went to build.
+  ...
+  2026-11-14 23:39:11  checked asked a person: "Are the release notes written?".
+  2026-11-14 23:40:23  dana answered checked from the command line: notes: yes.
+  2026-11-14 23:40:24  checked attempt 2 finished with pass after 1m13s; checks: lint fail (soft, a warning), tests ok. The flow went to notes.
+  2026-11-14 23:40:24  notes attempt 1 was cut off (offline): network is unreachable; it does not count.
+
+Rework:
+  The flow went back to build once.
+  2026-11-14 23:39:11  checked finished with blocked and sent the flow back to build (required check tests reported fail).
+
+What failed:
+  2026-11-14 23:39:11  checked attempt 1 finished with blocked: required check tests reported fail.
+  2026-11-14 23:40:24  notes attempt 1 was cut off (offline): network is unreachable; it does not count.
+
+Warnings:
+  2026-11-14 23:39:11  The soft check lint of checked reported fail in attempt 1; it only warned.
+  2026-11-14 23:39:11  The soft check lint of checked reported fail in attempt 2; it only warned.
+```
+
+A question to the model such as `hetman scribe "why did campaign 3 go back to build
+twice?"` is mapped to a kind, a campaign and a node, and answered by the same
+templates. Watchtower shows the same explanation on the "In words" tab of a campaign.
+
+### The agent skill
+
+`hetman scribe skill` writes `SKILL.md`, an instruction file for a coding agent, into
+`.agents/skills/hetman-scribe` (another folder with `-dir`). It interviews a person
+about their project and builds the flow with the operations above, editing by hand
+only what no operation covers (prompt templates, schemas, `show`, `notify`). Running it
+again prints `PATH is up to date` when the file is the same; a different file is left
+alone unless `-force` is given.
 
 ## Licence
 

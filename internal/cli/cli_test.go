@@ -372,14 +372,14 @@ func TestScribeWritesSkill(t *testing.T) {
 	t.Chdir(tempDir(t))
 	path := filepath.Join(filepath.FromSlash(DefaultScribeDir), scribe.FileName)
 	var stdout, stderr bytes.Buffer
-	if code := Main([]string{"scribe"}, &stdout, &stderr); code != exitDone || stdout.String() != "wrote "+path+"\n" {
+	if code := Main([]string{"scribe", "skill"}, &stdout, &stderr); code != exitDone || stdout.String() != "wrote "+path+"\n" {
 		t.Fatalf("first scribe: exit %d\n%s%s", code, stdout.String(), stderr.String())
 	}
 	if data, err := os.ReadFile(path); err != nil || !bytes.Equal(data, scribe.Skill()) {
 		t.Fatalf("skill file not written (%v)", err)
 	}
 	stdout.Reset()
-	if code := Main([]string{"scribe"}, &stdout, &stderr); code != exitDone || stdout.String() != path+" is up to date\n" {
+	if code := Main([]string{"scribe", "skill"}, &stdout, &stderr); code != exitDone || stdout.String() != path+" is up to date\n" {
 		t.Fatalf("second scribe: exit %d\n%s%s", code, stdout.String(), stderr.String())
 	}
 }
@@ -389,17 +389,17 @@ func TestScribeRefusesDifferentFile(t *testing.T) {
 	path := filepath.Join(dir, scribe.FileName)
 	os.WriteFile(path, []byte("my own notes\n"), 0o644)
 	var stdout, stderr bytes.Buffer
-	if code := Main([]string{"scribe", "-dir", dir}, &stdout, &stderr); code != exitFailed {
+	if code := Main([]string{"scribe", "skill", "-dir", dir}, &stdout, &stderr); code != exitFailed {
 		t.Fatalf("exit %d, want %d\n%s%s", code, exitFailed, stdout.String(), stderr.String())
 	}
-	if want := "hetman scribe: " + path + ": a different file already exists; use -force to replace it\n"; stderr.String() != want || stdout.Len() != 0 {
+	if want := "hetman scribe skill: " + path + ": a different file already exists; use -force to replace it\n"; stderr.String() != want || stdout.Len() != 0 {
 		t.Fatalf("stdout %q, stderr %q", stdout.String(), stderr.String())
 	}
 	if data, _ := os.ReadFile(path); string(data) != "my own notes\n" {
 		t.Fatal("existing file was changed without -force")
 	}
 	stderr.Reset()
-	if code := Main([]string{"scribe", "-dir", dir, "-force"}, &stdout, &stderr); code != exitDone || stdout.String() != "wrote "+path+"\n" {
+	if code := Main([]string{"scribe", "skill", "-dir", dir, "-force"}, &stdout, &stderr); code != exitDone || stdout.String() != "wrote "+path+"\n" {
 		t.Fatalf("scribe -force: exit %d\n%s%s", code, stdout.String(), stderr.String())
 	}
 	if data, _ := os.ReadFile(path); !bytes.Equal(data, scribe.Skill()) {

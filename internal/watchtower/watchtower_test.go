@@ -270,6 +270,11 @@ nodes:
 	if checks := c.Nodes["g"][0].Checks; len(checks) != 2 || checks[0].Log != "logs/g.style.1.log" || checks[0].Exit == nil || *checks[0].Exit != 1 {
 		t.Fatalf("checks of g %+v", checks)
 	}
+	// The campaign in plain words, as hetman scribe explain tells it.
+	if len(c.Words) != 5 || c.Words[0].Title != "Where it is" || !strings.Contains(c.Words[0].Lines[1], "It is done: g finished with pass at ") ||
+		!strings.Contains(c.Words[4].Lines[0], "The soft check style of g reported fail in attempt 1; it only warned.") {
+		t.Fatalf("words %+v", c.Words)
+	}
 
 	var events []watchtower.Event
 	if code := w.get("/api/campaigns/1/events", &events); code != http.StatusOK || events[0].Kind != chronicle.CampaignStarted ||

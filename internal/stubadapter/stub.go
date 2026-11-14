@@ -10,6 +10,9 @@
 //	  "features": ["resume"],          features to declare (default ["resume"])
 //	  "protocol": [0],                 protocol versions to declare (default [0])
 //	  "trace": "stub-trace.jsonl",     file to append every start message's step to
+//	  "when": [                        moves chosen by the prompt, before "nodes":
+//	    {"prompt": "text", "moves": [[MOVE, ...], ...]}  the first entry whose text is
+//	  ],                               part of the prompt is used, by attempt as below
 //	  "nodes": {
 //	    "review": [[MOVE, ...], ...],  moves per attempt: the first list for attempt 1,
 //	    "*": [[MOVE, ...]]             the second for attempt 2, the last for any later one;
@@ -70,7 +73,14 @@ type Plan struct {
 	Features *[]string           `json:"features"`
 	Protocol []int               `json:"protocol"`
 	Trace    string              `json:"trace"`
+	When     []When              `json:"when"`
 	Nodes    map[string][][]Move `json:"nodes"`
+}
+
+// When chooses moves by the text of the prompt.
+type When struct {
+	Prompt string   `json:"prompt"`
+	Moves  [][]Move `json:"moves"`
 }
 
 // Move is one thing the adapter does.
@@ -185,9 +195,19 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 // pick returns the moves for the attempt of a step.
 func pick(plan Plan, step adapter.Step) ([]Move, bool) {
-	list, ok := plan.Nodes[step.NodeID]
-	if !ok {
-		list = plan.Nodes["*"]
+	var list [][]Move
+	matched := false
+	for _, w := range plan.When {
+		if strings.Contains(step.Prompt, w.Prompt) {
+			list, matched = w.Moves, true
+			break
+		}
+	}
+	if !matched {
+		var ok bool
+		if list, ok = plan.Nodes[step.NodeID]; !ok {
+			list = plan.Nodes["*"]
+		}
 	}
 	if len(list) == 0 {
 		return nil, false

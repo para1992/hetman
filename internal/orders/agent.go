@@ -58,6 +58,38 @@ func (p *parser) executors(n *yaml.Node, o *Orders) {
 	}
 }
 
+// scribe reads the model the setup assistant may ask.
+func (p *parser) scribe(n *yaml.Node, o *Orders) {
+	fields, ok := p.mapping(n, "scribe", "executor", "model", "effort", "timeout")
+	if !ok {
+		return
+	}
+	x := &Scribe{}
+	for _, f := range fields {
+		switch f.key {
+		case "executor":
+			if name, ok := p.name(f.value, "scribe: executor"); ok {
+				if o.Executors[name] == nil {
+					p.errorf(f.value, "scribe: executor %q is not declared under the top-level executors", name)
+				}
+				x.Executor = name
+			}
+		case "model":
+			x.Model, _ = p.scalar(f.value, "scribe: model")
+		case "effort":
+			x.Effort, _ = p.scalar(f.value, "scribe: effort")
+		case "timeout":
+			x.Timeout = p.duration(f.value, "scribe: timeout")
+		}
+	}
+	for _, k := range []string{"executor", "model"} {
+		if !hasKey(n, k) {
+			p.errorf(n, "scribe: missing key %q (the setup assistant has no default model)", k)
+		}
+	}
+	o.Scribe = x
+}
+
 // agentNode reads the keys of an agent node.
 func (p *parser) agentNode(node *Node, keyN *yaml.Node, fields map[string]entry, o *Orders) {
 	what := fmt.Sprintf("node %q", node.ID)
@@ -147,7 +179,11 @@ func (p *parser) readFile(n *yaml.Node, what string) (string, []byte, bool) {
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(filepath.Dir(p.file), filepath.FromSlash(rel))
 	}
-	data, err := os.ReadFile(path)
+	data, ok := p.overlay[path]
+	var err error
+	if !ok {
+		data, err = os.ReadFile(path)
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			p.errorf(n, "%s: file %q does not exist (looked for %s)", what, rel, path)

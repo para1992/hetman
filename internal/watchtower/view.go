@@ -12,6 +12,7 @@ import (
 	"hetman/internal/ask"
 	"hetman/internal/chronicle"
 	"hetman/internal/engine"
+	"hetman/internal/explain"
 	"hetman/internal/orders"
 )
 
@@ -75,7 +76,8 @@ type Campaign struct {
 	Columns       []Column             `json:"columns"`
 	Nodes         map[string][]Attempt `json:"nodes"` // attempt history per node
 	LastSeq       int64                `json:"lastSeq"`
-	Ask           *Ask                 `json:"ask,omitempty"` // the question open now
+	Ask           *Ask                 `json:"ask,omitempty"`   // the question open now
+	Words         []explain.Section    `json:"words,omitempty"` // the campaign in plain words
 }
 
 // Ask is one round of questions to a person and, once given, the answers.

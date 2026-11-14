@@ -1,6 +1,6 @@
 ---
 name: hetman-scribe
-description: Set up a Hetman flow for a project through a short interview. Use when someone wants to describe their build, check, release or agent-driven process as a Hetman orders.yaml, or to change an existing one. Asks plain questions one at a time, writes orders.yaml, prompt templates, output schemas and any small check scripts the person asks for, and runs hetman check until the file is accepted.
+description: Set up a Hetman flow for a project through a short interview. Use when someone wants to describe their build, check, release or agent-driven process as a Hetman orders.yaml, or to change an existing one. Asks plain questions one at a time, builds orders.yaml with the hetman scribe operations (which edit the file, keep its comments and refuse a result that does not pass the check), writes prompt templates, output schemas and any small check scripts the person asks for, and runs hetman check until the file is accepted.
 ---
 
 # Setting up a Hetman flow
@@ -10,9 +10,10 @@ made of commands, and steps done by a coding agent) as a Hetman flow. Hetman run
 file called `orders.yaml`, records every step in a journal (the chronicle) and decides
 on its own which step comes next.
 
-Your job is to interview the person, write `orders.yaml` (with the prompt templates and
-output schemas of any agent steps, and small check scripts if they ask for them), and
-run `hetman check` until the file is accepted. The file you
+Your job is to interview the person, build `orders.yaml` with the `hetman scribe`
+operations (see "Changing the file: use the operations"), write the prompt templates
+and output schemas of any agent steps and small check scripts if they ask for them,
+and run `hetman check` until the file is accepted. The file you
 write is the product: a plain file the person can read, review in version control and
 edit by hand later. Write it so that it reads well without you: short comments, step
 names that say what the step does, no clever tricks.
@@ -45,6 +46,7 @@ executors:            # optional: adapter programs that run agent steps, declare
   coder: {run: [./adapters/my-adapter]}
 
 notify: {run: [./notify.sh], timeout: 30s}   # optional: run when a campaign waits for a person
+scribe: {executor: coder, model: "..."}      # optional: the model hetman scribe may ask (see below)
 
 nodes:                # required: the steps, by id
   build:
@@ -281,6 +283,84 @@ nodes:
   or resumes). Offer one only if the person wants to be told in a messenger; it is a
   script they supply or ask you to write, which never blocks the campaign.
 
+## Changing the file: use the operations
+
+Hetman has a fixed set of operations on `orders.yaml`, run as commands. Use them
+instead of editing the YAML yourself wherever one exists. Each one edits the file in
+place and keeps everything it does not change (comments, blank lines, order,
+alignment), wires the transitions so that the flow stays connected, prints the change
+as a diff, and runs the orders check on the result: when the result would not pass,
+it writes nothing and prints the problems (exit code 2). Add `-dry-run` to see a
+change without writing it, and `-f FILE` when the file is not `orders.yaml` in the
+current folder.
+
+```
+hetman scribe new TYPE NODE [-flow NAME] [node flags]       start a new file with its first node
+hetman scribe add TYPE NODE -after NODE [-via OUTCOME] [node flags]
+hetman scribe add TYPE NODE -before NODE [node flags]
+hetman scribe remove NODE                    what led to it then leads where its main outcome led
+hetman scribe rename NODE NEW                also renames it in the start, transitions and prompt templates
+hetman scribe link NODE OUTCOME TARGET       set or change a transition (TARGET: a node, done or failed)
+hetman scribe unlink NODE OUTCOME            remove a transition
+hetman scribe set NODE FIELD VALUE           run, timeout, idle_timeout, executor, model, effort,
+                                             tools, attempts, dialogue, prompt, schema
+hetman scribe unset NODE FIELD               timeout, idle_timeout, model, effort, tools, attempts, dialogue
+hetman scribe check NAME -run CMD [-timeout D] [-soft | -required]   declare a check or change one
+hetman scribe executor NAME -run CMD         declare an executor or change its command
+hetman scribe gate-add GATE CHECK [-at N]    put a declared check into a gate, at position N from 1
+hetman scribe gate-remove GATE CHECK
+hetman scribe ask NODE ID QUESTION [-kind yesno|choice|text] [-options A,B]
+hetman scribe assistant EXECUTOR MODEL [-effort E]   the model hetman scribe may ask
+```
+
+Node flags: `-run 'CMD ARGS'` (one string, split at spaces; quote an argument that has
+spaces), `-timeout 5m`, `-checks a,b` (declared checks, in order), `-executor NAME`,
+`-model M`, `-effort E`, `-tools a,b`, `-attempts N`, `-prompt FILE`, `-schema FILE`,
+`-outcomes a,b` (of an agent or human node), `-on OUTCOME=TARGET` (repeat it; every
+outcome other than the main one leads to `failed` unless given), and `-starters`
+(create a minimal prompt template and schema for an agent node where those files do
+not exist yet; it never overwrites a file).
+
+How they wire the flow:
+
+- The main outcome of a node is `ok`, else `pass`, else its first outcome that is not
+  `fail`, `timeout` or `blocked` (the first in an agent's schema, the first choice of a
+  human node). `add -after X` makes X's main outcome (or `-via OUTCOME`) lead to the
+  new node, and the new node's main outcome lead where X's did. `add -before Y` makes
+  the start, if it was Y, and every main outcome that led to Y lead to the new node,
+  whose main outcome leads to Y; transitions back to Y (rework loops) stay as they are.
+- `set NODE timeout` on a script adds `timeout: failed` when the node has no
+  transition for `timeout`; `unset NODE timeout` removes it.
+- Declare a check before a gate uses it, and an executor before an agent node or
+  `assistant` names it.
+
+Examples:
+
+```sh
+hetman scribe new script build -flow blog -run 'make build' -timeout 5m
+hetman scribe check spelling -run './checks/spell.sh' -soft
+hetman scribe check links -run './checks/links.sh' -timeout 15m
+hetman scribe add gate checked -after build -checks spelling,links
+hetman scribe add script upload -after checked -run './upload.sh' -timeout 10m
+hetman scribe executor coder -run './adapters/my-adapter'
+hetman scribe add agent review -after build -executor coder -outcomes approved,needs_rework -on needs_rework=build -starters
+```
+
+Some changes need two operations and a state in between that does not pass the
+check, such as a gate that only asks a person (add it with `-force`, then `ask`).
+`-force` writes such a state; finish it with the next operation and make sure
+`hetman check` passes in the end. Do not use `-force` to get past a problem you do not
+understand.
+
+There is no operation for the content of prompt templates and schemas, for `show`,
+`notify`, comments, or moving a node to another place in the file. Edit those by hand,
+keep the rest of the file as it is, and run `hetman check` afterwards. Never edit by
+hand what an operation can do.
+
+`hetman scribe explain [-c ID] [-kind where|history|rework|failures|warnings]` tells
+in plain sentences, from the chronicle, where a campaign is, what ran, why it went back
+and what failed; use it to answer questions about a campaign.
+
 ## Running the interview
 
 Before asking anything, look around: find the project folder, see whether an
@@ -390,7 +470,17 @@ upload is `./upload.sh`, which overwrites the same files every time, so running 
 twice is harmless; the spelling check is `./checks/spell.sh` (fast, soft); the link
 check is `./checks/links.sh` (a few minutes, required). Spelling and links only
 verify, so they become checks; the person agrees both can run after the build, so one
-gate holds them. You write:
+gate holds them. You build the file with the operations:
+
+```sh
+hetman scribe new script build -flow blog -run 'make build' -timeout 5m
+hetman scribe check spelling -run ./checks/spell.sh -soft
+hetman scribe check links -run ./checks/links.sh -timeout 15m
+hetman scribe add gate checked -after build -checks spelling,links
+hetman scribe add script upload -after checked -run ./upload.sh -timeout 10m
+```
+
+and add the three comments by hand. The result:
 
 ```yaml
 # Build the blog, check it, upload it.

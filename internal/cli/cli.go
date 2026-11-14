@@ -49,7 +49,9 @@ commands:
   resume   continue a halted, stopped or interrupted campaign
   answer   answer the questions a campaign asks a person
   serve    show every campaign live on a web page (Watchtower)
-  scribe   write the setup assistant skill for a coding agent
+  scribe   set the flow up: a wizard, operations on the orders file, a
+           sentence through a model, campaigns explained in plain words
+           (hetman scribe help lists it all)
   version  print the version of hetman
 
 flags (check, run, status, halt, resume, serve):
@@ -68,7 +70,7 @@ flags (status):
   -events  also list every chronicle event
 flags (serve):
   -addr ADDRESS  where to listen (default 127.0.0.1:8740, reachable only from this computer)
-flags (scribe):
+flags (scribe skill):
   -dir DIR  folder for the skill file (default .agents/skills/hetman-scribe)
   -force    replace a different skill file that is already there
 
@@ -84,7 +86,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	cmd, args := args[0], args[1:]
 	switch cmd {
 	case "scribe":
-		return writeScribe(args, stdout, stderr)
+		return scribeCmd(args, stdout, stderr)
 	case "version":
 		return version(args, stdout, stderr)
 	}
@@ -188,7 +190,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 
 // writeScribe writes the setup assistant skill into a folder.
 func writeScribe(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("hetman scribe", flag.ContinueOnError)
+	fs := flag.NewFlagSet("hetman scribe skill", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dir := fs.String("dir", DefaultScribeDir, "folder for the skill file")
 	force := fs.Bool("force", false, "replace a different skill file")
@@ -196,16 +198,16 @@ func writeScribe(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "hetman scribe: unexpected argument %q\n", fs.Arg(0))
+		fmt.Fprintf(stderr, "hetman scribe skill: unexpected argument %q\n", fs.Arg(0))
 		return exitUsage
 	}
 	path, changed, err := scribe.Write(filepath.FromSlash(*dir), *force)
 	switch {
 	case errors.Is(err, scribe.ErrExists):
-		fmt.Fprintf(stderr, "hetman scribe: %s: a different file already exists; use -force to replace it\n", path)
+		fmt.Fprintf(stderr, "hetman scribe skill: %s: a different file already exists; use -force to replace it\n", path)
 		return exitFailed
 	case err != nil:
-		fmt.Fprintln(stderr, "hetman scribe:", err)
+		fmt.Fprintln(stderr, "hetman scribe skill:", err)
 		return exitFailed
 	case changed:
 		fmt.Fprintf(stdout, "wrote %s\n", path)
