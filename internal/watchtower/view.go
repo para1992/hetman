@@ -5,8 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
+	"hetman/internal/ask"
 	"hetman/internal/chronicle"
 	"hetman/internal/engine"
 	"hetman/internal/orders"
@@ -23,6 +26,7 @@ const (
 	StateWaiting     = "waiting" // waits for a subscription limit to reset, then continues on its own
 	StateLimit       = "limit"   // stopped by a subscription limit with no time to retry; waits for a person
 	StateOffline     = "offline" // stopped by lost connectivity; waits for a person
+	StateAsking      = "asking"  // waits for a person to answer questions
 )
 
 // Step, check and tile statuses shown on the page.
@@ -34,6 +38,7 @@ const (
 	StatusWarning     = "warning" // a soft check failed
 	StatusNotRun      = "notrun"
 	StatusInterrupted = "interrupted"
+	StatusAsking      = "asking" // waits for a person to answer
 )
 
 // Summary is one row of the campaign list.
@@ -46,6 +51,7 @@ type Summary struct {
 	Error         string     `json:"error,omitempty"`
 	Wait          string     `json:"wait,omitempty"`      // limit or offline while the step at Node waits
 	WaitUntil     *time.Time `json:"waitUntil,omitempty"` // when a limit wait ends on its own
+	Driven        bool       `json:"driven"`              // a process drives the campaign now
 	Started       time.Time  `json:"started"`
 	Ended         *time.Time `json:"ended,omitempty"` // last event once the campaign is not running
 	Marks         []Mark     `json:"marks"`
@@ -69,6 +75,32 @@ type Campaign struct {
 	Columns       []Column             `json:"columns"`
 	Nodes         map[string][]Attempt `json:"nodes"` // attempt history per node
 	LastSeq       int64                `json:"lastSeq"`
+	Ask           *Ask                 `json:"ask,omitempty"` // the question open now
+}
+
+// Ask is one round of questions to a person and, once given, the answers.
+type Ask struct {
+	Seq        int64          `json:"seq"`
+	Node       string         `json:"node"`
+	Reason     string         `json:"reason"`
+	Round      int            `json:"round,omitempty"`
+	At         time.Time      `json:"at"`
+	Questions  []ask.Question `json:"questions"`
+	Show       []string       `json:"show,omitempty"`
+	Outcomes   []Outcome      `json:"outcomes,omitempty"`
+	Answers    []ask.Answer   `json:"answers,omitempty"`
+	Outcome    string         `json:"outcome,omitempty"` // the outcome chosen at a human node
+	By         string         `json:"by,omitempty"`
+	Via        string         `json:"via,omitempty"`
+	AnsweredAt *time.Time     `json:"answeredAt,omitempty"`
+	Command    string         `json:"command,omitempty"` // while open: the command that answers it
+	Example    string         `json:"example,omitempty"` // while open: the same with every answer given as a flag
+}
+
+// Outcome is one outcome a person may choose at a human node.
+type Outcome struct {
+	Name string `json:"name"`
+	To   string `json:"to,omitempty"`
 }
 
 // Column is one node of the pipeline. Main-line columns carry the nodes off
@@ -135,6 +167,7 @@ type Attempt struct {
 	Output    json.RawMessage `json:"output,omitempty"`    // validated output
 	Failure   string          `json:"failure,omitempty"`   // why the attempt failed
 	RetryAt   *time.Time      `json:"retryAt,omitempty"`   // limit: when it is tried again
+	Ask       *Ask            `json:"ask,omitempty"`       // the questions this attempt put to a person
 }
 
 // CheckRun is one execution of a gate check within an attempt.
@@ -190,6 +223,16 @@ type Event struct {
 	Output   json.RawMessage `json:"output,omitempty"`
 	Failure  string          `json:"failure,omitempty"`
 	RetryAt  *time.Time      `json:"retryAt,omitempty"`
+
+	Reason    string         `json:"reason,omitempty"`
+	Questions []ask.Question `json:"questions,omitempty"`
+	Show      []string       `json:"show,omitempty"`
+	Outcomes  []string       `json:"outcomes,omitempty"`
+	Round     int            `json:"round,omitempty"`
+	Answers   []ask.Answer   `json:"answers,omitempty"`
+	Ask       int64          `json:"ask,omitempty"`
+	By        string         `json:"by,omitempty"`
+	Via       string         `json:"via,omitempty"`
 }
 
 func eventsJSON(events []chronicle.Event) []Event {
@@ -199,7 +242,9 @@ func eventsJSON(events []chronicle.Event) []Event {
 			Outcome: e.Outcome, To: e.To, Error: e.Error, Exit: e.Exit, Ms: e.Millis, Log: e.Log,
 			Artifacts: e.Artifacts, Soft: e.Soft, Pid: e.Pid, Ident: e.Ident,
 			Input: e.Input, Executor: e.Executor, Model: e.Model, Effort: e.Effort, Prompt: e.Prompt,
-			Session: e.Session, Output: e.Output, Failure: e.Failure, RetryAt: e.RetryAt}
+			Session: e.Session, Output: e.Output, Failure: e.Failure, RetryAt: e.RetryAt,
+			Reason: e.Reason, Questions: e.Questions, Show: e.Show, Outcomes: e.Outcomes, Round: e.Round,
+			Answers: e.Answers, Ask: e.Ask, By: e.By, Via: e.Via}
 	}
 	return out
 }
@@ -226,6 +271,8 @@ func build(k chronicle.Campaign, events []chronicle.Event, o *orders.Orders, cam
 		c.State = StateError
 	case st.Halted:
 		c.State = StateHalted
+	case st.Asking():
+		c.State = StateAsking
 	case st.Waiting == chronicle.WaitOffline:
 		c.State = StateOffline
 	case st.Waiting == chronicle.WaitLimit && st.WaitUntil.IsZero():
@@ -238,9 +285,12 @@ func build(k chronicle.Campaign, events []chronicle.Event, o *orders.Orders, cam
 	default:
 		c.State = StateInterrupted
 	}
+	if st.End == "" {
+		c.Driven = driven()
+	}
 	if n := len(events); n > 0 {
 		c.LastSeq = events[n-1].Seq
-		if c.State != StateRunning {
+		if c.State != StateRunning && !(c.State == StateAsking && c.Driven) {
 			at := events[n-1].At
 			c.Ended = &at
 		}
@@ -256,6 +306,7 @@ func build(k chronicle.Campaign, events []chronicle.Event, o *orders.Orders, cam
 	}
 	var seen []string
 	cur := map[string]*Attempt{}
+	asks := map[int64]*Ask{}
 	transitions := map[string][]chronicle.Event{}
 	for _, e := range events {
 		switch e.Kind {
@@ -333,6 +384,24 @@ func build(k chronicle.Campaign, events []chronicle.Event, o *orders.Orders, cam
 					a.Result = existing(campaignDir, engine.ResultFile(e.Node, "", e.Attempt))
 				}
 			}
+		case chronicle.Asked:
+			q := &Ask{Seq: e.Seq, Node: e.Node, Reason: e.Reason, Round: e.Round, At: e.At, Questions: e.Questions, Show: e.Show}
+			for _, out := range e.Outcomes {
+				x := Outcome{Name: out}
+				if def := nodeDef(o, e.Node); def != nil {
+					x.To = def.On[out]
+				}
+				q.Outcomes = append(q.Outcomes, x)
+			}
+			asks[e.Seq] = q
+			if a := find(c.Nodes[e.Node], e.Attempt); a != nil {
+				a.Ask = q
+			}
+		case chronicle.Answered:
+			if q := asks[e.Ask]; q != nil && q.AnsweredAt == nil {
+				at := e.At
+				q.Answers, q.Outcome, q.By, q.Via, q.AnsweredAt = e.Answers, e.Outcome, e.By, e.Via, &at
+			}
 		case chronicle.Transition:
 			transitions[e.Node] = append(transitions[e.Node], e)
 			if list := c.Nodes[e.Node]; len(list) > 0 {
@@ -344,9 +413,23 @@ func build(k chronicle.Campaign, events []chronicle.Event, o *orders.Orders, cam
 	// drives the campaign; otherwise its driver died during the step.
 	for _, list := range c.Nodes {
 		for i := range list {
-			if list[i].Status == StatusRunning && (!live || i < len(list)-1) {
-				list[i].Status = StatusInterrupted
+			a := &list[i]
+			switch {
+			case a.Ask != nil && a.Ask.AnsweredAt == nil && st.Ask != nil && st.Ask.Seq == a.Ask.Seq:
+				a.Status = StatusAsking
+			case a.Ask != nil && a.Finished == nil && a.Ask.AnsweredAt != nil:
+				// Answered; the step finishes when a process drives the campaign.
+				a.Status = StatusWaiting
+			case a.Status == StatusRunning && (!live || i < len(list)-1):
+				a.Status = StatusInterrupted
 			}
+		}
+	}
+	if st.Asking() && st.End == "" {
+		c.Ask = asks[st.Ask.Seq]
+		if c.Ask != nil && o != nil {
+			c.Ask.Command = engine.AnswerCommand(o, k.ID)
+			c.Ask.Example = answerExample(c.Ask)
 		}
 	}
 	// Checks of a gate that were not reached in an attempt.
@@ -408,7 +491,7 @@ func nodeDef(o *orders.Orders, node string) *orders.Node {
 // logIfScript is the log of a step that runs a single command, known before
 // the step finishes so that it can be followed live.
 func logIfScript(o *orders.Orders, node string, attempt int) string {
-	if def := nodeDef(o, node); def != nil && len(def.Checks) > 0 {
+	if def := nodeDef(o, node); def != nil && (len(def.Checks) > 0 || len(def.Ask) > 0 || def.Type == orders.Human) {
 		return ""
 	}
 	return engine.LogFile(node, "", attempt)
@@ -465,6 +548,8 @@ func fill(col *Column, c *Campaign, st chronicle.State, soft map[string]bool) {
 	col.Attempts = len(list)
 	col.Current = col.Node == st.Node && st.End == ""
 	switch {
+	case col.Current && st.Asking():
+		col.Status = StatusAsking
 	case col.Current && c.Wait != "":
 		col.Status = StatusWaiting
 	case len(list) > 0:
@@ -688,4 +773,24 @@ func column(o *orders.Orders, node string, transitions map[string][]chronicle.Ev
 		}
 	}
 	return col
+}
+
+// answerExample is the answer command with an answer given for every
+// question as a flag, for people who script it.
+func answerExample(q *Ask) string {
+	parts := []string{q.Command, "-ask", strconv.FormatInt(q.Seq, 10)}
+	for _, x := range q.Questions {
+		v := "TEXT"
+		switch x.Kind {
+		case ask.YesNo:
+			v = ask.Yes
+		case ask.Choice:
+			v = x.Options[0]
+		}
+		parts = append(parts, "-a", engine.ShellQuote(x.ID+"="+v))
+	}
+	if len(q.Outcomes) > 1 {
+		parts = append(parts, "-outcome", q.Outcomes[0].Name)
+	}
+	return strings.Join(parts, " ")
 }

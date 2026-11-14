@@ -46,15 +46,16 @@
   const STATUS_TEXT = {
     passed: 'passed', running: 'running', waiting: 'waiting', failed: 'failed',
     warning: 'soft check failed', notrun: 'not run', interrupted: 'interrupted',
-    limit: 'subscription limit reached', offline: 'connectivity lost',
+    limit: 'subscription limit reached', offline: 'connectivity lost', asking: 'waiting for a person',
   };
   const STATE_MARK = {
     running: 'running', halted: 'halted', done: 'passed', failed: 'failed',
-    error: 'error', interrupted: 'interrupted', waiting: 'waiting', limit: 'limit', offline: 'offline',
+    error: 'error', interrupted: 'interrupted', waiting: 'waiting', limit: 'limit', offline: 'offline', asking: 'asking',
   };
   const STATE_TEXT = {
-    waiting: 'waiting for limit', limit: 'limit reached', offline: 'offline',
+    waiting: 'waiting for limit', limit: 'limit reached', offline: 'offline', asking: 'waiting for a person',
   };
+  const REASON_TEXT = { gate: 'The gate asks', human: 'A person decides here', dialogue: 'The agent step asks' };
   const FAILURE_TEXT = {
     invalid_output: 'the output did not match the schema',
     transient: 'the adapter reported a transient error',
@@ -152,6 +153,11 @@
         el.append(sv('circle', { cx: 8, cy: 8, r: 7, fill: 'currentColor' }),
           sv('path', Object.assign({ d: 'M5.2 5h5.6M5.2 11h5.6M6 5.2c0 2 4 3.6 4 5.6M10 5.2c0 2-4 3.6-4 5.6' }, paper, { 'stroke-width': 1.4 })));
         break;
+      case 'asking':
+        el.append(sv('path', { d: 'M2.2 3.6a2 2 0 0 1 2-2h7.6a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H7.4L4.2 14.6v-3H4.2a2 2 0 0 1-2-2z', fill: 'currentColor' }),
+          sv('path', Object.assign({ d: 'M6.3 5.2a1.8 1.8 0 1 1 2.4 1.7c-.5.2-.7.5-.7 1v.3' }, paper, { 'stroke-width': 1.4 })),
+          sv('circle', { cx: 8, cy: 10, r: 0.8, class: 'paper-fill' }));
+        break;
       case 'offline':
         el.append(sv('circle', { cx: 8, cy: 8, r: 7, fill: 'currentColor' }),
           sv('path', Object.assign({ d: 'M4.6 7.4a5 5 0 0 1 6.8 0M6.2 9.4a2.6 2.6 0 0 1 3.6 0M4.4 4.4l7.2 7.2' }, paper, { 'stroke-width': 1.5 })));
@@ -179,6 +185,7 @@
     open: new Set(),   // keys of <details> the person opened or closed
     closed: new Set(),
     logs: new Map(),   // log viewers kept across renders
+    forms: new Map(),  // what was typed into an answer form, by question number
   };
 
   function parseRoute() {
@@ -341,6 +348,7 @@
       return ['running ', h('b', { text: c.node }), ' (attempt ' + last.n + ')'];
     }
     if (c.state === 'halted') return ['halted before ', h('b', { text: c.node })];
+    if (c.state === 'asking') return ['waits at ', h('b', { text: c.node }), ' for a person to answer'];
     if (c.state === 'waiting') {
       return ['waiting at ', h('b', { text: c.node }), ' for the subscription limit; runs again at ' + fmtTime(c.waitUntil) + ' (in ',
         h('span', { 'data-until': c.waitUntil, text: fmtDur(ms(c.waitUntil) - Date.now()) }), ')'];
@@ -355,9 +363,9 @@
     const c = S.campaign;
     const r = S.route;
     document.title = '#' + c.id + ' ' + c.flow + ' · ' + c.state + ' · Watchtower';
-    const canHalt = (c.state === 'running' || c.state === 'interrupted') && !c.haltRequested;
+    const canHalt = (c.state === 'running' || c.state === 'interrupted' || c.state === 'asking') && !c.haltRequested;
     const canResume = c.state === 'halted' || c.state === 'error' || c.state === 'interrupted' || c.state === 'limit' ||
-      c.state === 'offline' || c.haltRequested;
+      c.state === 'offline' || c.haltRequested || (c.state === 'asking' && !c.driven);
     const pos = position(c);
     const out = [
       h('nav', { class: 'crumbs' }, h('a', { href: '#/', text: '← All campaigns' })),
@@ -391,6 +399,14 @@
 
   // Explains a campaign that waits because of an agent step.
   function waitNote(c) {
+    if (c.ask && !c.end) {
+      const open = S.route.node === c.ask.node;
+      return h('div', { class: 'problem ask' }, h('b', { text: 'Waiting for a person. ' }),
+        (REASON_TEXT[c.ask.reason] || 'The step asks') + ' at ', h('code', { text: c.ask.node }), '. ',
+        open ? 'Answer below, or in a terminal with ' : h('a', { href: href(c.id, 'pipeline', c.ask.node), text: 'Answer on its step card' }),
+        open ? h('code', { text: c.ask.command }) : ', or in a terminal with ', open ? '.' : h('code', { text: c.ask.command }),
+        c.driven ? '' : ' No process drives the campaign now: an answer given here continues it from this server; after an answer in a terminal, resume it.');
+    }
     if (!c.wait || c.end) return null;
     if (c.state === 'limit') {
       return h('div', { class: 'problem soft' }, h('b', { text: 'Subscription limit reached. ' }),
@@ -511,6 +527,8 @@
         if (t.outcome && t.outcome !== 'ok' && t.outcome !== 'pass') sub.push(t.outcome);
         if (last.finished) sub.push(fmtDur(ms(last.finished) - ms(last.started)));
         else if (t.status === 'running') sub.push(liveDur(last.started));
+      } else if (col.status === 'asking') {
+        sub.push('needs an answer');
       } else if (col.status === 'waiting') {
         if (col.current && c.wait === 'limit' && c.waitUntil) sub.push('limit, again at ' + fmtTime(c.waitUntil));
         else if (col.current && c.wait) sub.push(c.wait === 'limit' ? 'limit reached' : 'offline');
@@ -531,7 +549,7 @@
 
   function legend() {
     return h('div', { class: 'legend', 'aria-label': 'legend' },
-      ['passed', 'running', 'waiting', 'failed', 'warning', 'notrun', 'interrupted'].map((s) =>
+      ['passed', 'running', 'waiting', 'asking', 'failed', 'warning', 'notrun', 'interrupted'].map((s) =>
         h('span', null, mark(s, 'small'), STATUS_TEXT[s])));
   }
 
@@ -620,6 +638,7 @@
       }
       body.append(table);
     }
+    if (a.ask) body.append(...askBlock(c, a.ask));
     if (a.prompt) body.append(fileBlock(c.id, 'Prompt', a.prompt));
     if (a.log) {
       body.append(h('h3', { text: a.status === 'running' ? 'Log (live)' : 'Log' }), logView(c.id, a.log, a.status === 'running'));
@@ -652,17 +671,126 @@
     }));
   }
 
-  function fileBlock(id, title, path) {
-    const key = 'file:' + id + ':' + path;
+  function fileBlock(id, title, path, url) {
+    url = url || fileURL(id, path);
+    const key = 'file:' + id + ':' + url;
     let v = S.logs.get(key);
     if (!v) {
       const pre = h('pre', { class: 'log', text: 'loading…' });
-      v = { el: h('div', null, h('h3', null, title + ' ', h('a', { href: fileURL(id, path), target: '_blank', rel: 'noopener', text: path })), pre) };
+      v = { el: h('div', null, h('h3', null, title + ' ', h('a', { href: url, target: '_blank', rel: 'noopener', text: path })), pre) };
       S.logs.set(key, v);
-      fetch(fileURL(id, path)).then((r) => r.ok ? r.text() : Promise.reject(new Error(r.statusText)))
+      fetch(url).then((r) => r.ok ? r.text() : r.text().then((t) => Promise.reject(new Error(t.trim() || r.statusText))))
         .then((t) => { pre.textContent = t; }, (e) => { pre.textContent = 'cannot read: ' + e.message; });
     }
     return v.el;
+  }
+
+  // ---- questions to a person ---------------------------------------------
+
+  function showURL(id, seq, i) { return '/api/campaigns/' + id + '/show?ask=' + seq + '&i=' + i; }
+
+  const KIND_TEXT = { yesno: 'yes or no', choice: 'one of the options', text: 'text' };
+
+  // The questions of one round: the files to look at, then the form while
+  // the question is open, or the answers once given.
+  function askBlock(c, q) {
+    const open = c.ask && c.ask.seq === q.seq;
+    const title = (q.reason === 'dialogue' ? 'Questions of the agent, round ' + q.round : q.reason === 'human' ? 'Decision of a person' : 'Questions for a person') +
+      ' (#' + q.seq + ', asked ' + fmtTime(q.at) + ')';
+    const out = [h('h3', { class: open ? 'ask-title' : '' }, mark(open ? 'asking' : 'passed', 'small'), ' ', title)];
+    (q.show || []).forEach((p, i) => out.push(fileBlock(c.id, 'Look at', p, showURL(c.id, q.seq, i))));
+    out.push(open ? answerForm(c, q) : answered(q));
+    return out;
+  }
+
+  function answered(q) {
+    if (!q.answeredAt) return h('p', { class: 'empty', text: 'Not answered.' });
+    const byID = {};
+    for (const a of q.answers || []) byID[a.id] = a;
+    const rows = (q.questions || []).map((x) => {
+      const a = byID[x.id] || {};
+      return kv(x.question, [h('b', { class: a.value === 'no' ? 'err' : '', text: a.value || '—' }), a.comment ? [' — ', a.comment] : null]);
+    });
+    if (q.reason === 'human' && q.outcome) rows.push(kv('Outcome', h('code', { text: q.outcome })));
+    rows.push(kv('Answered', [q.by ? ['by ', h('b', { text: q.by }), ' '] : null, q.via ? '(' + (q.via === 'page' ? 'on this page' : 'on the command line') + ') ' : '', 'at ' + fmtTime(q.answeredAt, true)]));
+    return h('dl', { class: 'kv answers' }, rows);
+  }
+
+  function savedBy() {
+    try { return localStorage.getItem('hetman.by') || ''; } catch (e) { return ''; }
+  }
+
+  function answerForm(c, q) {
+    let st = S.forms.get(q.seq);
+    if (!st) {
+      st = { values: {}, comments: {}, outcome: '', by: savedBy(), error: '', busy: false };
+      S.forms.set(q.seq, st);
+    }
+    const name = (id) => 'a-' + q.seq + '-' + id;
+    const radio = (group, value, label, checked, set) => h('label', { class: 'opt' },
+      h('input', { type: 'radio', name: group, value: value, checked: checked, 'data-fkey': group + '=' + value, onchange: () => set(value) }), ' ', label);
+    const items = (q.questions || []).map((x, i) => {
+      const set = (v) => { st.values[x.id] = v; };
+      let input;
+      if (x.kind === 'text') {
+        input = h('textarea', { rows: 3, name: name(x.id), 'data-fkey': name(x.id), oninput: (e) => set(e.target.value) });
+        input.value = st.values[x.id] || '';
+      } else {
+        const opts = x.kind === 'choice' ? x.options : ['yes', 'no'];
+        input = h('div', { class: 'opts', role: 'radiogroup' }, opts.map((o) => radio(name(x.id), o, o, st.values[x.id] === o, set)));
+      }
+      let comment = null;
+      if (x.kind !== 'text') {
+        comment = h('input', { type: 'text', class: 'comment', placeholder: 'comment (optional)', 'aria-label': 'comment on ' + x.id,
+          'data-fkey': name(x.id) + '/comment', oninput: (e) => { st.comments[x.id] = e.target.value; } });
+        comment.value = st.comments[x.id] || '';
+      }
+      return h('fieldset', { class: 'q' }, h('legend', null, (i + 1) + '. ' + x.question, ' ', h('span', { class: 'tag', title: 'question id', text: x.id })),
+        h('div', { class: 'hint', text: KIND_TEXT[x.kind] || x.kind }), input, comment);
+    });
+    if ((q.outcomes || []).length > 1) {
+      items.push(h('fieldset', { class: 'q' }, h('legend', { text: 'Outcome: where the flow goes next' }),
+        h('div', { class: 'opts', role: 'radiogroup' }, q.outcomes.map((o) =>
+          radio('o-' + q.seq, o.name, [h('code', { text: o.name }), o.to ? ' → ' + o.to : ''], st.outcome === o.name, (v) => { st.outcome = v; })))));
+    } else if ((q.outcomes || []).length === 1) {
+      items.push(h('p', { class: 'hint' }, 'The flow goes on with ', h('code', { text: q.outcomes[0].name }), '.'));
+    }
+    const by = h('input', { type: 'text', class: 'by', placeholder: 'your name (optional)', 'aria-label': 'answered by', 'data-fkey': 'by-' + q.seq,
+      oninput: (e) => { st.by = e.target.value; } });
+    by.value = st.by;
+    return h('form', { class: 'answer', novalidate: true, onsubmit: (e) => { e.preventDefault(); submitAnswer(c, q, st); } },
+      items,
+      h('div', { class: 'send' },
+        h('label', null, 'Answered by ', by),
+        h('button', { class: 'btn primary', type: 'submit', 'data-fkey': 'send-' + q.seq, disabled: st.busy, text: st.busy ? 'Recording…' : 'Record answers' })),
+      st.error ? h('div', { class: 'err form-err', role: 'alert', text: st.error }) : null,
+      h('div', { class: 'cmd' }, 'The same from a terminal: ', h('code', { text: q.command }),
+        h('div', null, 'or, without questions: ', h('code', { text: q.example }))));
+  }
+
+  async function submitAnswer(c, q, st) {
+    st.busy = true;
+    st.error = '';
+    render();
+    try { localStorage.setItem('hetman.by', st.by); } catch (e) { /* not kept */ }
+    try {
+      const res = await fetch('/api/campaigns/' + c.id + '/answer', {
+        method: 'POST', headers: { 'X-Hetman-Control': '1', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ask: q.seq, values: st.values, comments: st.comments, outcome: st.outcome, by: st.by }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || res.statusText);
+      S.forms.delete(q.seq);
+      toast({
+        driving: 'Answers recorded. This server now drives the campaign.',
+        elsewhere: 'Answers recorded. The process that drives the campaign continues.',
+        recorded: 'Answers recorded. The campaign is halted or stopped; resume it to continue.',
+      }[body.result] || 'Answers recorded.');
+    } catch (e) {
+      st.error = e.message.replace(/^invalid answers: /, 'Nothing was recorded: ');
+    }
+    st.busy = false;
+    render();
   }
 
   // A log viewer. While its step runs it follows the file through the log
@@ -810,6 +938,15 @@
       if (e.retryAt) det.push('retry_at=' + fmtTime(e.retryAt, true));
       if (e.input) det.push('input=' + JSON.stringify(e.input));
       if (e.output) det.push('output=' + JSON.stringify(e.output));
+      if (e.reason) det.push('reason=' + e.reason);
+      if (e.round) det.push('round=' + e.round);
+      if (e.questions) det.push('questions=' + e.questions.map((x) => x.id).join(','));
+      if (e.show) det.push('show=' + e.show.join(','));
+      if (e.outcomes) det.push('outcomes=' + e.outcomes.join(','));
+      if (e.ask) det.push('ask=' + e.ask);
+      if (e.answers) det.push('answers=' + e.answers.map((a) => a.id + '=' + a.value + (a.comment ? ' (' + a.comment + ')' : '')).join('; '));
+      if (e.by) det.push('by=' + e.by);
+      if (e.via) det.push('via=' + e.via);
       if (e.error) det.push('error=' + JSON.stringify(e.error));
       return h('tr', { class: e.seq >= S.freshFrom ? 'fresh' : '' },
         h('td', { class: 'n', text: e.seq }),

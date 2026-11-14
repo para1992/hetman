@@ -42,6 +42,10 @@ func TestStubWithPlan(t *testing.T) {
   "nodes": {
     "conformance": [[{"log": "thinking"}, {"session": "s-1"}, {"result": {"outcome": "ok"}}]],
     "conformance-resume": [[{"session": "s-1"}, {"result": {"outcome": "ok"}}]],
+    "conformance-dialogue": [
+      [{"session": "s-2"}, {"result": {"outcome": "questions", "questions": [{"id": "color", "question": "Which color?", "kind": "choice", "options": ["red", "blue"]}]}}],
+      [{"require_session": "s-2"}, {"session": "s-2"}, {"result": {"outcome": "ok"}}]
+    ],
     "conformance-cancel": [[{"log": "counting"}, {"hang": true}]]
   }
 }`), 0o644); err != nil {

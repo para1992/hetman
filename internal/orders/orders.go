@@ -17,6 +17,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"hetman/internal/ask"
 	"hetman/internal/prompt"
 	"hetman/internal/schema"
 )
@@ -29,7 +30,11 @@ const (
 	Script = "script"
 	Gate   = "gate"
 	Agent  = "agent"
+	Human  = "human"
 )
+
+// DefaultNotifyTimeout limits the notification hook when it sets no timeout.
+const DefaultNotifyTimeout = 30 * time.Second
 
 // DefaultMaxAttempts is the attempt budget of an agent node that does not
 // set max_attempts.
@@ -61,6 +66,7 @@ type Orders struct {
 	Executors map[string]*Executor
 	Nodes     map[string]*Node
 	Order     []string // node ids in file order
+	Notify    *Notify  // the notification hook, or nil
 
 	programs []program // the program of every run list, in file order
 }
@@ -79,6 +85,12 @@ type Check struct {
 	Soft    bool
 }
 
+// Notify is the command run whenever a campaign starts waiting for a person.
+type Notify struct {
+	Run     []string
+	Timeout time.Duration
+}
+
 // Executor is an adapter program declared once at the top level.
 type Executor struct {
 	Name string
@@ -94,6 +106,12 @@ type Node struct {
 	Checks  []string
 	On      map[string]string
 
+	// Gates and human nodes.
+	Ask  []ask.Question // questions for a person
+	Show []string       // files the person looks at, relative to the orders folder
+	// Human nodes: the outcomes a person chooses from, in file order.
+	Decisions []string
+
 	// Agent nodes only.
 	Executor    string
 	Model       string
@@ -106,6 +124,7 @@ type Node struct {
 	SchemaJSON  []byte           // the schema file, compacted, as sent to the adapter
 	IdleTimeout time.Duration
 	MaxAttempts int
+	Dialogue    int // how many rounds of questions the step may ask a person; 0 for none
 }
 
 // Outcomes lists the outcomes the engine can produce for the node without a
@@ -116,6 +135,8 @@ func (n *Node) Outcomes() []string {
 	switch n.Type {
 	case Gate:
 		out = []string{Pass, Blocked}
+	case Human:
+		return n.Decisions
 	case Agent:
 		out = n.ModelOutcomes()
 		if !contains(out, Fail) {
@@ -389,7 +410,7 @@ func (p *parser) duration(n *yaml.Node, what string) time.Duration {
 }
 
 func (p *parser) top(root *yaml.Node, o *Orders) {
-	entries, ok := p.mapping(root, "orders", "version", "flow", "start", "checks", "executors", "nodes")
+	entries, ok := p.mapping(root, "orders", "version", "flow", "start", "checks", "executors", "notify", "nodes")
 	if !ok {
 		return
 	}
@@ -411,6 +432,8 @@ func (p *parser) top(root *yaml.Node, o *Orders) {
 			p.checks(e.value, o)
 		case "executors":
 			p.executors(e.value, o)
+		case "notify":
+			p.notify(e.value, o)
 		case "nodes":
 			nodesN = e.value
 		}
@@ -534,12 +557,12 @@ func (p *parser) nodes(n *yaml.Node, o *Orders) {
 
 func (p *parser) node(id string, keyN, n *yaml.Node, o *Orders) (*Node, *yaml.Node) {
 	what := fmt.Sprintf("node %q", id)
-	fields, ok := p.mapping(n, what, append([]string{"type", "run", "timeout", "checks", "on"}, agentKeys...)...)
+	fields, ok := p.mapping(n, what, append([]string{"type", "run", "timeout", "checks", "ask", "show", "on"}, agentKeys...)...)
 	if !ok {
 		return nil, nil
 	}
 	node := &Node{ID: id, On: map[string]string{}}
-	var typeN, runN, timeoutN, checksN, onN *yaml.Node
+	var typeN, runN, timeoutN, checksN, askN, showN, onN *yaml.Node
 	agent := map[string]entry{}
 	for _, f := range fields {
 		switch f.key {
@@ -551,6 +574,10 @@ func (p *parser) node(id string, keyN, n *yaml.Node, o *Orders) (*Node, *yaml.No
 			timeoutN = f.value
 		case "checks":
 			checksN = f.value
+		case "ask":
+			askN = f.value
+		case "show":
+			showN = f.value
 		case "on":
 			onN = f.value
 		default:
@@ -558,18 +585,48 @@ func (p *parser) node(id string, keyN, n *yaml.Node, o *Orders) (*Node, *yaml.No
 		}
 	}
 	if typeN == nil {
-		p.errorf(keyN, "%s: missing key \"type\" (script, gate or agent)", what)
+		p.errorf(keyN, "%s: missing key \"type\" (script, gate, agent or human)", what)
 		return nil, nil
 	}
 	t, ok := p.scalar(typeN, what+": type")
 	if !ok {
 		return nil, nil
 	}
-	if t != Script && t != Gate && t != Agent {
-		p.errorf(typeN, "%s: unknown node type %q (known: script, gate, agent)", what, t)
+	if t != Script && t != Gate && t != Agent && t != Human {
+		p.errorf(typeN, "%s: unknown node type %q (known: script, gate, agent, human)", what, t)
 		return nil, nil
 	}
 	node.Type = t
+	if t != Gate && t != Human {
+		if askN != nil {
+			p.errorf(askN, "%s: ask is allowed only on a gate or a human node", what)
+			askN = nil
+		}
+		if showN != nil {
+			p.errorf(showN, "%s: show is allowed only on a gate or a human node", what)
+			showN = nil
+		}
+	}
+	if askN != nil {
+		node.Ask = p.questions(askN, what, t == Gate)
+	}
+	if showN != nil {
+		node.Show = p.show(showN, what)
+		if askN == nil && t == Gate {
+			p.errorf(showN, "%s: show needs ask: the files are shown to the person who answers", what)
+		}
+	}
+	if t == Human {
+		for _, k := range []struct {
+			n    *yaml.Node
+			name string
+		}{{runN, "run"}, {checksN, "checks"}, {timeoutN, "timeout"}} {
+			if k.n != nil {
+				p.errorf(k.n, "%s: a human node has no %s; it waits for a person", what, k.name)
+			}
+		}
+		runN, checksN, timeoutN = nil, nil, nil
+	}
 	if t != Agent {
 		for _, k := range agentKeys {
 			if f, ok := agent[k]; ok {
@@ -605,13 +662,17 @@ func (p *parser) node(id string, keyN, n *yaml.Node, o *Orders) (*Node, *yaml.No
 		switch {
 		case runN != nil && checksN != nil:
 			p.errorf(checksN, "%s: a gate has either run or checks, not both", what)
-		case runN == nil && checksN == nil:
-			p.errorf(keyN, "%s: a gate needs checks (or a single run command)", what)
-		case checksN != nil:
+		case runN != nil && askN != nil:
+			p.errorf(askN, "%s: a gate with ask takes checks, not run; declare the command as a check", what)
+		case runN == nil && checksN == nil && askN == nil:
+			p.errorf(keyN, "%s: a gate needs checks, ask, or a single run command", what)
+		case checksN != nil || askN != nil:
 			if timeoutN != nil {
-				p.errorf(timeoutN, "%s: a gate with checks has no timeout of its own; set timeout on each check", what)
+				p.errorf(timeoutN, "%s: a gate with checks or ask has no timeout of its own; set timeout on each check", what)
 			}
-			node.Checks = p.gateChecks(checksN, what, o)
+			if checksN != nil {
+				node.Checks = p.gateChecks(checksN, what, o)
+			}
 		}
 	}
 	return node, onN
@@ -659,9 +720,12 @@ func (p *parser) transitions(node *Node, onN, keyN, nodesN *yaml.Node, o *Orders
 		if !ok {
 			continue
 		}
-		if node.Type == Gate && len(node.Checks) > 0 && outcome != Pass && outcome != Blocked {
-			p.errorf(e.keyN, "%s: a gate with checks only produces pass or blocked, not %q", what, outcome)
+		if node.Type == Gate && (len(node.Checks) > 0 || len(node.Ask) > 0) && outcome != Pass && outcome != Blocked {
+			p.errorf(e.keyN, "%s: a gate with checks or ask only produces pass or blocked, not %q", what, outcome)
 			continue
+		}
+		if node.Type == Human {
+			node.Decisions = append(node.Decisions, outcome)
 		}
 		target, ok := p.name(e.value, what+": transition target")
 		if !ok {
@@ -674,6 +738,9 @@ func (p *parser) transitions(node *Node, onN, keyN, nodesN *yaml.Node, o *Orders
 			continue
 		}
 		node.On[outcome] = target
+	}
+	if node.Type == Human && len(entries) == 0 {
+		p.errorf(onN, "%s: a human node needs at least one outcome in on: the choices the person has", what)
 	}
 	for _, outcome := range node.Outcomes() {
 		if _, ok := node.On[outcome]; !ok && !hasKey(onN, outcome) {

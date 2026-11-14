@@ -47,6 +47,7 @@ commands:
   status   show where a campaign is
   halt     halt a campaign after its current step
   resume   continue a halted, stopped or interrupted campaign
+  answer   answer the questions a campaign asks a person
   serve    show every campaign live on a web page (Watchtower)
   scribe   write the setup assistant skill for a coding agent
   version  print the version of hetman
@@ -55,8 +56,14 @@ flags (check, run, status, halt, resume, serve):
   -f FILE  orders file (default orders.yaml)
 flags (run):
   -input FILE  JSON file with the run input, an object prompt templates can refer to
-flags (status, halt, resume):
+flags (status, halt, resume, answer):
   -c ID    campaign id (default: the latest campaign)
+flags (answer; without -a, -comment and -outcome it asks in the terminal):
+  -a ID=ANSWER       answer one question (yes or no, an option, or text); repeat for each
+  -comment ID=TEXT   comment on one answer; repeat as needed
+  -outcome NAME      the outcome chosen at a human node
+  -ask N             answer only if question #N is still the open one
+  -by NAME           who answers (default: the user name of this computer)
 flags (status):
   -events  also list every chronicle event
 flags (serve):
@@ -87,16 +94,20 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	var campaign *int64
 	var events *bool
 	var addr, input *string
+	var answers *answerFlags
 	switch cmd {
 	case "check":
 	case "run":
 		input = fs.String("input", "", "JSON file with the run input")
 	case "serve":
 		addr = fs.String("addr", DefaultAddr, "address to listen on")
-	case "status", "halt", "resume":
+	case "status", "halt", "resume", "answer":
 		campaign = fs.Int64("c", 0, "campaign id (default: latest)")
 		if cmd == "status" {
 			events = fs.Bool("events", false, "list every chronicle event")
+		}
+		if cmd == "answer" {
+			answers = addAnswerFlags(fs)
 		}
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
@@ -168,6 +179,8 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		return c.halt(*campaign)
 	case "serve":
 		return c.serve(*addr)
+	case "answer":
+		return c.answer(*campaign, answers)
 	default:
 		return c.resume(*campaign)
 	}
@@ -284,8 +297,14 @@ func (c *command) drive(id int64) int {
 	}
 	e := &engine.Engine{Orders: c.o, Chron: c.chron, Campaign: id, Out: c.stdout}
 	res, err := e.Drive(ctx)
+	e.WaitHooks()
 	switch {
 	case errors.Is(err, engine.ErrInterrupted):
+		if asked, _, _ := engine.Pending(c.chron, id); asked != nil {
+			fmt.Fprintf(c.stderr, "campaign %d still waits for a person at %s; answer with %s, then continue with %s\n",
+				id, asked.Node, engine.AnswerCommand(c.o, id), engine.ResumeCommand(c.o, id))
+			return exitInterrupted
+		}
 		fmt.Fprintf(c.stderr, "campaign %d interrupted; the current step runs again on hetman resume -c %d\n", id, id)
 		return exitInterrupted
 	case err != nil:

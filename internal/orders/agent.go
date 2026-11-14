@@ -11,12 +11,13 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"hetman/internal/ask"
 	"hetman/internal/prompt"
 	"hetman/internal/schema"
 )
 
 // agentKeys are the keys only an agent node may have.
-var agentKeys = []string{"executor", "prompt", "model", "effort", "tools", "schema", "idle_timeout", "max_attempts"}
+var agentKeys = []string{"executor", "prompt", "model", "effort", "tools", "schema", "idle_timeout", "max_attempts", "dialogue"}
 
 // OutcomeField is the field of an agent's output that names its outcome.
 const OutcomeField = "outcome"
@@ -114,6 +115,15 @@ func (p *parser) agentNode(node *Node, keyN *yaml.Node, fields map[string]entry,
 			node.MaxAttempts = n
 		}
 	}
+	if f, ok := fields["dialogue"]; ok {
+		v := f.value
+		n, err := strconv.Atoi(v.Value)
+		if v.Kind != yaml.ScalarNode || v.Tag != "!!int" || err != nil || n < 1 || n > 100 {
+			p.errorf(v, "%s: dialogue must be a whole number of question rounds from 1 to 100, got %q", what, v.Value)
+		} else {
+			node.Dialogue = n
+		}
+	}
 	if f, ok := fields["prompt"]; ok {
 		if path, data, ok := p.readFile(f.value, what+": prompt"); ok {
 			node.Prompt = path
@@ -188,6 +198,14 @@ func (p *parser) agentSchema(node *Node, path string, data []byte) {
 			at(out, "outcome %q: use letters, digits, '_', '-' and '.' only", name)
 			return
 		}
+		if name == ask.Outcome && node.Dialogue > 0 {
+			at(out, "outcome %q is reserved: a dialogue step reports it when it asks the person questions; leave it out of the enum", name)
+			return
+		}
+	}
+	if q := s.Properties[ask.Field]; q != nil && node.Dialogue > 0 {
+		at(q, "property %q is reserved for the questions of a dialogue step", ask.Field)
+		return
 	}
 	var compact bytes.Buffer
 	if err := json.Compact(&compact, data); err != nil {
@@ -203,13 +221,14 @@ const (
 	RefOutput   = "output"   // {{output.NODE}} or {{output.NODE.field...}}: an agent node's output
 	RefArtifact = "artifact" // {{artifact.NODE.FILE}}: a file a script or gate listed as an artifact
 	RefRework   = "rework"   // {{rework}}: why the flow came back to this node
+	RefAnswers  = "answers"  // {{answers.NODE}}, {{answers.NODE.ID}}, {{answers.NODE.ID.comment}}: what a person answered
 )
 
 // Ref is what a placeholder of a prompt template refers to.
 type Ref struct {
 	Kind string
 	Node string   // output and artifact
-	Path []string // fields inside the input or the output
+	Path []string // fields inside the input or the output; the question id (and "comment") of answers
 	File string   // artifact
 }
 
@@ -237,6 +256,8 @@ func (o *Orders) Ref(name string) (Ref, error) {
 			}
 		}
 		return r, nil
+	case RefAnswers:
+		return o.answersRef(name, rest)
 	case RefOutput, RefArtifact:
 		node, tail := o.longestNode(rest)
 		if node == "" {
@@ -270,7 +291,7 @@ func (o *Orders) Ref(name string) (Ref, error) {
 		}
 		return r, nil
 	}
-	return Ref{}, fmt.Errorf("{{%s}} is not a known placeholder (use input, output.NODE, artifact.NODE.FILE or rework)", name)
+	return Ref{}, fmt.Errorf("{{%s}} is not a known placeholder (use input, output.NODE, artifact.NODE.FILE, answers.NODE or rework)", name)
 }
 
 // longestNode splits "a.b.c" into the longest node id prefix and the rest.

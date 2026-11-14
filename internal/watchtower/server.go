@@ -1,5 +1,6 @@
 // Package watchtower serves the web page that shows the campaigns of one
-// orders file live, and lets a person halt and resume them.
+// orders file live, and lets a person halt and resume them and answer the
+// questions a campaign asks.
 //
 // Everything shown is derived from the chronicle, as the command line does.
 // The page is kept current with server-sent events; changes are noticed by
@@ -24,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"hetman/internal/ask"
 	"hetman/internal/chronicle"
 	"hetman/internal/engine"
 	"hetman/internal/orders"
@@ -127,6 +129,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/stream", s.handleStream)
 	mux.Handle("POST /api/campaigns/{id}/halt", s.control(s.handleHalt))
 	mux.Handle("POST /api/campaigns/{id}/resume", s.control(s.handleResume))
+	mux.HandleFunc("GET /api/campaigns/{id}/show", s.handleShow)
+	mux.Handle("POST /api/campaigns/{id}/answer", s.control(s.handleAnswer))
 	return s.guard(mux)
 }
 
@@ -198,8 +202,11 @@ func writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, chronicle.ErrNoCampaign), errors.Is(err, errBadID):
 		status = http.StatusNotFound
-	case errors.Is(err, engine.ErrEnded):
+	case errors.Is(err, engine.ErrEnded), errors.Is(err, engine.ErrNothingAsked), errors.Is(err, engine.ErrAnswered),
+		errors.Is(err, engine.ErrOtherAsk):
 		status = http.StatusConflict
+	case errors.Is(err, ask.ErrInvalid), errors.Is(err, errBadAnswer):
+		status = http.StatusBadRequest
 	case errors.Is(err, errBadPath):
 		status = http.StatusBadRequest
 	}
@@ -207,8 +214,9 @@ func writeError(w http.ResponseWriter, err error) {
 }
 
 var (
-	errBadID   = errors.New("no such campaign")
-	errBadPath = errors.New("path must name a file under logs, results, prompts or work of the campaign")
+	errBadID     = errors.New("no such campaign")
+	errBadPath   = errors.New("path must name a file under logs, results, prompts or work of the campaign")
+	errBadAnswer = errors.New("the answer must be a JSON object")
 )
 
 func campaignID(r *http.Request) (int64, error) {
@@ -413,6 +421,7 @@ func (s *Server) drive(o *orders.Orders, id int64, release func()) {
 		defer release()
 		e := &engine.Engine{Orders: o, Chron: s.Chron, Campaign: id, Out: s.Log}
 		res, err := e.Drive(s.ctx)
+		e.WaitHooks()
 		if s.Log == nil {
 			return
 		}

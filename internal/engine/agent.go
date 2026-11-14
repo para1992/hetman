@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"hetman/internal/adapter"
+	"hetman/internal/ask"
 	"hetman/internal/chronicle"
 	"hetman/internal/orders"
 	"hetman/internal/prompt"
@@ -108,6 +109,12 @@ type carryOver struct {
 	session  string // conversation to continue
 	feedback string // why the previous output was rejected
 	rejected int    // the attempt whose output was rejected
+
+	// Dialogue steps.
+	rounds  int              // rounds of questions asked in this visit
+	asked   *chronicle.Event // the latest round of questions
+	answer  *chronicle.Event // the person's answer to it
+	current string           // the latest session id of the visit
 }
 
 // carry looks at the earlier attempts of this visit. The conversation of
@@ -119,20 +126,31 @@ func carry(visit []chronicle.Event, node string, canResume bool) carryOver {
 	var c carryOver
 	last, cutOff := 0, false
 	sessions := map[int]string{}
-	for _, ev := range visit {
+	for i := range visit {
+		ev := visit[i]
 		if ev.Node != node {
 			continue
 		}
 		switch ev.Kind {
+		case chronicle.Asked:
+			c.rounds++
+			c.asked, c.answer = &visit[i], nil
+			c.feedback, c.rejected = "", 0
+		case chronicle.Answered:
+			if c.asked != nil && c.answer == nil && ev.Ask == c.asked.Seq {
+				c.answer = &visit[i]
+			}
 		case chronicle.StepStarted:
 			// An attempt with no finish after it was cut off by the engine
 			// stopping, whether or not its step_interrupted is recorded yet.
 			last, cutOff = ev.Attempt, true
 			if ev.Session != "" {
 				sessions[ev.Attempt] = ev.Session
+				c.current = ev.Session
 			}
 		case chronicle.AgentSession:
 			sessions[ev.Attempt] = ev.Session
+			c.current = ev.Session
 		case chronicle.StepFinished:
 			cutOff = ev.Failure == chronicle.FailLimit || ev.Failure == chronicle.FailOffline
 			if chronicle.Counts(ev.Failure) {
@@ -159,10 +177,32 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 		}
 		return e.stop(node.ID, fmt.Sprintf("executor %s: %v", x.Name, err))
 	}
+	if node.Dialogue > 0 && !desc.Has(adapter.FeatureResume) {
+		return e.stop(node.ID, fmt.Sprintf("%s holds a dialogue, but the adapter of executor %s (%s) does not declare the %q feature, "+
+			"so it cannot continue the conversation with a person's answers; use an adapter that can, or remove dialogue", node.ID, x.Name, desc.Name, adapter.FeatureResume))
+	}
 	c := carry(events[visitStart(events, node.ID):], node.ID, desc.Has(adapter.FeatureResume))
-	text, err := e.render(node, events)
-	if err != nil {
-		return e.stop(node.ID, fmt.Sprintf("%s: prompt %s: %v", node.ID, filepath.Base(node.Prompt), err))
+	left := node.Dialogue - c.rounds // rounds of questions the step may still ask
+	var text string
+	if c.answer != nil {
+		// The person answered the step's questions: the same conversation
+		// continues with the answers as the next message.
+		c.session = c.current
+		text = dialogueMessage(c.asked, c.answer, left)
+	} else {
+		text, err = e.render(node, events)
+		if err != nil {
+			return e.stop(node.ID, fmt.Sprintf("%s: prompt %s: %v", node.ID, filepath.Base(node.Prompt), err))
+		}
+		if left > 0 {
+			text += askInstructions(left)
+		}
+	}
+	schemaJSON := node.SchemaJSON
+	if left > 0 {
+		if schemaJSON, err = ask.DialogueSchema(node.SchemaJSON); err != nil {
+			return e.stop(node.ID, fmt.Sprintf("%s: schema: %v", node.ID, err))
+		}
 	}
 	if c.feedback != "" {
 		text += fmt.Sprintf("\n\n---\nYour previous answer (attempt %d) was rejected because it does not match the required output schema:\n- %s\nAnswer again with a single JSON object that matches the schema.\n",
@@ -208,8 +248,9 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 	start := adapter.EncodeStart(adapter.Step{
 		RunID: strconv.FormatInt(e.Campaign, 10), NodeID: node.ID, Attempt: attempt, Prompt: text,
 		Model: node.Model, Effort: node.Effort, Tools: node.Tools, Workdir: e.Orders.Dir,
-		Schema: node.SchemaJSON, Session: session,
+		Schema: schemaJSON, Session: session,
 	})
+	reported := "" // the session id this attempt reported
 	recordErr := error(nil)
 	r := runAdapter(ctx, adapterProc{
 		argv:    append([]string{e.Orders.Program(x.Run[0])}, x.Run[1:]...),
@@ -228,6 +269,7 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 			}
 		},
 		session: func(id string) {
+			reported = id
 			if err := e.record(chronicle.Event{Kind: chronicle.AgentSession, Node: node.ID, Attempt: attempt,
 				Details: chronicle.Details{Session: id}}); err != nil && recordErr == nil {
 				recordErr = err
@@ -251,7 +293,16 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 	}
 	exit := r.exit
 	fin.Exit = &exit
-	e.judge(node, attempt, r, &fin)
+	questions := e.judge(node, attempt, r, &fin, left > 0)
+	if questions != nil {
+		if reported == "" {
+			reported = c.session
+		}
+		if reported == "" {
+			questions, fin.Output = nil, nil
+			fin.Failure, fin.Error = chronicle.FailProtocol, "the step asked questions but its adapter reported no session, so the conversation cannot be continued with the answers"
+		}
+	}
 	if chronicle.Counts(fin.Failure) && fin.Outcome == "" && st.Failures+1 >= node.MaxAttempts {
 		fin.Outcome = orders.Fail
 	}
@@ -264,6 +315,10 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 	}
 	took := time.Duration(fin.Millis) * time.Millisecond
 	switch {
+	case questions != nil:
+		e.say("%s asks the person %d question(s), round %d of at most %d (%s)", node.ID, len(questions), c.rounds+1, node.Dialogue, took)
+		return e.record(chronicle.Event{Kind: chronicle.Asked, Node: node.ID, Attempt: attempt, Details: chronicle.Details{
+			Reason: chronicle.ReasonDialogue, Questions: questions, Round: c.rounds + 1, Session: reported}})
 	case fin.Failure == "":
 		e.say("%s finished: %s (%s)", node.ID, fin.Outcome, took)
 	case fin.Failure == chronicle.FailPermanent:
@@ -284,27 +339,28 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 }
 
 // judge turns how the adapter ended into the outcome or failure of the
-// attempt, and stores the output.
-func (e *Engine) judge(node *orders.Node, attempt int, r adapterRun, fin *chronicle.Event) {
+// attempt, and stores the output. While the step may still ask, an output
+// with the outcome "questions" is a round of questions, which judge returns.
+func (e *Engine) judge(node *orders.Node, attempt int, r adapterRun, fin *chronicle.Event, asking bool) []ask.Question {
 	switch {
 	case r.timedOut:
 		fin.Failure, fin.Error = chronicle.FailTimeout, fmt.Sprintf("killed after timeout %s", node.Timeout)
-		return
+		return nil
 	case r.idleOut:
 		fin.Failure, fin.Error = chronicle.FailIdle, fmt.Sprintf("no message from the adapter for %s; killed", node.IdleTimeout)
-		return
+		return nil
 	case r.protocol != "":
 		fin.Failure, fin.Error = chronicle.FailProtocol, r.protocol
-		return
+		return nil
 	case r.lateExit:
 		fin.Failure, fin.Error = chronicle.FailCrash, fmt.Sprintf("the adapter did not exit within %s after its %s; killed", exitGrace, r.terminal.Type)
-		return
+		return nil
 	case r.terminal == nil:
 		fin.Failure, fin.Error = chronicle.FailCrash, fmt.Sprintf("the adapter exited with code %d without a result or an error", r.exit)
-		return
+		return nil
 	case r.exit != 0:
 		fin.Failure, fin.Error = chronicle.FailCrash, fmt.Sprintf("the adapter exited with code %d after its %s", r.exit, r.terminal.Type)
-		return
+		return nil
 	}
 	m := r.terminal
 	if m.Type == adapter.TypeError {
@@ -326,7 +382,7 @@ func (e *Engine) judge(node *orders.Node, attempt int, r adapterRun, fin *chroni
 		default:
 			fin.Failure = chronicle.FailTransient
 		}
-		return
+		return nil
 	}
 	// The output is kept in the result file of the attempt whether or not
 	// it is valid, so that a person can see what was rejected.
@@ -338,16 +394,32 @@ func (e *Engine) judge(node *orders.Node, attempt int, r adapterRun, fin *chroni
 	var v any
 	if err := json.Unmarshal(m.Output, &v); err != nil {
 		fin.Failure, fin.Error = chronicle.FailInvalidOutput, "output is not valid JSON: "+err.Error()
-		return
+		return nil
+	}
+	if obj, ok := v.(map[string]any); ok && asking && obj[orders.OutcomeField] == ask.Outcome {
+		raw, _ := json.Marshal(obj[ask.Field])
+		qs, err := ask.Parse(raw)
+		if err == nil && len(obj) != 2 {
+			err = fmt.Errorf("an answer with outcome %q holds only %q", ask.Outcome, ask.Field)
+		}
+		if err != nil {
+			fin.Failure, fin.Error = chronicle.FailInvalidOutput, err.Error()
+			return nil
+		}
+		var compact bytes.Buffer
+		json.Compact(&compact, m.Output)
+		fin.Output = compact.Bytes()
+		return qs
 	}
 	if problems := node.Schema.Validate(v); len(problems) > 0 {
 		fin.Failure, fin.Error = chronicle.FailInvalidOutput, strings.Join(problems, "; ")
-		return
+		return nil
 	}
 	var compact bytes.Buffer
 	json.Compact(&compact, m.Output)
 	fin.Output = compact.Bytes()
 	fin.Outcome = v.(map[string]any)[orders.OutcomeField].(string)
+	return nil
 }
 
 // render fills in the prompt template of a node.
@@ -381,6 +453,23 @@ func (e *Engine) render(node *orders.Node, events []chronicle.Event) (string, er
 			return show(v), nil
 		case orders.RefArtifact:
 			return e.artifact(events, ref)
+		case orders.RefAnswers:
+			asked, answer := answersOf(events, ref.Node)
+			if answer == nil {
+				return "", nil
+			}
+			if len(ref.Path) == 0 {
+				return answersText(asked, answer), nil
+			}
+			for _, a := range answer.Answers {
+				if a.ID == ref.Path[0] {
+					if len(ref.Path) == 2 {
+						return a.Comment, nil
+					}
+					return a.Value, nil
+				}
+			}
+			return "", nil
 		default:
 			return rework(events, node.ID), nil
 		}
@@ -501,5 +590,37 @@ func rework(events []chronicle.Event, node string) string {
 	if len(fin.Artifacts) > 0 {
 		fmt.Fprintf(&b, "Artifacts of %q in the work folder: %s\n", t.Node, strings.Join(fin.Artifacts, ", "))
 	}
+	if asked, answer := answersOf(events[:at], t.Node); answer != nil && asked.Attempt == fin.Attempt {
+		who := "A person"
+		if answer.By != "" {
+			who = answer.By
+		}
+		fmt.Fprintf(&b, "%s answered the questions of %q:\n%s", who, t.Node, answersText(asked, answer))
+	}
+	return b.String()
+}
+
+// askInstructions tells a dialogue step how it may ask the person.
+func askInstructions(left int) string {
+	return fmt.Sprintf(`
+
+---
+If you cannot finish this step well without answers from a person, you may ask instead of answering. Reply with a JSON object whose "outcome" is %[1]q and whose %[2]q lists what to ask, and nothing else, for example:
+{"outcome": %[1]q, %[2]q: [{"id": "scope", "question": "Should the export be included?", "kind": "yesno"}]}
+Each question has an "id" (letters, digits, '_', '-' and '.'), the "question" and a "kind": "yesno", "choice" (with "options", a list of at least two answers) or "text". The answers come back as the next message in this conversation. You may ask %[3]d more time(s); ask everything you need at once.
+`, ask.Outcome, ask.Field, left)
+}
+
+// dialogueMessage is the next message of a dialogue step: the person's
+// answers to its questions.
+func dialogueMessage(asked, answer *chronicle.Event, left int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "The person answered your questions (round %d):\n%s\n", asked.Round, ask.Write(asked.Questions, answer.Answers))
+	if left > 0 {
+		fmt.Fprintf(&b, "If you still need to know something, you may ask again in the same way %d more time(s). ", left)
+	} else {
+		b.WriteString("You may not ask any more questions. ")
+	}
+	b.WriteString("Otherwise continue the step and reply with a single JSON object that matches the required output schema.\n")
 	return b.String()
 }

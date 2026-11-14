@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -35,6 +36,7 @@ type agentAttempt struct {
 	outcome, failure, err   string
 	output                  string
 	retryAt                 *time.Time
+	asked                   int // questions this attempt asked the person
 }
 
 func (c *command) status(id int64, listEvents bool) int {
@@ -91,6 +93,10 @@ func (c *command) status(id int64, listEvents bool) int {
 			}
 		case chronicle.CheckFinished:
 			view(e.Node).checks[e.Check] = e
+		case chronicle.Asked:
+			if a := view(e.Node).lastAgent(e.Attempt); a != nil {
+				a.asked = len(e.Questions)
+			}
 		}
 	}
 
@@ -123,6 +129,8 @@ func (c *command) status(id int64, listEvents bool) int {
 		}
 		status, outcome, dur := "finished", v.outcome, ""
 		switch {
+		case n == st.Node && st.End == "" && st.Asking():
+			status, outcome = "asking", "waits for a person"
 		case v.running && st.Running && st.Node == n:
 			status, outcome = "running", ""
 		case v.running:
@@ -158,6 +166,24 @@ func (c *command) status(id int64, listEvents bool) int {
 		if v := views[n]; v != nil && len(v.agent) > 0 {
 			printAgent(w, n, v.agent, st.Running && st.Node == n && alive)
 		}
+	}
+
+	// Every answer given, then the question open now.
+	asks := map[int64]*chronicle.Event{}
+	for i := range events {
+		e := &events[i]
+		switch e.Kind {
+		case chronicle.Asked:
+			asks[e.Seq] = e
+		case chronicle.Answered:
+			if q := asks[e.Ask]; q != nil {
+				printAnswered(w, q, e)
+				delete(asks, e.Ask) // a later answer to the same question did not count
+			}
+		}
+	}
+	if st.Asking() && st.End == "" {
+		printAsked(w, c.o, k.ID, st.Ask, true)
 	}
 
 	var warnings []string
@@ -215,6 +241,8 @@ func printAgent(w io.Writer, node string, attempts []*agentAttempt, running bool
 			status = fmt.Sprintf("failed (%s): %s -> outcome %s", a.failure, a.err, a.outcome)
 		case a.failure != "":
 			status = fmt.Sprintf("failed (%s): %s", a.failure, a.err)
+		case a.asked > 0:
+			status = fmt.Sprintf("asked the person %d question(s)", a.asked)
 		default:
 			status = "outcome " + a.outcome
 		}
@@ -271,6 +299,16 @@ func (c *command) describe(id int64, st chronicle.State) string {
 	}
 	alive, _ := engine.Driven(c.o, id)
 	where := "at " + st.Node
+	if st.Asking() {
+		hint := "the running hetman process continues once answered"
+		if !alive {
+			hint = "no hetman process drives it: after answering, hetman resume continues it"
+		}
+		return fmt.Sprintf("waiting for a person at %s: hetman answer (%s)", st.Node, hint)
+	}
+	if st.Ask != nil && !alive {
+		return fmt.Sprintf("answered at %s, but no hetman process drives it (hetman resume to continue)", st.Node)
+	}
 	if st.Running {
 		where = fmt.Sprintf("running %s (attempt %d)", st.Node, st.Attempt)
 	}
@@ -353,6 +391,38 @@ func eventLine(e chronicle.Event) string {
 	}
 	if len(e.Output) > 0 {
 		parts = append(parts, "output="+string(e.Output))
+	}
+	if e.Reason != "" {
+		parts = append(parts, "reason="+e.Reason)
+	}
+	if e.Round > 0 {
+		parts = append(parts, fmt.Sprintf("round=%d", e.Round))
+	}
+	if len(e.Questions) > 0 {
+		q, _ := json.Marshal(e.Questions)
+		parts = append(parts, "questions="+string(q))
+	}
+	if len(e.Show) > 0 {
+		parts = append(parts, "show="+strings.Join(e.Show, ","))
+	}
+	if len(e.Outcomes) > 0 {
+		parts = append(parts, "outcomes="+strings.Join(e.Outcomes, ","))
+	}
+	if e.Ask != 0 {
+		parts = append(parts, fmt.Sprintf("ask=%d", e.Ask))
+	}
+	if len(e.Answers) > 0 {
+		a, _ := json.Marshal(e.Answers)
+		parts = append(parts, "answers="+string(a))
+	}
+	if e.By != "" {
+		parts = append(parts, "by="+e.By)
+	}
+	if e.Via != "" {
+		parts = append(parts, "via="+e.Via)
+	}
+	if e.Log != "" && e.Kind == chronicle.Notified {
+		parts = append(parts, "log="+e.Log)
 	}
 	if e.Error != "" {
 		parts = append(parts, fmt.Sprintf("error=%q", e.Error))

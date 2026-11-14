@@ -23,7 +23,8 @@ explain a term the first time you use it.
 ## What Hetman can express
 
 This is everything the config supports. If the person wants something that is not
-here (a person approving a step, steps running in parallel, a retry limit on a script,
+here (steps running in parallel, a retry limit on a script, a person answering on a
+fixed schedule,
 conditions in the file or in a prompt template, a pool of several clients for one step),
 say plainly that Hetman does not do that, and offer the
 nearest thing that works: usually a script that does the extra logic itself. Do not
@@ -43,6 +44,8 @@ checks:               # optional: checks that gates can use, declared once
 executors:            # optional: adapter programs that run agent steps, declared once
   coder: {run: [./adapters/my-adapter]}
 
+notify: {run: [./notify.sh], timeout: 30s}   # optional: run when a campaign waits for a person
+
 nodes:                # required: the steps, by id
   build:
     type: script
@@ -60,7 +63,7 @@ and `.` only. Every path in the file is relative to the folder that holds the fi
 
 ### Nodes
 
-There are three node types.
+There are four node types.
 
 - `script` runs one command. Its outcome is `ok` when the command exits with code 0
   and `fail` otherwise.
@@ -72,9 +75,14 @@ There are three node types.
     passed. A failed required check blocks the gate at once and the checks after it
     are not run. A failed soft check is recorded as a warning and the gate goes on.
 
+  A gate may also ask a person yes/no questions (`ask`, see "People in the flow"), with
+  or without `checks`, but not with `run`.
+
 - `agent` gives one step to a coding agent through an executor adapter (see "Agent
   steps" below). Its outcomes are the values its output schema allows for
   `outcome`, plus `fail`.
+- `human` waits for a person, who chooses one of the outcomes in its `on` (see
+  "People in the flow").
 
 A check is `{run: [...]}` with optional `timeout` and optional `soft: true` (checks are
 required unless marked soft). A check passes only when its outcome is `ok`; a failure
@@ -115,8 +123,9 @@ Outcomes a node produces:
 |---|---|
 | `script` | `ok`, `fail`, plus `timeout` if it has a timeout |
 | `gate` with `run` | `pass`, `blocked`, plus `timeout` if it has a timeout |
-| `gate` with `checks` | `pass`, `blocked` (nothing else is allowed in its `on`) |
+| `gate` with `checks` or `ask` | `pass`, `blocked` (nothing else is allowed in its `on`) |
 | `agent` | every value of `outcome` in its schema, plus `fail` (nothing else is allowed in its `on`) |
+| `human` | the keys of its `on`, whatever you name them; the person chooses one |
 
 If a step produces an outcome that has no transition, the campaign stops in an error
 state and waits for a person.
@@ -199,7 +208,9 @@ nodes:
   | `{{output.NODE}}` | the last accepted answer of agent node NODE, as JSON |
   | `{{output.NODE.FIELD}}` | one field of that answer |
   | `{{artifact.NODE.FILE}}` | the text of FILE in `HETMAN_RUN_DIR`, if script or gate NODE listed it as an artifact |
-  | `{{rework}}` | empty on the first visit; when the flow came back to this node, which step sent it back, with that step's outcome and answer or failed checks |
+  | `{{answers.NODE}}` | what a person last answered at gate or human node NODE: questions, answers, comments, chosen outcome |
+  | `{{answers.NODE.ID}}` | the answer to question ID there; `{{answers.NODE.ID.comment}}` its comment |
+  | `{{rework}}` | empty on the first visit; when the flow came back to this node, which step sent it back, with that step's outcome and answer, failed checks, or what a person answered there |
 
   An input field that does not exist stops the campaign in the error state. A node
   that has not run yet, a missing answer field or an artifact that was not listed
@@ -216,6 +227,59 @@ nodes:
   or lost connectivity uses no attempt: with a reset time Hetman waits and goes on by
   itself, otherwise the campaign waits for a person and `hetman resume` runs the step
   again. Every visit of a node gets the full number of attempts.
+
+### People in the flow
+
+A flow can stop and ask a person. While it waits, nothing has to keep running; the
+question is kept in the chronicle.
+
+```yaml
+nodes:
+  plan_approved:
+    type: gate
+    checks: [format]          # optional; run first, the person is asked only if they pass
+    ask:
+      - id: scope
+        question: Does the plan cover every requirement?
+      - id: risk
+        question: Can the change be undone?
+    show: [plan.md]           # files to look at before answering, relative to orders.yaml
+    on: {pass: implement, blocked: plan}   # any "no" blocks
+  release:
+    type: human
+    ask:                      # optional; answers are input for later steps
+      - {id: channel, question: "Which channel?", kind: choice, options: [stable, beta]}
+      - {id: notes, question: "Anything to mention?", kind: text}
+    on: {ship: publish, rework: implement, stop: failed}   # the person chooses one
+  interview:
+    type: agent
+    dialogue: 2               # may ask the person questions, up to 2 rounds
+    ...
+```
+
+- A question has an `id`, the `question` text and a `kind`: `yesno` (default),
+  `choice` (needs `options`, at least two) or `text`. A gate asks `yesno` only. Quote
+  a question that contains `?`, `:` or `#` inside `{...}`.
+- A gate with `ask` passes only when every answer is yes; any no blocks it, and the
+  step the flow goes back to sees the answers and comments through `{{rework}}`. Put a
+  gate with questions where a person must approve something, after the checks a
+  program can do.
+- A `human` node's outcome is the one the person chooses from its `on`; its questions
+  never decide it. Use it where a person decides where the flow goes.
+- `dialogue: N` on an agent node lets the step ask the person questions in the middle
+  of its work (a requirements interview, say), at most N rounds; each round continues
+  the same conversation with the answers. It needs an adapter that declares the
+  `resume` feature; ask the person whether theirs does. Its schema must not list the
+  outcome `questions` or have a property `questions`; Hetman adds them itself.
+- People answer with `hetman answer` (in the terminal, or with flags such as
+  `-a scope=yes -a risk=no -comment risk="..."` and `-outcome ship` for scripts) or on
+  the page of `hetman serve`. `hetman status` shows what is asked.
+- `notify: {run: [...], timeout: 30s}` names a command Hetman runs whenever a campaign
+  starts waiting for a person (a question, lost connectivity, a subscription limit with
+  no reset time, the error state). It gets one line of JSON on standard input
+  (campaign, node, reason, message, questions, files to show, the command that answers
+  or resumes). Offer one only if the person wants to be told in a messenger; it is a
+  script they supply or ask you to write, which never blocks the campaign.
 
 ## Running the interview
 
@@ -241,7 +305,9 @@ order, because each answer narrows the next question:
    produce or change something (build, render, upload) become `script` nodes;
    steps that only verify (lint, tests, size or quality checks) become checks in a
    gate placed where the verification has to happen; steps a coding agent does
-   (write code, review, summarise) become `agent` nodes. For an agent step ask what
+   (write code, review, summarise) become `agent` nodes; points where a person
+   approves become a gate with `ask`; points where a person decides where the flow
+   goes become a `human` node. For an agent step ask what
    the agent should be told, what it must answer (this becomes the schema), and
    which answers lead where (these become the outcomes). Checks in a gate get the
    required or soft choice and the cheapest-first order; a chain of script nodes
@@ -393,7 +459,8 @@ Mention the choices you made on their behalf, and tell them how to use it:
 
 - `hetman run -f path/to/orders.yaml` starts a new campaign and runs it to the end;
   add `-input FILE` when templates read the run input.
-- `hetman status -f path/to/orders.yaml` shows where the latest campaign is.
+- `hetman status -f path/to/orders.yaml` shows where the latest campaign is, and what
+  it asks a person, if anything; `hetman answer -f path/to/orders.yaml` answers it.
 - `hetman halt -f path/to/orders.yaml` stops the latest campaign after its current
   step; `hetman resume -f path/to/orders.yaml` continues a halted, stopped or
   interrupted one. Both take `-c ID` for an older campaign.

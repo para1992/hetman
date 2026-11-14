@@ -11,9 +11,15 @@
 //
 //	HETMAN_ADAPTER='["/path/to/adapter"]' go test ./internal/adapter/adaptertest -run External -v
 //
-// The steps it sends use the node ids "conformance", "conformance-resume"
-// and "conformance-cancel" and ask for a trivial answer, so an adapter for
-// a real client makes real but tiny requests.
+// The steps it sends use the node ids "conformance", "conformance-resume",
+// "conformance-dialogue" and "conformance-cancel" and ask for a trivial
+// answer, so an adapter for a real client makes real but tiny requests.
+//
+// Resume and dialogue are optional capabilities: their checks run only for
+// an adapter that declares the resume feature. The dialogue check is what a
+// dialogue step needs: a step that answers with questions, then the same
+// conversation continued with the answers as the next message, ending in a
+// final result.
 package adaptertest
 
 import (
@@ -28,6 +34,7 @@ import (
 	"time"
 
 	"hetman/internal/adapter"
+	"hetman/internal/ask"
 	"hetman/internal/schema"
 )
 
@@ -53,6 +60,12 @@ const Schema = `{"type":"object","properties":{"outcome":{"type":"string","enum"
 
 // Prompt is the prompt of the conformance steps.
 const Prompt = `This is a protocol check. Do not use any tools and do not change any files. Reply with exactly this JSON object and nothing else: {"outcome": "ok"}`
+
+// DialoguePrompt is the prompt of the first step of the dialogue check.
+const DialoguePrompt = `This is a protocol check. Do not use any tools and do not change any files. Reply with exactly this JSON object and nothing else: {"outcome": "questions", "questions": [{"id": "color", "question": "Which color?", "kind": "choice", "options": ["red", "blue"]}]}`
+
+// DialogueAnswer is the message that continues the dialogue check.
+const DialogueAnswer = `The person answered your questions: color = blue. Now reply with exactly this JSON object and nothing else: {"outcome": "ok"}`
 
 // CancelPrompt is the prompt of the step that is cancelled.
 const CancelPrompt = `This is a protocol check. Do not use any tools and do not change any files. Count from 1 to 2000 in words, one number per line, then reply with {"outcome": "ok"}.`
@@ -95,6 +108,39 @@ func Run(t *testing.T, cfg Config) {
 		s := run(t, cfg, desc, step(cfg, "conformance-resume", Prompt, &session), false)
 		if s.terminal == nil || s.terminal.Type != adapter.TypeResult {
 			t.Fatalf("a resumed step must end with a result; got %+v", s.terminal)
+		}
+	})
+	t.Run("dialogue", func(t *testing.T) {
+		if !desc.Has(adapter.FeatureResume) {
+			t.Skip("the adapter does not declare the resume feature, which a dialogue needs")
+		}
+		dialogue, err := ask.DialogueSchema([]byte(Schema))
+		if err != nil {
+			t.Fatal(err)
+		}
+		first := step(cfg, "conformance-dialogue", DialoguePrompt, nil)
+		first.Schema = dialogue
+		s := run(t, cfg, desc, first, false)
+		if s.terminal == nil || s.terminal.Type != adapter.TypeResult {
+			t.Fatalf("the questions step must end with a result; got %+v", s.terminal)
+		}
+		if s.session == "" {
+			t.Fatal("the questions step reported no session, so the conversation cannot be continued")
+		}
+		var out struct {
+			Outcome   string          `json:"outcome"`
+			Questions json.RawMessage `json:"questions"`
+		}
+		json.Unmarshal(s.terminal.Output, &out)
+		if _, err := ask.Parse(out.Questions); out.Outcome != ask.Outcome || err != nil {
+			// The answer is the model's; the engine would reject it and retry.
+			t.Logf("note: the first answer is not a valid questions answer (%v): %s", err, s.terminal.Output)
+		}
+		next := step(cfg, "conformance-dialogue", DialogueAnswer, &s.session)
+		next.Attempt, next.Schema = 2, dialogue
+		s = run(t, cfg, desc, next, false)
+		if s.terminal == nil || s.terminal.Type != adapter.TypeResult {
+			t.Fatalf("the continued step must end with a result; got %+v", s.terminal)
 		}
 	})
 	t.Run("cancel", func(t *testing.T) {

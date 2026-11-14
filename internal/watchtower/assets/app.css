@@ -20,6 +20,7 @@
   --notrun: #a2a6ad;
   --interrupted: #8f3f9e;
   --halted: #a2560f;
+  --asking: #c0471b;
   --shadow: 0 1px 2px rgba(30, 30, 20, .08), 0 4px 14px rgba(30, 30, 20, .06);
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", "DejaVu Sans Mono", Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", Ubuntu, sans-serif;
@@ -46,6 +47,7 @@
     --notrun: #6b717b;
     --interrupted: #c57ad4;
     --halted: #e08a3c;
+    --asking: #f0835a;
     --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 6px 18px rgba(0, 0, 0, .3);
     color-scheme: dark;
   }
@@ -109,6 +111,7 @@ main { padding: 18px 20px 60px; max-width: 1600px; margin: 0 auto; outline: none
 .st-limit { color: var(--halted); }
 .st-offline { color: var(--warning); }
 .st-done { color: var(--passed); }
+.st-asking { color: var(--asking); }
 .mark .paper { stroke: var(--panel); }
 .mark .paper-fill { fill: var(--panel); }
 .mark .spin { transform-origin: 8px 8px; animation: spin 1s linear infinite; }
@@ -339,3 +342,27 @@ pre.log .note { color: var(--faint); }
   .lane { padding: 22px 10px 14px; }
   .card { width: 100vw; border-left: 0; }
 }
+
+/* Questions to a person */
+.problem.ask {
+  border-color: color-mix(in srgb, var(--asking) 50%, var(--line));
+  background: color-mix(in srgb, var(--asking) 9%, var(--panel));
+}
+.col.st-asking .tile.st-asking { border-color: var(--asking); box-shadow: 0 0 0 2px color-mix(in srgb, var(--asking) 30%, transparent); }
+.card-body h3.ask-title { color: var(--asking); }
+.answer { display: flex; flex-direction: column; gap: 10px; margin: 8px 0 4px; }
+.answer fieldset.q { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px 10px; margin: 0; background: var(--panel); }
+.answer legend { padding: 0 4px; font-weight: 600; }
+.answer .hint { color: var(--muted); font-size: 12px; margin: 0 0 6px; }
+.answer .opts { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 2px 0 6px; }
+.answer .opt { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.answer textarea, .answer input[type="text"] {
+  width: 100%; box-sizing: border-box; font: inherit; color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px;
+}
+.answer input.by { width: 16em; }
+.answer .send { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.answer .form-err { padding: 8px 10px; border-radius: 7px; background: color-mix(in srgb, var(--failed) 8%, var(--panel)); white-space: pre-wrap; }
+.answer .cmd { color: var(--muted); font-size: 12.5px; }
+.answer .cmd code { user-select: all; word-break: break-all; color: var(--ink); }
+dl.kv.answers { grid-template-columns: minmax(8em, 1.3fr) 1fr; }

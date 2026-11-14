@@ -14,6 +14,8 @@ import (
 	"time"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
+
+	"hetman/internal/ask"
 )
 
 // Event kinds.
@@ -31,6 +33,20 @@ const (
 	Halted          = "halted"
 	Resumed         = "resumed"
 	AgentSession    = "agent_session" // an adapter reported the session id of its conversation
+	Asked           = "asked"         // a step asks a person questions; the campaign waits for the answers
+	Answered        = "answered"      // a person answered the questions of an asked event
+	Notified        = "notified"      // the notification hook ran for an event that made the campaign wait for a person
+)
+
+// Why a campaign waits for a person, recorded as Details.Reason of an asked
+// event and of a notified event.
+const (
+	ReasonGate     = "gate"     // a gate asks its questions
+	ReasonHuman    = "human"    // a human node asks for a decision
+	ReasonDialogue = "dialogue" // an agent step asks questions in the middle of its work
+	ReasonOffline  = "offline"  // an agent step lost connectivity
+	ReasonLimit    = "limit"    // an agent step hit a subscription limit with no time to retry
+	ReasonError    = "error"    // the campaign stopped in the error state
 )
 
 // Why an attempt of an agent step failed, recorded as Details.Failure of
@@ -88,6 +104,16 @@ type Details struct {
 	Output   json.RawMessage `json:"output,omitempty"`   // agent step: the validated output
 	Failure  string          `json:"failure,omitempty"`  // agent step: why the attempt failed (Fail*)
 	RetryAt  *time.Time      `json:"retry_at,omitempty"` // limit failure: when to try again
+
+	Reason    string         `json:"reason,omitempty"`    // asked, notified: why a person is needed (Reason*)
+	Questions []ask.Question `json:"questions,omitempty"` // asked: the questions
+	Show      []string       `json:"show,omitempty"`      // asked: files to look at, relative to the orders folder
+	Outcomes  []string       `json:"outcomes,omitempty"`  // asked by a human node: the outcomes to choose from
+	Round     int            `json:"round,omitempty"`     // asked by a dialogue step: which round of questions
+	Answers   []ask.Answer   `json:"answers,omitempty"`   // answered: the answers, in question order
+	Ask       int64          `json:"ask,omitempty"`       // answered, notified: the seq of the event answered or announced
+	By        string         `json:"by,omitempty"`        // answered: who answered, when known
+	Via       string         `json:"via,omitempty"`       // answered: the command line or the page
 }
 
 // Campaign is one execution of a flow.
@@ -317,7 +343,12 @@ type State struct {
 	Failures      int            // failed attempts at Node that count against its budget, this visit
 	Waiting       string         // limit or offline: the step at Node waits before it runs again
 	WaitUntil     time.Time      // for a limit: when the step runs again on its own; zero means a person resumes
+	Ask           *Event         // the asked event of the step at Node until that step has used its answers
+	Answer        *Event         // the answered event of Ask, once a person has answered
 }
+
+// Asking reports whether the campaign waits for a person to answer Ask.
+func (s State) Asking() bool { return s.Ask != nil && s.Answer == nil }
 
 // Reasons a campaign waits, in State.Waiting.
 const (
@@ -336,11 +367,13 @@ func Replay(events []Event) State {
 			s.Node, s.Running, s.Attempt, s.HasOutcome = e.Node, true, e.Attempt, false
 			s.Attempts[e.Node]++
 			s.Waiting, s.WaitUntil = "", time.Time{}
+			s.Ask, s.Answer = nil, nil
 		case StepInterrupted:
 			s.Running = false
 		case StepFinished:
 			s.Running = false
 			s.HasOutcome, s.Outcome = e.Outcome != "", e.Outcome
+			s.Ask, s.Answer = nil, nil
 			if Counts(e.Failure) {
 				s.Failures++
 			}
@@ -353,8 +386,18 @@ func Replay(events []Event) State {
 			case FailOffline:
 				s.Waiting = WaitOffline
 			}
+		case Asked:
+			ev := e
+			s.Ask, s.Answer, s.Running = &ev, nil, false
+		case Answered:
+			// Only the first answer to the question still open counts.
+			if s.Ask != nil && s.Answer == nil && e.Ask == s.Ask.Seq {
+				ev := e
+				s.Answer = &ev
+			}
 		case Transition:
 			s.HasOutcome, s.Failures = false, 0
+			s.Ask, s.Answer = nil, nil
 			if e.To == "done" || e.To == "failed" {
 				s.End = e.To
 			} else {

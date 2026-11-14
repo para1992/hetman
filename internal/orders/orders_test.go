@@ -54,7 +54,7 @@ func TestValid(t *testing.T) {
 }
 
 func TestExampleOrders(t *testing.T) {
-	for _, name := range []string{"toy", "agent"} {
+	for _, name := range []string{"toy", "agent", "person"} {
 		path := filepath.Join("..", "..", "examples", name, DefaultFile)
 		if _, err := Load(path); err != nil {
 			t.Fatal(err)
@@ -72,9 +72,9 @@ func TestRejected(t *testing.T) {
 start: a
 nodes:
   a:
-    type: human
+    type: robot
     on: {ok: done}
-`, 5, `unknown node type "human"`},
+`, 5, `unknown node type "robot"`},
 		{"transition to missing node", `version: 0
 start: a
 nodes:

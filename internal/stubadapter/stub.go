@@ -24,9 +24,16 @@
 //	{"stderr": "text"}                   write a line to standard error
 //	{"sleep": "2s"}                      wait (a cancel message ends the wait)
 //	{"touch": "path"}                    create an empty file, for tests to wait on
+//	{"write": "path", "text": "..."}     write a file, as an agent working in the folder would
+//	{"require_session": "id"}            go on only if the start message continues session id;
+//	                                     otherwise send a permanent error and stop
 //	{"result": {...}}                    send a result with this output
 //	{"error": "KIND", "message": "...", "retry_in": "30s", "retry_at": "RFC 3339 time"}
 //	                                     send an error; retry_in or retry_at for a limit
+//
+// A dialogue step asks with a result whose outcome is "questions", such as
+// {"result": {"outcome": "questions", "questions": [{"id": "q", "question": "?", "kind": "yesno"}]}};
+// the next attempt is the same conversation continued with the answers.
 //
 // A result or an error ends the moves; the adapter then exits with the code
 // given as "code" in the same move (default 0).
@@ -82,6 +89,9 @@ type Move struct {
 	Exit    *int            `json:"exit"`
 	Code    int             `json:"code"`
 	Hang    bool            `json:"hang"`
+	Require string          `json:"require_session"`
+	Write   string          `json:"write"`
+	Text    string          `json:"text"`
 }
 
 type stub struct {
@@ -257,6 +267,22 @@ func (s *stub) do(m Move, step adapter.Step) (int, bool) {
 		case <-time.After(d):
 		case <-s.cancel:
 			return s.cancelled()
+		}
+	case m.Require != "":
+		if step.Session == nil || *step.Session != m.Require {
+			got := "none"
+			if step.Session != nil {
+				got = *step.Session
+			}
+			s.send(adapter.Message{Type: adapter.TypeError, Kind: adapter.ErrPermanent,
+				Message: fmt.Sprintf("expected to continue session %s, got %s", m.Require, got)})
+			return 0, true
+		}
+	case m.Write != "":
+		path := local(step.Workdir, m.Write)
+		os.MkdirAll(filepath.Dir(path), 0o755)
+		if err := os.WriteFile(path, []byte(m.Text), 0o644); err != nil {
+			fmt.Fprintf(s.stderr, "stub: %v\n", err)
 		}
 	case m.Touch != "":
 		os.WriteFile(local(step.Workdir, m.Touch), nil, 0o644)

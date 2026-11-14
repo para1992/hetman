@@ -6,6 +6,7 @@ package teststep
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,6 +31,8 @@ const TraceFile = "trace.txt"
 //	env                 write the HETMAN_* variables to work/env.<node>.<attempt>.json
 //	spawn TIME          start a grandchild that writes a heartbeat file, then sleep TIME
 //	heartbeat FILE      rewrite FILE with a counter every 20ms, forever
+//	notice DIR          write standard input to DIR/notice.<HETMAN_REASON>.<node>.json
+//	sleep TIME          sleep, then exit with 0
 //	block DIR           write DIR/started.<node>.<attempt>, wait for DIR/release,
 //	                    then write DIR/exited.<node>.<attempt>
 //	orphan DIR          attempt 1: start a grandchild writing DIR/heartbeat, write
@@ -107,6 +110,17 @@ func Main(args []string) int {
 		must(child.Start())
 		must(os.WriteFile(filepath.Join(dir, "started."+node+"."+attempt), nil, 0o644))
 		time.Sleep(time.Hour)
+		return 0
+	case "notice":
+		// The notification hook: keep what it was given.
+		data, err := io.ReadAll(os.Stdin)
+		must(err)
+		name := fmt.Sprintf("notice.%s.%s.json", os.Getenv("HETMAN_REASON"), node)
+		must(os.WriteFile(filepath.Join(arg(args, 1), name), data, 0o644))
+		return 0
+	case "sleep":
+		d, _ := time.ParseDuration(arg(args, 1))
+		time.Sleep(d)
 		return 0
 	case "block":
 		dir := arg(args, 1)

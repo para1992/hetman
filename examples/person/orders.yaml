@@ -1,0 +1,80 @@
+# People in the flow: an agent step that interviews a person before it
+# answers, a plan written by an agent, a gate where a person approves the
+# plan (or sends it back), and a human node that decides how to go on.
+#
+# The agent steps run through the stub adapter, which runs no model and
+# follows plans/happy.json, so the example works without any real client.
+# Build it once, from the repository root:
+#
+#   go build -o examples/person/bin/stub-adapter ./cmd/hetman-stub-adapter
+#
+# Then, in this folder:
+#
+#   hetman check
+#   hetman run -input input.json        waits whenever a person is asked
+#   hetman status                       shows what is asked and how to answer
+#   hetman answer                       answers in the terminal (from a second one)
+#   hetman serve                        shows it, and answers it, on a web page
+#
+# The check and the notification hook are POSIX shell scripts run through
+# sh (on Windows, from Git Bash or another shell that has sh).
+version: 0
+flow: person-demo
+start: interview
+
+# Runs whenever a campaign starts waiting for a person. This one only
+# appends what it is given to .hetman/notifications.jsonl; a script that
+# sends it to a messenger, and answers with hetman answer, works the same way.
+notify: {run: [sh, notify.sh], timeout: 10s}
+
+executors:
+  stub: {run: [./bin/stub-adapter, plans/happy.json]}
+
+checks:
+  plan_format: {run: [sh, checks/plan-format.sh], timeout: 30s}
+
+nodes:
+  interview:
+    type: agent
+    executor: stub
+    prompt: prompts/interview.md
+    schema: schemas/interview.json
+    dialogue: 2               # may ask the person questions, up to 2 rounds
+    timeout: 5m
+    on: {ok: plan, fail: failed}
+  plan:
+    type: agent
+    executor: stub
+    prompt: prompts/plan.md
+    schema: schemas/plan.json
+    timeout: 5m
+    on: {ok: plan_approved, fail: failed}
+  plan_approved:
+    type: gate
+    checks: [plan_format]     # run first; the person is asked only if they pass
+    ask:
+      - id: scope
+        question: Does the plan cover everything the interview found?
+      - id: risk
+        question: Can every step of the plan be undone?
+    show: [plan.md]
+    on: {pass: release, blocked: plan}   # any "no" sends the plan back
+  release:
+    type: human
+    ask:
+      - id: channel
+        question: Which channel should the announcement go to?
+        kind: choice
+        options: [stable, beta]
+      - id: notes
+        question: Anything the announcement must mention?
+        kind: text
+    show: [plan.md]
+    on: {ship: announce, rework: plan, stop: failed}   # the person picks one
+  announce:
+    type: agent
+    executor: stub
+    prompt: prompts/announce.md
+    schema: schemas/announce.json
+    timeout: 5m
+    on: {ok: done, fail: failed}

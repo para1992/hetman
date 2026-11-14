@@ -5,3 +5,5 @@ dist/
 examples/agent/bin/
 examples/claude/bin/
 examples/claude/note.md
+examples/person/bin/
+examples/person/plan.md

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"hetman/internal/adapter"
@@ -128,17 +129,28 @@ type Engine struct {
 
 	described map[string]adapter.Description // per executor, asked once per drive
 	waitSaid  time.Time                      // the wait last announced
+	saidAsk   int64                          // the question last announced
+
+	outMu sync.Mutex     // progress lines come from the drive and from hooks
+	hooks sync.WaitGroup // notification hooks still running
 }
 
 func (e *Engine) say(format string, args ...any) {
 	if e.Out != nil {
+		e.outMu.Lock()
+		defer e.outMu.Unlock()
 		fmt.Fprintf(e.Out, "[%d] %s\n", e.Campaign, fmt.Sprintf(format, args...))
 	}
 }
 
+// record appends an event. An event that makes the campaign wait for a
+// person starts the notification hook.
 func (e *Engine) record(ev chronicle.Event) error {
 	ev.Campaign = e.Campaign
-	_, err := e.Chron.Append(ev)
+	ev, err := e.Chron.Append(ev)
+	if err == nil {
+		e.notify(ev)
+	}
 	return err
 }
 
@@ -191,6 +203,20 @@ func (e *Engine) Drive(ctx context.Context) (Result, error) {
 			e.say("halted before %s", node.ID)
 			return Halted, nil
 		}
+		if st.Ask != nil {
+			switch {
+			case st.Answer == nil:
+				err = e.awaitAnswer(ctx, st.Ask)
+			case st.Ask.Reason != chronicle.ReasonDialogue:
+				err = e.finishAsked(events, st)
+			}
+			if err != nil {
+				return 0, err
+			}
+			if st.Answer == nil || st.Ask.Reason != chronicle.ReasonDialogue {
+				continue
+			}
+		}
 		if st.Waiting != "" {
 			if st.WaitUntil.IsZero() {
 				what := "the subscription limit was reached"
@@ -216,9 +242,12 @@ func (e *Engine) Drive(ctx context.Context) (Result, error) {
 				return 0, err
 			}
 		}
-		if node.Type == orders.Agent {
+		switch node.Type {
+		case orders.Agent:
 			err = e.agentStep(ctx, node, st.Attempts[node.ID]+1, st, events)
-		} else {
+		case orders.Human:
+			err = e.humanStep(node, st.Attempts[node.ID]+1)
+		default:
 			err = e.step(ctx, node, st.Attempts[node.ID]+1)
 		}
 		if err != nil {
@@ -273,7 +302,7 @@ func (e *Engine) step(ctx context.Context, node *orders.Node, attempt int) error
 	e.say("%s attempt %d started", node.ID, attempt)
 	began := time.Now()
 	fin := chronicle.Event{Kind: chronicle.StepFinished, Node: node.ID, Attempt: attempt}
-	if len(node.Checks) > 0 {
+	if len(node.Checks) > 0 || len(node.Ask) > 0 {
 		outcome, msg, err := e.gate(ctx, node, attempt)
 		if err != nil {
 			return err
@@ -291,6 +320,12 @@ func (e *Engine) step(ctx context.Context, node *orders.Node, attempt int) error
 		fin.Outcome, fin.Error, fin.Exit, fin.Log, fin.Artifacts = r.outcome, r.err, r.exit, r.log, r.artifacts
 	}
 	fin.Millis = time.Since(began).Milliseconds()
+	if len(node.Ask) > 0 && fin.Outcome == orders.Pass && fin.Error == "" {
+		// The checks let the gate pass, so the person is asked; the gate
+		// finishes once they have answered.
+		return e.record(chronicle.Event{Kind: chronicle.Asked, Node: node.ID, Attempt: attempt, Details: chronicle.Details{
+			Reason: chronicle.ReasonGate, Questions: node.Ask, Show: node.Show}})
+	}
 	if err := e.record(fin); err != nil {
 		return err
 	}
@@ -343,7 +378,7 @@ type execResult struct {
 }
 
 // contractEnv are the variables the engine sets; inherited values are dropped.
-var contractEnv = []string{"HETMAN_RUN_ID", "HETMAN_NODE_ID", "HETMAN_CHECK_ID", "HETMAN_ATTEMPT", "HETMAN_RUN_DIR", "HETMAN_RESULT_FILE"}
+var contractEnv = []string{"HETMAN_RUN_ID", "HETMAN_NODE_ID", "HETMAN_CHECK_ID", "HETMAN_ATTEMPT", "HETMAN_RUN_DIR", "HETMAN_RESULT_FILE", "HETMAN_REASON"}
 
 // exec runs one command under the script contract and maps its exit to an
 // outcome: okName for exit code 0, failName otherwise, timeout when killed

@@ -1,0 +1,48 @@
+{
+  "nodes": {
+    "interview": [
+      [
+        {"session": "interview-1"},
+        {"log": "reading the topic"},
+        {"sleep": "1s"},
+        {"result": {"outcome": "questions", "questions": [
+          {"id": "downtime", "question": "May the wiki be read-only for an hour during the move?", "kind": "yesno"},
+          {"id": "when", "question": "When should the move happen?", "kind": "choice", "options": ["this week", "next month"]}
+        ]}}
+      ],
+      [
+        {"require_session": "interview-1"},
+        {"log": "reading the answers"},
+        {"sleep": "1s"},
+        {"result": {"outcome": "questions", "questions": [
+          {"id": "keep", "question": "Which page must keep its old address?", "kind": "text"}
+        ]}}
+      ],
+      [
+        {"require_session": "interview-1"},
+        {"log": "summing up the interview"},
+        {"sleep": "1s"},
+        {"result": {"outcome": "ok", "needs": ["read-only for an hour is fine", "move next month", "keep the address of the start page"]}}
+      ]
+    ],
+    "plan": [
+      [
+        {"session": "plan-1"},
+        {"log": "writing plan.md"},
+        {"write": "plan.md", "text": "# Moving the wiki\n\n1. Copy the pages to the new server.\n2. Switch the address.\n"},
+        {"sleep": "1s"},
+        {"result": {"outcome": "ok", "summary": "Copy the pages, then switch the address."}}
+      ],
+      [
+        {"session": "plan-2"},
+        {"log": "reworking plan.md after the review"},
+        {"write": "plan.md", "text": "# Moving the wiki\n\n1. Make the old wiki read-only.\n2. Copy the pages to the new server.\n3. Switch the address; keep the old server for a week to switch back.\n4. Redirect the old start page address.\n"},
+        {"sleep": "1s"},
+        {"result": {"outcome": "ok", "summary": "Freeze, copy, switch with a way back, and keep the start page address."}}
+      ]
+    ],
+    "announce": [
+      [{"log": "writing the announcement"}, {"sleep": "1s"}, {"result": {"outcome": "ok", "text": "The wiki moves next month; it is read-only for an hour."}}]
+    ]
+  }
+}

@@ -11,7 +11,9 @@ to a program, not to whoever (or whatever) runs the steps. A step cannot skip a
 gate, mark itself as passed or choose what comes next: it runs, exits, and Hetman
 moves on according to the config. That holds for steps done by a coding agent too:
 the agent answers one step in a checked format, and the config alone says where the
-flow goes next.
+flow goes next. People take part the same way: a gate can put questions to a person,
+a human node waits for a person's decision, and an agent step can interview a person
+before it answers, all at the points the config names.
 
 ## Install
 
@@ -146,6 +148,45 @@ goes on), `offline` (lost connectivity; `hetman resume` runs the step again) and
 `slow` (a one-minute step to stop and resume). Set the variable for `hetman resume`
 too, since the stub reads it on every step.
 
+### People in the flow
+
+`examples/person` puts people into a flow: an agent step that asks a person questions
+before it answers (two rounds), a plan written by an agent, a gate where a person
+approves the plan or sends it back, and a human node that decides how to go on. It
+uses the same stub adapter, plus `sh` for its check and its notification hook:
+
+```sh
+$ go build -o examples/person/bin/stub-adapter ./cmd/hetman-stub-adapter
+$ cd examples/person
+$ hetman run -input input.json
+campaign 1 started (flow person-demo)
+[1] interview attempt 1 started (executor stub)
+[1]   interview session interview-1
+[1] interview asks the person 2 question(s), round 1 of at most 2 (1.007s)
+[1] interview waits for a person (2 question(s)); answer with: hetman answer -f /path/to/examples/person/orders.yaml -c 1
+```
+
+The campaign waits. From a second terminal in the same folder, see what is asked and
+answer it, in the terminal or with flags:
+
+```sh
+$ hetman status
+...
+agent step (round 1) interview asks (question #6, 2026-11-14 22:30:55):
+  1. May the wiki be read-only for an hour during the move?  [downtime: yes/no]
+  2. When should the move happen?  [when: this week/next month]
+  answer: hetman answer -f /path/to/examples/person/orders.yaml -c 1
+      or: hetman answer -f /path/to/examples/person/orders.yaml -c 1 -ask 6 -a downtime=yes -a 'when=this week'
+$ hetman answer
+...
+$ hetman answer -a keep="the start page"
+```
+
+The waiting `hetman run` picks each answer up and goes on. Answering `no` at
+`plan_approved` sends the plan back, with the answers and comments in its prompt.
+`hetman serve` shows the same campaign and has an answer form on the card of the
+waiting step.
+
 ## Concepts
 
 **Orders.** The config file, `orders.yaml` by default. It names the first node and
@@ -196,13 +237,15 @@ nodes:
 - `timeout` is a duration such as `30s`, `10m` or `1h30m`. When it runs out, the
   command and every process it started are killed.
 
-**Nodes.** There are three types.
+**Nodes.** There are four types.
 
 - `script` runs one command. Exit code 0 gives the outcome `ok`, anything else
   `fail`.
 - `gate` decides whether the flow may go on, with the outcomes `pass` and
   `blocked`. It has either a single `run` command (exit code 0 gives `pass`) or a
-  list of `checks`, never both.
+  list of `checks`, never both, and it may ask a person questions (see Questions to
+  a person).
+- `human` waits for a person, who answers its questions and chooses its outcome.
 - `agent` gives one step to a coding agent through an executor adapter. Its outcomes
   are the values its output schema allows for `outcome`, plus `fail`. See Agent
   steps below.
@@ -236,6 +279,7 @@ and the files of each campaign live in `.hetman/` next to the orders file:
   campaigns/1/logs/      output of each step and check, per attempt
   campaigns/1/results/   result files, and the answers of agent steps
   campaigns/1/prompts/   the rendered prompt of every agent attempt
+  campaigns/1/work/answers/NODE.json   the latest answers given at a gate or human node
 ```
 
 Add `.hetman/` to your version control ignore list.
@@ -310,7 +354,10 @@ expressions, conditions or loops.
 | `{{output.NODE}}` | the last accepted answer of agent node NODE, as JSON |
 | `{{output.NODE.a}}` | a field of that answer |
 | `{{artifact.NODE.FILE}}` | the text of FILE in the work folder, when script or gate NODE listed it in its result file |
-| `{{rework}}` | empty on the first visit of the node; when the flow came back to it, the step that sent it back, its outcome and its answer, failed checks or artifacts |
+| `{{answers.NODE}}` | the latest answers a person gave at gate or human node NODE: each question, answer and comment, and the chosen outcome |
+| `{{answers.NODE.ID}}` | the answer to question ID there (`yes`, `no`, an option or the text) |
+| `{{answers.NODE.ID.comment}}` | the comment on that answer |
+| `{{rework}}` | empty on the first visit of the node; when the flow came back to it, the step that sent it back, its outcome and its answer, failed checks or artifacts, and what a person answered there |
 
 A text value is inserted as it is, any other value as indented JSON. A node id may
 contain dots; the longest node id that fits is used. A run input field that does not
@@ -339,6 +386,121 @@ lost connectivity, the attempt is lost, the campaign stops and waits for a perso
 When an attempt was cut off (Hetman stopped, a limit, lost connectivity) and the
 adapter declares the `resume` feature, the next attempt is given that id so the
 adapter can continue the conversation; otherwise the step starts fresh.
+
+## Questions to a person
+
+A flow can stop and ask a person in three ways: a gate with questions, a human node,
+and an agent step in dialogue. While it waits, the campaign is in a state of its own,
+recorded in the chronicle: it survives a restart, and nothing has to keep running.
+
+```yaml
+notify: {run: [./notify.sh], timeout: 30s}   # optional, see Notification hook
+
+nodes:
+  plan_approved:
+    type: gate
+    checks: [format]          # optional; run first
+    ask:
+      - id: scope
+        question: Does the plan cover every acceptance criterion?
+      - id: risk
+        question: Is the migration reversible?
+    show: [plan.md]           # files the person looks at before answering
+    on: {pass: implement, blocked: plan}
+  release:
+    type: human
+    ask:
+      - {id: channel, question: "Which channel?", kind: choice, options: [stable, beta]}
+      - {id: notes, question: "Anything to mention?", kind: text}
+      - {id: urgent, question: "Is it urgent?"}            # kind yesno is the default
+    show: [CHANGELOG.md]
+    on: {ship: publish, rework: implement, stop: failed}
+  interview:
+    type: agent
+    dialogue: 3               # may ask the person up to 3 rounds of questions
+    ...
+```
+
+**Questions.** `ask` lists questions, each with an `id` (letters, digits, `_`, `-`,
+`.`), the `question`, and a `kind`: `yesno` (the default), `choice` (with `options`,
+at least two) or `text`. A person may add a comment to any yes/no or choice answer.
+`show` lists files, relative to the orders folder, that the person is pointed to (in
+the terminal) or can read (on the page) before answering.
+
+**Gate with questions.** A gate may have `ask` with or without `checks` (not with
+`run`). The checks run first; only if they let the gate pass is the person asked.
+The person answers yes or no to each question. Any `no` blocks the gate; all `yes`
+passes it. The node the flow goes to next gets the answers through `{{rework}}` when
+the flow went back to it, and any later prompt through `{{answers.NODE...}}`.
+
+**Human node.** A `human` node has no command. Its outcomes are the keys of its `on`,
+and the person chooses one of them; with a single key it is chosen without asking.
+The questions (`ask`, optional) are input for later steps, not a vote: they never
+decide the outcome by themselves.
+
+**Dialogue.** An agent node with `dialogue: N` may ask the person questions in the
+middle of its work, at most N rounds per visit of the node. Hetman adds to its prompt
+how to ask, and gives the adapter a schema that also allows the answer
+`{"outcome": "questions", "questions": [{"id": "...", "question": "...", "kind": "yesno"}]}`
+(kinds as above; `choice` with `options`; one to 20 questions). Such an answer is a
+round of questions, not a result: it uses no attempt, and Hetman waits for the
+person. Then it continues the same conversation: the next attempt gets the session
+id the step reported and, as its prompt, only the person's answers. After the last
+round the step is told it may not ask again, and the schema no longer allows
+questions; asking anyway is an answer that does not match the schema. The outcome
+`questions` and the property `questions` are reserved in the schema of such a node.
+Continuing a conversation needs an adapter that declares the `resume` feature; with
+any other adapter the campaign stops in the error state before the step runs, and a
+step that asks without reporting a session id fails that attempt.
+
+**Answering.** `hetman status` shows what is asked, the files to look at and the
+commands that answer. `hetman answer` asks each question in the terminal. With flags
+it answers without asking, for scripts and chat bots:
+
+```sh
+hetman answer -c 3 -a scope=yes -a risk=no -comment risk="drops a column" -by alice
+hetman answer -c 3 -a channel=beta -a notes="thanks" -a urgent=n -outcome ship
+```
+
+`-a ID=ANSWER` answers one question (`yes`/`no`, also `y`/`n`; an option; or text),
+`-comment ID=TEXT` adds a comment, `-outcome NAME` chooses the outcome of a human node,
+`-ask N` answers only if question #N (the number `status` shows) is still the open one,
+and `-by NAME` says who answers (the user name of the computer by default). Every
+question needs an answer; answers that do not fit are refused and nothing is recorded.
+Only the first answer to a question counts. Every answer is a chronicle event with its
+time, who gave it and from where.
+
+**Waiting.** `hetman run` (or `resume`) keeps running while it waits, looking at the
+chronicle every second, and goes on as soon as an answer is recorded, whoever recorded
+it. Halt works while it waits. If the process ends while the campaign waits (Ctrl-C,
+a crash), the question stays open; answer it, then `hetman resume` continues. An
+answer given on the Watchtower page to a campaign that no process drives is
+continued by `hetman serve` itself.
+
+**Notification hook.** `notify` names a command that Hetman runs whenever a campaign
+starts waiting for a person: a question (reason `gate`, `human` or `dialogue`), lost
+connectivity (`offline`), a subscription limit with no time to retry (`limit`), or the
+error state (`error`). It runs in the folder of the orders file, with the variables of
+a step (`HETMAN_RUN_ID`, `HETMAN_NODE_ID`, `HETMAN_RUN_DIR`, ...) plus
+`HETMAN_REASON`, and reads one line of JSON on its standard input:
+
+```json
+{"campaign": 3, "flow": "release", "orders": "/path/to/orders.yaml", "node": "plan_approved",
+ "reason": "gate", "message": "gate plan_approved asks 2 question(s)", "event": 17,
+ "at": "2026-11-14T10:00:00Z",
+ "questions": [{"id": "scope", "question": "Does the plan cover ...?", "kind": "yesno"}],
+ "outcomes": [], "show": ["/path/to/plan.md"],
+ "command": "hetman answer -f /path/to/orders.yaml -c 3"}
+```
+
+`outcomes` is there for a human node, `questions` and `show` for a question, and
+`command` is the command that answers (for a question) or resumes (otherwise); `event`
+is the number to pass as `-ask`. The campaign never waits for the hook: it runs in the
+background and is killed after `timeout` (30 seconds by default). Its output goes to
+`logs/notify.EVENT.log` in the campaign folder and how it ended to a `notified` event.
+A process that ends waits for hooks it started, up to their timeout. Any messenger can
+be connected with a small script that sends the message and, when the person replies,
+runs the `hetman answer` command with flags.
 
 ## Adapters
 
@@ -447,7 +609,7 @@ the extra argument `--describe`. It must print one line and exit with code 0:
 ```
 
 `protocol` lists the versions it speaks and must include 0. The only feature so far
-is `resume`.
+is `resume`, which dialogue steps need.
 
 **Start.** Hetman then starts the program without `--describe` and writes:
 
@@ -491,7 +653,8 @@ against yours with:
 HETMAN_ADAPTER='["/path/to/my-adapter"]' go test ./internal/adapter/adaptertest -run External -v
 ```
 
-It sends three tiny steps and one that is cancelled; `HETMAN_ADAPTER_MODEL` and
+It sends tiny steps: one, one resumed and a dialogue of two steps (both only for an
+adapter that declares `resume`), and one that is cancelled; `HETMAN_ADAPTER_MODEL` and
 `HETMAN_ADAPTER_EFFORT` set the `model` and `effort` of those steps, so that a real
 client can be checked with its cheapest model. `cmd/hetman-stub-adapter` is an
 adapter that passes it without any client; its plan format is described in
@@ -511,6 +674,8 @@ hetman run    [-f FILE] [-input FILE]   start a new campaign and run it
 hetman status [-f FILE] [-c ID] [-events]  show where a campaign is
 hetman halt   [-f FILE] [-c ID]         halt a campaign after its current step
 hetman resume [-f FILE] [-c ID]         continue a halted, stopped or interrupted campaign
+hetman answer [-f FILE] [-c ID] [-a ID=ANSWER ...] [-comment ID=TEXT ...] [-outcome NAME] [-ask N] [-by NAME]
+                                        answer what a campaign asks a person
 hetman serve  [-f FILE] [-addr ADDRESS] show every campaign live on a web page (Watchtower)
 hetman scribe [-dir DIR] [-force]       write the setup assistant skill for a coding agent
 hetman version                          print the version of hetman
@@ -548,6 +713,10 @@ Exit codes:
 | 3 | halted |
 | 4 | stopped in the error state |
 | 5 | an agent step hit a subscription limit with no time to retry, or lost connectivity; waiting for a person |
+
+A campaign waiting for answers does not end `run` or `resume`; they wait with it.
+`hetman answer` exits with 0 when the answers are recorded, 2 when they do not fit
+(nothing is recorded) and 1 when nothing is open to answer.
 | 130 | interrupted |
 
 ## Writing a step
@@ -607,12 +776,23 @@ artifacts, a timeline, and the chronicle events. For an agent step the card show
 the executor, model and effort, the prompt of each attempt, the adapter's log live
 while it runs, its diagnostics, the accepted answer, the session id, and why a
 failed attempt failed. A campaign waiting for a subscription limit, or stopped by
-one or by lost connectivity, is marked as such. Everything on it comes from the
+one or by lost connectivity, is marked as such. A campaign waiting for a person is
+marked "waiting for a person", and so is the tile of the step that asks. Everything on it comes from the
 chronicle, as with `hetman status`, and updates while campaigns run.
 
 It has two controls, Halt and Resume, which do what `hetman halt` and
-`hetman resume` do. A campaign resumed from the page is run by the `hetman serve`
-process; stopping that process interrupts it, and `hetman resume` continues it.
+`hetman resume` do, and an answer form. A campaign resumed from the page is run by the
+`hetman serve` process; stopping that process interrupts it, and `hetman resume`
+continues it.
+
+The card of a step that asks shows the files to look at, the questions, and, while
+they are open, a form: yes or no and a comment for each question of a gate; the
+questions of a human node and the choice of its outcome; the questions of an agent
+step in dialogue. It also shows the `hetman answer` commands that do the same.
+Submitting the form goes through the same checks as `hetman answer`: answers that do
+not fit are shown in the form and change nothing. Recorded answers are continued by
+the process that drives the campaign, or by `hetman serve` when none does. Once
+answered, the card shows the answers, who gave them and when.
 
 ## Setup assistant
 
