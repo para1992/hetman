@@ -3,3 +3,5 @@
 /hetman.exe
 dist/
 examples/agent/bin/
+examples/claude/bin/
+examples/claude/note.md

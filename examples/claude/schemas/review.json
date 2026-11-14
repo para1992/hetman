@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "properties": {
+    "outcome": {"type": "string", "enum": ["approved", "needs_rework", "rejected"]},
+    "notes": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["outcome"],
+  "additionalProperties": false
+}

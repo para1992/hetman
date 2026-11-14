@@ -18,9 +18,9 @@ flow goes next.
 The source is at <https://github.com/para1992/hetman>. Download the binary for your
 system from its [Releases page](https://github.com/para1992/hetman/releases). Each
 release has one file per target, named `hetman-VERSION-OS-ARCH` (`.exe` on Windows),
-for Linux, macOS and Windows on amd64 and arm64, and a checksum file
-`hetman-VERSION-SHA256SUMS`. Check the download, make it executable and put it on
-your path:
+for Linux, macOS and Windows on amd64 and arm64, the same for each adapter (see
+Adapters), and a checksum file `hetman-VERSION-SHA256SUMS` for all of them. Check the
+download, make it executable and put it on your path:
 
 ```sh
 sha256sum --check --ignore-missing hetman-v0.1.0-SHA256SUMS
@@ -340,6 +340,96 @@ When an attempt was cut off (Hetman stopped, a limit, lost connectivity) and the
 adapter declares the `resume` feature, the next attempt is given that id so the
 adapter can continue the conversation; otherwise the step starts fresh.
 
+## Adapters
+
+An adapter is the program between Hetman and one coding-agent client: it receives
+one step, runs the client on it, and reports what the client does and answers, in
+the protocol described under Writing an adapter. The `hetman` binary contains no
+adapter and never names a client; an orders file names the adapter program of each
+executor. This repository has two: `hetman-adapter-claude` for the Claude Code
+client, and `hetman-stub-adapter`, which runs no model (see Agent steps without a
+real client).
+
+### Claude Code
+
+`hetman-adapter-claude` runs a step through the `claude` command-line client in
+print mode, on your subscription. Download `hetman-adapter-claude-VERSION-OS-ARCH`
+for your system from the Releases page (it is in the same checksum file), or build
+it:
+
+```sh
+go build -o hetman-adapter-claude ./cmd/hetman-adapter-claude
+```
+
+It needs `claude` on the path and logged in (`claude auth login`; on a computer
+without a browser, a token from `claude setup-token` in `CLAUDE_CODE_OAUTH_TOKEN`).
+Name it under `executors`:
+
+```yaml
+executors:
+  claude: {run: [./bin/hetman-adapter-claude]}   # options: --client PATH, --env NAME
+
+nodes:
+  implement:
+    type: agent
+    executor: claude
+    model: sonnet
+    effort: high
+    tools: [Read, Edit, Write, Grep, Glob, "Bash(go test *)"]
+    ...
+```
+
+For each attempt it runs the client in the orders folder, with the prompt on
+standard input:
+
+```
+claude -p --output-format stream-json --verbose --restricted --strict-mcp-config
+  --permission-mode dontAsk --permission-prompts none
+  --tools=Read,Edit,Write,Grep,Glob,Bash --allowedTools=Read ... --allowedTools=Bash(go test *)
+  --model sonnet --effort high --json-schema SCHEMA [--resume SESSION]
+```
+
+- `model` is a model alias of the client (`haiku`, `sonnet`, `opus`) or a full model
+  name; empty means the client's default. An unknown model fails the step at once.
+- `effort` is `low`, `medium`, `high`, `xhigh` or `max`; empty means the client's
+  default. The adapter rejects any other value, which the client would ignore.
+- `tools` lists client tool names (`Read`, `Write`, `Edit`, `Glob`, `Grep`, `Bash`,
+  `WebFetch`, `WebSearch` and the others of the client's built-in set) and permission
+  rules such as `Bash(git status)` or `Bash(go test *)`. Only the tools named are
+  available, each entry is approved in advance, and anything else is denied without
+  asking anybody. No tools means none. The adapter never uses an option that skips
+  permission checks. In `--restricted` mode the client ignores the user, project and
+  local settings files (their permission rules, hooks and tool servers do not apply)
+  and its file tools stay inside the orders folder.
+- The answer is the client's structured output, checked by the client against the
+  node's schema and again by Hetman. When the client gives only text, the last JSON
+  object in it is taken; no object at all is a transient error.
+- Errors: a subscription limit is `limit`, with the reset time when the client gives
+  one; a failed connection is `offline`; not logged in, an unknown model and bad
+  arguments are `permanent`; anything else is `transient`.
+- The log shows what the client does: its text, each tool call and what it was
+  called on, and the first line of each tool result.
+- The client gets only the environment it needs: the system's basic variables,
+  proxy and certificate settings, `CLAUDE_CONFIG_DIR` and `CLAUDE_CODE_OAUTH_TOKEN`.
+  `--env NAME` adds one more. `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are never
+  passed, since they would switch the client to paid API usage. Because the
+  variables of a running client session are not passed either, Hetman can itself be
+  run from inside a Claude Code session.
+
+**Session resume.** The adapter declares `resume` and reports the client's session
+id as soon as the client starts. When Hetman gives it a session id, the client
+continues that conversation with `--resume`, keeping the same id, and receives the
+whole prompt of the new attempt as the next message. The client keeps conversations
+on the computer that ran them, under its configuration folder and the working folder,
+so a session can be continued only by the same user on the same computer for the same
+orders folder. When the client cannot find the session, the adapter says so in the
+log and starts a new conversation with the prompt.
+
+`examples/claude` is a small flow with this adapter: a draft step that writes a note
+into a file, a gate that checks the file, and a review step that may send the draft
+back once. Its comments say how to run it; a run makes two to four small requests
+with the `haiku` model.
+
 ## Writing an adapter
 
 An adapter is a program that runs one agent step through some client. Hetman starts
@@ -401,9 +491,17 @@ against yours with:
 HETMAN_ADAPTER='["/path/to/my-adapter"]' go test ./internal/adapter/adaptertest -run External -v
 ```
 
-It sends three tiny steps and one that is cancelled. `cmd/hetman-stub-adapter` is an
+It sends three tiny steps and one that is cancelled; `HETMAN_ADAPTER_MODEL` and
+`HETMAN_ADAPTER_EFFORT` set the `model` and `effort` of those steps, so that a real
+client can be checked with its cheapest model. `cmd/hetman-stub-adapter` is an
 adapter that passes it without any client; its plan format is described in
-`internal/stubadapter`.
+`internal/stubadapter`. The tests of `cmd/hetman-adapter-claude` run the suite
+against that adapter with a fake client, and against the real client only when asked
+to (three small requests with the `haiku` model):
+
+```sh
+HETMAN_CLAUDE_REAL=1 go test ./cmd/hetman-adapter-claude -run RealClient -v
+```
 
 ## Commands
 

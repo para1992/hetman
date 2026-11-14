@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","cwd":"$WORKDIR","session_id":"00000003-0000-4000-8000-000000000003","tools":["StructuredOutput"],"mcp_servers":[],"model":"claude-haiku-5-5","permissionMode":"dontAsk","apiKeySource":"none","claude_code_version":"2.1.325","output_style":"default","uuid":"00000001-0000-4000-8000-000000000000"}
+this line is not JSON
+{"type":"something_new","detail":"an event this adapter does not know"}
+{"type":"assistant","message":{"id":"msg_00000000000000000000","model":"claude-haiku-5-5","role":"assistant","type":"message","content":[{"type":"text","text":"I am not sure what to answer."}]},"parent_tool_use_id":null,"session_id":"00000003-0000-4000-8000-000000000003","uuid":"00000003-0000-4000-8000-000000000000"}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":1200,"duration_api_ms":1100,"num_turns":1,"stop_reason":"end_turn","terminal_reason":"completed","session_id":"00000003-0000-4000-8000-000000000003","total_cost_usd":0,"result":"I am not sure what to answer. {not json}","permission_denials":[],"uuid":"00000004-0000-4000-8000-000000000000"}

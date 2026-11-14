@@ -1,0 +1,56 @@
+# Two agent steps run by the Claude Code client, with a gate between them:
+# the draft step writes a short note into note.md in this folder with its
+# file tools, the gate checks the file, and the review step reads it and may
+# send it back to the draft once.
+#
+# It needs the client installed and logged in (claude on the path) and the
+# adapter. Build the adapter once, from the repository root:
+#
+#   go build -o examples/claude/bin/hetman-adapter-claude ./cmd/hetman-adapter-claude
+#
+# Then, in this folder:
+#
+#   hetman check
+#   hetman run -input input.json
+#   hetman status
+#
+# A run makes two to four small requests with the haiku model on your
+# subscription. The gate's check is a POSIX shell script; on Windows run it
+# from a shell that has sh on its path, such as Git Bash.
+version: 0
+flow: claude-demo
+start: draft
+
+executors:
+  claude: {run: [./bin/hetman-adapter-claude]}
+
+checks:
+  note: {run: [sh, checks/note.sh], timeout: 30s}
+
+nodes:
+  draft:
+    type: agent
+    executor: claude
+    prompt: prompts/draft.md
+    schema: schemas/draft.json
+    model: haiku
+    tools: [Read, Write, Edit]   # client tool names; each one is pre-approved
+    timeout: 5m
+    idle_timeout: 2m
+    max_attempts: 2
+    on: {ok: ready, fail: failed}
+  ready:
+    type: gate
+    checks: [note]
+    on: {pass: review, blocked: failed}
+  review:
+    type: agent
+    executor: claude
+    prompt: prompts/review.md
+    schema: schemas/review.json
+    model: haiku
+    tools: [Read]                # the reviewer can read files, not change them
+    timeout: 5m
+    idle_timeout: 2m
+    max_attempts: 2
+    on: {approved: done, needs_rework: draft, rejected: failed, fail: failed}

@@ -8,8 +8,11 @@
 # VERSION defaults to GITHUB_REF_NAME (set for a tag build on GitHub) and then
 # to the tag that points at the current commit. OUT_DIR defaults to dist.
 # Files written:
-#   hetman-VERSION-OS-ARCH[.exe]   one binary per target
-#   hetman-VERSION-SHA256SUMS      checksums in sha256sum format
+#   hetman-VERSION-OS-ARCH[.exe]                  the engine, one binary per target
+#   hetman-adapter-claude-VERSION-OS-ARCH[.exe]   the adapter for the Claude Code
+#                                                 client, one binary per target
+#   hetman-VERSION-SHA256SUMS                     checksums of all of them in
+#                                                 sha256sum format
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -39,7 +42,7 @@ else
 fi
 
 mkdir -p "$out"
-rm -f "$out/hetman-$version-"*
+rm -f "$out/hetman-$version-"* "$out/hetman-adapter-claude-$version-"*
 
 files=()
 for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
@@ -53,6 +56,11 @@ for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 wi
   GOOS=$os GOARCH=$arch go build -trimpath \
     -ldflags "-s -w -buildid= -X hetman/internal/cli.Version=$version" \
     -o "$out/$name" ./cmd/hetman
+  files+=("$name")
+  echo "built $name"
+  name="hetman-adapter-claude-$version-$os-$arch$ext"
+  GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w -buildid=" \
+    -o "$out/$name" ./cmd/hetman-adapter-claude
   files+=("$name")
   echo "built $name"
 done
