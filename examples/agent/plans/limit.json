@@ -1,0 +1,9 @@
+{
+  "nodes": {
+    "draft": [
+      [{"session": "draft-session-1"}, {"log": "writing"}, {"sleep": "1s"}, {"error": "limit", "message": "usage limit reached", "retry_in": "20s"}],
+      [{"log": "continuing after the limit reset"}, {"sleep": "1s"}, {"result": {"outcome": "ok", "title": "Rotating logs", "text": "Rename the file and signal the program."}}]
+    ],
+    "review": [[{"result": {"outcome": "approved"}}]]
+  }
+}

@@ -208,7 +208,7 @@ func writeError(w http.ResponseWriter, err error) {
 
 var (
 	errBadID   = errors.New("no such campaign")
-	errBadPath = errors.New("path must name a file under logs, results or work of the campaign")
+	errBadPath = errors.New("path must name a file under logs, results, prompts or work of the campaign")
 )
 
 func campaignID(r *http.Request) (int64, error) {
@@ -310,7 +310,7 @@ func (s *Server) campaignFile(id int64, rel string) (string, error) {
 		return "", errBadPath
 	}
 	top, _, _ := strings.Cut(filepath.ToSlash(filepath.Clean(local)), "/")
-	if top != "logs" && top != "results" && top != "work" {
+	if top != "logs" && top != "results" && top != "work" && top != "prompts" {
 		return "", errBadPath
 	}
 	o, _ := s.currentOrders()

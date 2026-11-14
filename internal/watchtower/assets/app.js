@@ -46,10 +46,25 @@
   const STATUS_TEXT = {
     passed: 'passed', running: 'running', waiting: 'waiting', failed: 'failed',
     warning: 'soft check failed', notrun: 'not run', interrupted: 'interrupted',
+    limit: 'subscription limit reached', offline: 'connectivity lost',
   };
   const STATE_MARK = {
     running: 'running', halted: 'halted', done: 'passed', failed: 'failed',
-    error: 'error', interrupted: 'interrupted',
+    error: 'error', interrupted: 'interrupted', waiting: 'waiting', limit: 'limit', offline: 'offline',
+  };
+  const STATE_TEXT = {
+    waiting: 'waiting for limit', limit: 'limit reached', offline: 'offline',
+  };
+  const FAILURE_TEXT = {
+    invalid_output: 'the output did not match the schema',
+    transient: 'the adapter reported a transient error',
+    permanent: 'the adapter reported a permanent error; no retry',
+    crash: 'the adapter ended without a proper result',
+    protocol: 'the adapter broke the protocol',
+    timeout: 'the attempt ran past its timeout',
+    idle_timeout: 'the adapter sent nothing for longer than the idle timeout',
+    limit: 'the subscription limit was reached; the attempt does not count',
+    offline: 'connectivity was lost; the attempt does not count',
   };
   const CLEANUP_TEXT = {
     gone: 'nothing of the old process tree was alive',
@@ -133,6 +148,14 @@
         el.append(sv('circle', { cx: 8, cy: 8, r: 7, fill: 'currentColor' }),
           sv('path', Object.assign({ d: 'M6.2 5.2v5.6M9.8 5.2v5.6' }, paper, { 'stroke-width': 2 })));
         break;
+      case 'limit':
+        el.append(sv('circle', { cx: 8, cy: 8, r: 7, fill: 'currentColor' }),
+          sv('path', Object.assign({ d: 'M5.2 5h5.6M5.2 11h5.6M6 5.2c0 2 4 3.6 4 5.6M10 5.2c0 2-4 3.6-4 5.6' }, paper, { 'stroke-width': 1.4 })));
+        break;
+      case 'offline':
+        el.append(sv('circle', { cx: 8, cy: 8, r: 7, fill: 'currentColor' }),
+          sv('path', Object.assign({ d: 'M4.6 7.4a5 5 0 0 1 6.8 0M6.2 9.4a2.6 2.6 0 0 1 3.6 0M4.4 4.4l7.2 7.2' }, paper, { 'stroke-width': 1.5 })));
+        break;
       default: // notrun
         el.append(sv('circle', Object.assign({ cx: 8, cy: 8, r: 6 }, ink, { 'stroke-width': 1.5, 'stroke-dasharray': '2.2 2.1' })));
     }
@@ -140,7 +163,7 @@
   }
 
   function stateBadge(state) {
-    return h('span', { class: 'badge st-' + state }, mark(STATE_MARK[state] || state), h('span', { class: 'txt', text: state }));
+    return h('span', { class: 'badge st-' + state }, mark(STATE_MARK[state] || state), h('span', { class: 'txt', text: STATE_TEXT[state] || state }));
   }
 
   // ---- state and routing -------------------------------------------------
@@ -318,6 +341,12 @@
       return ['running ', h('b', { text: c.node }), ' (attempt ' + last.n + ')'];
     }
     if (c.state === 'halted') return ['halted before ', h('b', { text: c.node })];
+    if (c.state === 'waiting') {
+      return ['waiting at ', h('b', { text: c.node }), ' for the subscription limit; runs again at ' + fmtTime(c.waitUntil) + ' (in ',
+        h('span', { 'data-until': c.waitUntil, text: fmtDur(ms(c.waitUntil) - Date.now()) }), ')'];
+    }
+    if (c.state === 'limit') return ['stopped at ', h('b', { text: c.node }), ': subscription limit reached'];
+    if (c.state === 'offline') return ['stopped at ', h('b', { text: c.node }), ': connectivity lost'];
     if (c.state === 'interrupted') return ['stopped at ', h('b', { text: c.node }), ', no process drives it'];
     return ['at ', h('b', { text: c.node })];
   }
@@ -327,7 +356,8 @@
     const r = S.route;
     document.title = '#' + c.id + ' ' + c.flow + ' · ' + c.state + ' · Watchtower';
     const canHalt = (c.state === 'running' || c.state === 'interrupted') && !c.haltRequested;
-    const canResume = c.state === 'halted' || c.state === 'error' || c.state === 'interrupted' || c.haltRequested;
+    const canResume = c.state === 'halted' || c.state === 'error' || c.state === 'interrupted' || c.state === 'limit' ||
+      c.state === 'offline' || c.haltRequested;
     const pos = position(c);
     const out = [
       h('nav', { class: 'crumbs' }, h('a', { href: '#/', text: '← All campaigns' })),
@@ -347,6 +377,7 @@
         h('span', null, 'duration ', h('b', null, liveDur(c.started, c.ended))),
         pos ? h('span', null, pos) : null),
       c.error ? h('div', { class: 'problem' }, h('b', { text: 'Stopped in the error state: ' }), c.error, '\nFix the cause, then resume.') : null,
+      waitNote(c),
       c.ordersProblem ? h('div', { class: 'problem soft', text: c.ordersProblem }) : null,
       h('nav', { class: 'tabs' }, ['pipeline', 'timeline', 'chronicle'].map((t) =>
         h('a', { href: href(c.id, t), 'aria-current': r.tab === t ? 'page' : false, text: t[0].toUpperCase() + t.slice(1) }))),
@@ -356,6 +387,25 @@
     else out.push(pipeline(c), legend());
     if (r.tab === 'pipeline' && r.node) out.push(...card(c, r.node));
     app.replaceChildren(...out.filter(Boolean));
+  }
+
+  // Explains a campaign that waits because of an agent step.
+  function waitNote(c) {
+    if (!c.wait || c.end) return null;
+    if (c.state === 'limit') {
+      return h('div', { class: 'problem soft' }, h('b', { text: 'Subscription limit reached. ' }),
+        'The adapter gave no time to retry, so the campaign waits for a person. Resume runs ', h('code', { text: c.node }), ' again; the lost attempt does not count.');
+    }
+    if (c.state === 'offline') {
+      return h('div', { class: 'problem soft' }, h('b', { text: 'Connectivity lost. ' }),
+        'The attempt of ', h('code', { text: c.node }), ' was lost and does not count. Resume runs the step again once the connection is back.');
+    }
+    if (c.waitUntil) {
+      return h('div', { class: 'problem info' }, h('b', { text: 'Waiting for the subscription limit to reset. ' }),
+        h('code', { text: c.node }), ' runs again on its own at ' + fmtTime(c.waitUntil) + '.',
+        c.state === 'interrupted' ? ' No process drives the campaign now; resume it and it waits until then.' : '');
+    }
+    return null;
   }
 
   async function control(action) {
@@ -462,7 +512,9 @@
         if (last.finished) sub.push(fmtDur(ms(last.finished) - ms(last.started)));
         else if (t.status === 'running') sub.push(liveDur(last.started));
       } else if (col.status === 'waiting') {
-        sub.push(c.state === 'halted' ? 'halted here' : 'next');
+        if (col.current && c.wait === 'limit' && c.waitUntil) sub.push('limit, again at ' + fmtTime(c.waitUntil));
+        else if (col.current && c.wait) sub.push(c.wait === 'limit' ? 'limit reached' : 'offline');
+        else sub.push(c.state === 'halted' ? 'halted here' : 'next');
       }
     }
     const attempts = t.check ? t.attempts : col.attempts;
@@ -512,6 +564,9 @@
         mark(status, 'large'),
         h('h2', { text: node }),
         col && col.known ? h('span', { class: 'tag', text: col.type }) : h('span', { class: 'tag', text: 'not in orders' }),
+        col && col.executor ? h('span', { class: 'tag', title: 'executor', text: col.executor }) : null,
+        col && col.model ? h('span', { class: 'tag', title: 'model', text: col.model }) : null,
+        col && col.effort ? h('span', { class: 'tag', title: 'effort', text: 'effort ' + col.effort }) : null,
         h('button', { class: 'close', type: 'button', 'aria-label': 'Close', 'data-fkey': 'card-close', onclick: closeCard, text: '×' })),
       body);
     setTimeout(() => { if (!panel.contains(document.activeElement)) panel.focus({ preventScroll: true }); }, 0);
@@ -527,7 +582,14 @@
       a.finished ? kv('Finished', fmtTime(a.finished, true)) : null,
       kv('Duration', a.finished ? fmtDur(a.ms || ms(a.finished) - ms(a.started)) : a.status === 'running' ? liveDur(a.started) : '—'),
       a.exit !== undefined ? kv('Exit code', String(a.exit)) : null,
-      a.error ? kv('Error', h('span', { class: 'err', text: a.error })) : null,
+      a.executor ? kv('Executor', h('code', { text: a.executor })) : null,
+      a.model ? kv('Model', h('code', { text: a.model })) : null,
+      a.effort ? kv('Effort', h('code', { text: a.effort })) : null,
+      a.sessionIn ? kv('Continued', ['session ', h('code', { text: a.sessionIn })]) : null,
+      a.session ? kv('Session', h('code', { text: a.session })) : null,
+      a.failure ? kv('Why it failed', [h('code', { text: a.failure }), ' — ', FAILURE_TEXT[a.failure] || '']) : null,
+      a.retryAt ? kv('Retry at', fmtTime(a.retryAt, true)) : null,
+      a.error ? kv(a.failure ? 'Details' : 'Error', h('span', { class: 'err', text: a.error })) : null,
       a.transition ? kv('Went to', h('code', { text: a.transition })) : null);
     const body = h('div', { class: 'attempt-body' }, facts);
     for (const cl of a.cleanup || []) {
@@ -558,10 +620,19 @@
       }
       body.append(table);
     }
+    if (a.prompt) body.append(fileBlock(c.id, 'Prompt', a.prompt));
     if (a.log) {
       body.append(h('h3', { text: a.status === 'running' ? 'Log (live)' : 'Log' }), logView(c.id, a.log, a.status === 'running'));
     }
-    if (a.result) body.append(fileBlock(c.id, 'Result file', a.result));
+    if (a.stderr) {
+      body.append(details(key + '/stderr', false, { class: 'sub-details' }, h('summary', { text: 'adapter diagnostics (standard error)' }),
+        logView(c.id, a.stderr, a.status === 'running')));
+    }
+    if (a.output) {
+      body.append(h('h3', { text: 'Output (validated)' }), h('pre', { class: 'log', text: JSON.stringify(a.output, null, 2) }));
+    } else if (a.result) {
+      body.append(fileBlock(c.id, a.executor ? 'Rejected output' : 'Result file', a.result));
+    }
     if (a.artifacts && a.artifacts.length) body.append(h('h3', { text: 'Artifacts' }), artifacts(c.id, a.artifacts));
     return details(key, newest, { class: 'attempt' },
       h('summary', null, mark(a.status), h('b', { text: 'Attempt ' + a.n }), a.outcome ? h('code', { text: a.outcome }) : h('span', { text: STATUS_TEXT[a.status] || a.status }),
@@ -730,6 +801,15 @@
       if (e.ident) det.push('started=' + e.ident);
       if (e.log) det.push('log=' + e.log);
       if (e.artifacts && e.artifacts.length) det.push('artifacts=' + e.artifacts.join(','));
+      if (e.executor) det.push('executor=' + e.executor);
+      if (e.model) det.push('model=' + e.model);
+      if (e.effort) det.push('effort=' + e.effort);
+      if (e.prompt) det.push('prompt=' + e.prompt);
+      if (e.session) det.push('session=' + e.session);
+      if (e.failure) det.push('failure=' + e.failure);
+      if (e.retryAt) det.push('retry_at=' + fmtTime(e.retryAt, true));
+      if (e.input) det.push('input=' + JSON.stringify(e.input));
+      if (e.output) det.push('output=' + JSON.stringify(e.output));
       if (e.error) det.push('error=' + JSON.stringify(e.error));
       return h('tr', { class: e.seq >= S.freshFrom ? 'fresh' : '' },
         h('td', { class: 'n', text: e.seq }),
@@ -754,6 +834,9 @@
     const now = Date.now();
     for (const el of document.querySelectorAll('[data-since]')) {
       el.textContent = fmtDur(now - ms(el.dataset.since));
+    }
+    for (const el of document.querySelectorAll('[data-until]')) {
+      el.textContent = fmtDur(Math.max(0, ms(el.dataset.until) - now));
     }
     const c = S.campaign;
     if (S.route.view === 'campaign' && S.route.tab === 'timeline' && c && !c.ended) render();

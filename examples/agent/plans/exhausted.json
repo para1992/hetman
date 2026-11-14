@@ -1,0 +1,9 @@
+{
+  "nodes": {
+    "draft": [
+      [{"log": "writing"}, {"sleep": "1s"}, {"result": {"outcome": "ok"}}],
+      [{"log": "writing"}, {"error": "transient", "message": "the client returned an empty answer"}],
+      [{"log": "writing"}, {"stderr": "something went wrong"}, {"exit": 3}]
+    ]
+  }
+}

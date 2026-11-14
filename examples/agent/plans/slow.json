@@ -1,0 +1,42 @@
+{
+  "nodes": {
+    "draft": [
+      [
+        {"session": "draft-session-1"},
+        {"log": "working, part 1 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 2 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 3 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 4 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 5 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 6 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 7 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 8 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 9 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 10 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 11 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 12 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 13 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 14 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 15 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 16 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 17 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 18 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 19 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 20 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 21 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 22 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 23 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 24 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 25 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 26 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 27 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 28 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 29 of 30"}, {"sleep": "2s"},
+        {"log": "working, part 30 of 30"}, {"sleep": "2s"},
+        {"result": {"outcome": "ok", "title": "Rotating logs", "text": "Rename the file and signal the program."}}
+      ],
+      [{"log": "continuing the same conversation"}, {"sleep": "1s"}, {"result": {"outcome": "ok", "title": "Rotating logs", "text": "Rename the file and signal the program."}}]
+    ],
+    "review": [[{"result": {"outcome": "approved"}}]]
+  }
+}

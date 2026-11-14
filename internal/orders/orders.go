@@ -16,6 +16,9 @@ import (
 	"time"
 
 	"go.yaml.in/yaml/v3"
+
+	"hetman/internal/prompt"
+	"hetman/internal/schema"
 )
 
 // DefaultFile is the config file name used when none is given.
@@ -25,7 +28,12 @@ const DefaultFile = "orders.yaml"
 const (
 	Script = "script"
 	Gate   = "gate"
+	Agent  = "agent"
 )
+
+// DefaultMaxAttempts is the attempt budget of an agent node that does not
+// set max_attempts.
+const DefaultMaxAttempts = 3
 
 // Reserved transition targets that end a campaign.
 const (
@@ -44,14 +52,15 @@ const (
 
 // Orders is a checked flow config.
 type Orders struct {
-	Path    string // absolute path of the config file
-	Dir     string // folder holding the config; relative paths resolve here
-	Version int
-	Flow    string
-	Start   string
-	Checks  map[string]*Check
-	Nodes   map[string]*Node
-	Order   []string // node ids in file order
+	Path      string // absolute path of the config file
+	Dir       string // folder holding the config; relative paths resolve here
+	Version   int
+	Flow      string
+	Start     string
+	Checks    map[string]*Check
+	Executors map[string]*Executor
+	Nodes     map[string]*Node
+	Order     []string // node ids in file order
 
 	programs []program // the program of every run list, in file order
 }
@@ -70,6 +79,12 @@ type Check struct {
 	Soft    bool
 }
 
+// Executor is an adapter program declared once at the top level.
+type Executor struct {
+	Name string
+	Run  []string
+}
+
 // Node is one step of the flow.
 type Node struct {
 	ID      string
@@ -78,15 +93,36 @@ type Node struct {
 	Timeout time.Duration
 	Checks  []string
 	On      map[string]string
+
+	// Agent nodes only.
+	Executor    string
+	Model       string
+	Effort      string
+	Tools       []string
+	Prompt      string           // absolute path of the template file
+	Template    *prompt.Template // the parsed template
+	SchemaPath  string           // absolute path of the schema file
+	Schema      *schema.Schema   // the parsed schema
+	SchemaJSON  []byte           // the schema file, compacted, as sent to the adapter
+	IdleTimeout time.Duration
+	MaxAttempts int
 }
 
 // Outcomes lists the outcomes the engine can produce for the node without a
-// result file. Each of them must have a transition.
+// result file. Each of them must have a transition. For an agent node these
+// are the values its schema allows for "outcome", and fail.
 func (n *Node) Outcomes() []string {
 	var out []string
-	if n.Type == Gate {
+	switch n.Type {
+	case Gate:
 		out = []string{Pass, Blocked}
-	} else {
+	case Agent:
+		out = n.ModelOutcomes()
+		if !contains(out, Fail) {
+			out = append(out, Fail)
+		}
+		return out
+	default:
 		out = []string{OK, Fail}
 	}
 	if len(n.Run) > 0 && n.Timeout > 0 {
@@ -204,14 +240,21 @@ func Parse(path string, data []byte) (*Orders, error) {
 		return nil, Problems{{File: path, Msg: "empty config"}}
 	}
 	o := &Orders{
-		Path:   path,
-		Dir:    filepath.Dir(path),
-		Checks: map[string]*Check{},
-		Nodes:  map[string]*Node{},
+		Path:      path,
+		Dir:       filepath.Dir(path),
+		Checks:    map[string]*Check{},
+		Executors: map[string]*Executor{},
+		Nodes:     map[string]*Node{},
 	}
 	p.top(resolve(doc.Content[0]), o)
 	if len(p.problems) > 0 {
-		sort.SliceStable(p.problems, func(i, j int) bool { return p.problems[i].Line < p.problems[j].Line })
+		sort.SliceStable(p.problems, func(i, j int) bool {
+			a, b := p.problems[i], p.problems[j]
+			if a.File != b.File {
+				return a.File == path // problems in the orders come first
+			}
+			return a.Line < b.Line
+		})
 		return nil, p.problems
 	}
 	sort.SliceStable(p.programs, func(i, j int) bool { return p.programs[i].line < p.programs[j].line })
@@ -227,6 +270,12 @@ type parser struct {
 
 func (p *parser) errorf(n *yaml.Node, format string, args ...any) {
 	p.problems = append(p.problems, Problem{File: p.file, Line: n.Line, Col: n.Column, Msg: fmt.Sprintf(format, args...)})
+}
+
+// errorIn reports a problem in another file than the orders, such as a
+// prompt template or a schema.
+func (p *parser) errorIn(file string, line, col int, format string, args ...any) {
+	p.problems = append(p.problems, Problem{File: file, Line: line, Col: col, Msg: fmt.Sprintf(format, args...)})
 }
 
 func resolve(n *yaml.Node) *yaml.Node {
@@ -340,7 +389,7 @@ func (p *parser) duration(n *yaml.Node, what string) time.Duration {
 }
 
 func (p *parser) top(root *yaml.Node, o *Orders) {
-	entries, ok := p.mapping(root, "orders", "version", "flow", "start", "checks", "nodes")
+	entries, ok := p.mapping(root, "orders", "version", "flow", "start", "checks", "executors", "nodes")
 	if !ok {
 		return
 	}
@@ -360,12 +409,14 @@ func (p *parser) top(root *yaml.Node, o *Orders) {
 			o.Start, _ = p.name(e.value, "start")
 		case "checks":
 			p.checks(e.value, o)
+		case "executors":
+			p.executors(e.value, o)
 		case "nodes":
 			nodesN = e.value
 		}
 	}
-	// Nodes are read after checks so that gates can refer to checks declared
-	// anywhere in the file.
+	// Nodes are read after checks and executors so that nodes can refer to
+	// them wherever they are declared in the file.
 	if nodesN != nil {
 		p.nodes(nodesN, o)
 	}
@@ -469,20 +520,27 @@ func (p *parser) nodes(n *yaml.Node, o *Orders) {
 		o.Order = append(o.Order, id)
 		all = append(all, pending{node, onN, e.keyN})
 	}
-	// Transitions are checked once every node id is known.
+	// Transitions are checked once every node id is known, and prompt
+	// templates once every node and its schema are.
 	for _, pn := range all {
 		p.transitions(pn.node, pn.onN, pn.keyN, n, o)
+	}
+	for _, id := range o.Order {
+		if node := o.Nodes[id]; node.Template != nil {
+			p.template(node, o)
+		}
 	}
 }
 
 func (p *parser) node(id string, keyN, n *yaml.Node, o *Orders) (*Node, *yaml.Node) {
 	what := fmt.Sprintf("node %q", id)
-	fields, ok := p.mapping(n, what, "type", "run", "timeout", "checks", "on")
+	fields, ok := p.mapping(n, what, append([]string{"type", "run", "timeout", "checks", "on"}, agentKeys...)...)
 	if !ok {
 		return nil, nil
 	}
 	node := &Node{ID: id, On: map[string]string{}}
 	var typeN, runN, timeoutN, checksN, onN *yaml.Node
+	agent := map[string]entry{}
 	for _, f := range fields {
 		switch f.key {
 		case "type":
@@ -495,21 +553,40 @@ func (p *parser) node(id string, keyN, n *yaml.Node, o *Orders) (*Node, *yaml.No
 			checksN = f.value
 		case "on":
 			onN = f.value
+		default:
+			agent[f.key] = f
 		}
 	}
 	if typeN == nil {
-		p.errorf(keyN, "%s: missing key \"type\" (script or gate)", what)
+		p.errorf(keyN, "%s: missing key \"type\" (script, gate or agent)", what)
 		return nil, nil
 	}
 	t, ok := p.scalar(typeN, what+": type")
 	if !ok {
 		return nil, nil
 	}
-	if t != Script && t != Gate {
-		p.errorf(typeN, "%s: unknown node type %q (known: script, gate)", what, t)
+	if t != Script && t != Gate && t != Agent {
+		p.errorf(typeN, "%s: unknown node type %q (known: script, gate, agent)", what, t)
 		return nil, nil
 	}
 	node.Type = t
+	if t != Agent {
+		for _, k := range agentKeys {
+			if f, ok := agent[k]; ok {
+				p.errorf(f.keyN, "%s: %s is allowed only on an agent node", what, k)
+			}
+		}
+	} else {
+		if runN != nil {
+			p.errorf(runN, "%s: an agent node has no run; its executor is declared under the top-level executors", what)
+			runN = nil
+		}
+		if checksN != nil {
+			p.errorf(checksN, "%s: checks are allowed only on a gate", what)
+			checksN = nil
+		}
+		p.agentNode(node, keyN, agent, o)
+	}
 	if runN != nil {
 		node.Run = p.argv(runN, what+": run")
 	}
@@ -600,7 +677,18 @@ func (p *parser) transitions(node *Node, onN, keyN, nodesN *yaml.Node, o *Orders
 	}
 	for _, outcome := range node.Outcomes() {
 		if _, ok := node.On[outcome]; !ok && !hasKey(onN, outcome) {
-			p.errorf(onN, "%s: outcome %q has no transition", what, outcome)
+			if node.Type == Agent && outcome != Fail {
+				p.errorf(onN, "%s: outcome %q has no transition, but the schema allows the model to report it", what, outcome)
+			} else {
+				p.errorf(onN, "%s: outcome %q has no transition", what, outcome)
+			}
+		}
+	}
+	if node.Type == Agent && node.Schema != nil {
+		for _, e := range entries {
+			if e.key != Fail && !contains(node.Outcomes(), e.key) {
+				p.errorf(e.keyN, "%s: outcome %q can never happen: the schema does not allow it for \"outcome\" (allowed: %s)", what, e.key, strings.Join(node.ModelOutcomes(), ", "))
+			}
 		}
 	}
 }

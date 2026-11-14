@@ -89,6 +89,10 @@ main { padding: 18px 20px 60px; max-width: 1600px; margin: 0 auto; outline: none
   border-color: color-mix(in srgb, var(--warning) 45%, var(--line));
   background: color-mix(in srgb, var(--warning) 8%, var(--panel));
 }
+.problem.info {
+  border-color: color-mix(in srgb, var(--waiting) 45%, var(--line));
+  background: color-mix(in srgb, var(--waiting) 8%, var(--panel));
+}
 
 /* Status marks */
 .mark { width: 16px; height: 16px; flex: none; display: inline-block; vertical-align: -3px; }
@@ -102,6 +106,8 @@ main { padding: 18px 20px 60px; max-width: 1600px; margin: 0 auto; outline: none
 .st-notrun { color: var(--notrun); }
 .st-interrupted { color: var(--interrupted); }
 .st-halted { color: var(--halted); }
+.st-limit { color: var(--halted); }
+.st-offline { color: var(--warning); }
 .st-done { color: var(--passed); }
 .mark .paper { stroke: var(--panel); }
 .mark .paper-fill { fill: var(--panel); }

@@ -1,0 +1,32 @@
+{
+  "nodes": {
+    "draft": [
+      [
+        {"session": "draft-session-1"},
+        {"log": "reading the topic"},
+        {"sleep": "1s"},
+        {"log": "writing the note"},
+        {"sleep": "1s"},
+        {"result": {"outcome": "ok", "title": "Rotating logs", "text": "Move the file away, then signal the program to reopen it."}}
+      ],
+      [
+        {"session": "draft-session-2"},
+        {"log": "applying the review notes"},
+        {"sleep": "1s"},
+        {"result": {"outcome": "ok", "title": "Rotating logs safely", "text": "Copy, then truncate, or rename and signal the program so that it reopens its log; keep a few old files and compress them."}}
+      ]
+    ],
+    "review": [
+      [
+        {"log": "checking the note"},
+        {"sleep": "1s"},
+        {"result": {"outcome": "needs_rework", "notes": ["Say how many old files to keep.", "Mention compression."]}}
+      ],
+      [
+        {"log": "checking the note again"},
+        {"sleep": "1s"},
+        {"result": {"outcome": "approved"}}
+      ]
+    ]
+  }
+}

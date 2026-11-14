@@ -80,7 +80,7 @@ func TestOpenPathWithSpecialCharacters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := c.NewCampaign("f", "orders.yaml", "a")
+	id, err := c.NewCampaign("f", "orders.yaml", "a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,8 +111,8 @@ func TestCampaignsAndLastSeq(t *testing.T) {
 	if seq, err := c.LastSeq(); err != nil || seq != 0 {
 		t.Fatalf("empty journal: seq %d, %v", seq, err)
 	}
-	first, _ := c.NewCampaign("f", "orders.yaml", "a")
-	second, _ := c.NewCampaign("g", "orders.yaml", "a")
+	first, _ := c.NewCampaign("f", "orders.yaml", "a", nil)
+	second, _ := c.NewCampaign("g", "orders.yaml", "a", nil)
 	seq, _ := c.LastSeq()
 	e, err := c.Append(Event{Campaign: first, Kind: StepStarted, Node: "a", Attempt: 1})
 	if err != nil {

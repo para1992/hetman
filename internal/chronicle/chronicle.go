@@ -30,7 +30,28 @@ const (
 	HaltRequested   = "halt_requested"
 	Halted          = "halted"
 	Resumed         = "resumed"
+	AgentSession    = "agent_session" // an adapter reported the session id of its conversation
 )
+
+// Why an attempt of an agent step failed, recorded as Details.Failure of
+// its step_finished event.
+const (
+	FailInvalidOutput = "invalid_output" // the output does not match the node's schema
+	FailTransient     = "transient"      // the adapter reported a transient error
+	FailPermanent     = "permanent"      // the adapter reported a permanent error; the node fails at once
+	FailCrash         = "crash"          // the adapter exited without a result, or with a non-zero code
+	FailProtocol      = "protocol"       // the adapter wrote something that breaks the protocol
+	FailTimeout       = "timeout"        // the attempt ran longer than the node's timeout
+	FailIdle          = "idle_timeout"   // the adapter sent no message for longer than the node's idle_timeout
+	FailLimit         = "limit"          // the subscription limit is reached; the attempt does not count
+	FailOffline       = "offline"        // no connectivity; the attempt does not count
+)
+
+// Counts reports whether a failed attempt uses up the attempt budget of
+// its node visit.
+func Counts(failure string) bool {
+	return failure != "" && failure != FailLimit && failure != FailOffline
+}
 
 // Event is one journal entry. Fields that do not apply to a kind stay empty.
 type Event struct {
@@ -56,6 +77,17 @@ type Details struct {
 	Soft      bool     `json:"soft,omitempty"`      // check is soft
 	Pid       int      `json:"pid,omitempty"`       // process id; on Unix also its process group id
 	Ident     string   `json:"ident,omitempty"`     // process start time, to tell a reused id apart
+
+	Input    json.RawMessage `json:"input,omitempty"`    // run input, on campaign_started
+	Executor string          `json:"executor,omitempty"` // agent step: executor name
+	Model    string          `json:"model,omitempty"`    // agent step: model string passed through
+	Effort   string          `json:"effort,omitempty"`   // agent step: effort string passed through
+	Prompt   string          `json:"prompt,omitempty"`   // agent step: rendered prompt file, relative to the campaign folder
+	Stderr   string          `json:"stderr,omitempty"`   // agent step: adapter diagnostics file, relative to the campaign folder
+	Session  string          `json:"session,omitempty"`  // session id passed to the adapter, or reported by it
+	Output   json.RawMessage `json:"output,omitempty"`   // agent step: the validated output
+	Failure  string          `json:"failure,omitempty"`  // agent step: why the attempt failed (Fail*)
+	RetryAt  *time.Time      `json:"retry_at,omitempty"` // limit failure: when to try again
 }
 
 // Campaign is one execution of a flow.
@@ -147,8 +179,9 @@ func (c *Chronicle) Close() error { return c.db.Close() }
 
 const timeFormat = time.RFC3339Nano
 
-// NewCampaign creates a campaign and records its start at node start.
-func (c *Chronicle) NewCampaign(flow, ordersPath, start string) (int64, error) {
+// NewCampaign creates a campaign and records its start at node start,
+// together with its run input (a JSON object; nil for none).
+func (c *Chronicle) NewCampaign(flow, ordersPath, start string, input json.RawMessage) (int64, error) {
 	tx, err := c.db.Begin()
 	if err != nil {
 		return 0, err
@@ -163,7 +196,11 @@ func (c *Chronicle) NewCampaign(flow, ordersPath, start string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if _, err := tx.Exec(`INSERT INTO events(campaign, at, kind, node) VALUES(?, ?, ?, ?)`, id, now, CampaignStarted, start); err != nil {
+	details, err := json.Marshal(Details{Input: input})
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(`INSERT INTO events(campaign, at, kind, node, details) VALUES(?, ?, ?, ?, ?)`, id, now, CampaignStarted, start, string(details)); err != nil {
 		return 0, err
 	}
 	return id, tx.Commit()
@@ -277,7 +314,16 @@ type State struct {
 	HaltRequested bool           // a halt is in force until resumed
 	Halted        bool           // the halt has taken effect
 	Attempts      map[string]int // started executions per node
+	Failures      int            // failed attempts at Node that count against its budget, this visit
+	Waiting       string         // limit or offline: the step at Node waits before it runs again
+	WaitUntil     time.Time      // for a limit: when the step runs again on its own; zero means a person resumes
 }
+
+// Reasons a campaign waits, in State.Waiting.
+const (
+	WaitLimit   = "limit"
+	WaitOffline = "offline"
+)
 
 // Replay derives the state of a campaign from its events.
 func Replay(events []Event) State {
@@ -289,13 +335,26 @@ func Replay(events []Event) State {
 		case StepStarted:
 			s.Node, s.Running, s.Attempt, s.HasOutcome = e.Node, true, e.Attempt, false
 			s.Attempts[e.Node]++
+			s.Waiting, s.WaitUntil = "", time.Time{}
 		case StepInterrupted:
 			s.Running = false
 		case StepFinished:
 			s.Running = false
 			s.HasOutcome, s.Outcome = e.Outcome != "", e.Outcome
+			if Counts(e.Failure) {
+				s.Failures++
+			}
+			switch e.Failure {
+			case FailLimit:
+				s.Waiting = WaitLimit
+				if e.RetryAt != nil {
+					s.WaitUntil = *e.RetryAt
+				}
+			case FailOffline:
+				s.Waiting = WaitOffline
+			}
 		case Transition:
-			s.HasOutcome = false
+			s.HasOutcome, s.Failures = false, 0
 			if e.To == "done" || e.To == "failed" {
 				s.End = e.To
 			} else {
@@ -309,6 +368,11 @@ func Replay(events []Event) State {
 			s.Halted = true
 		case Resumed:
 			s.Error, s.HaltRequested, s.Halted = "", false, false
+			// A person resuming answers a wait for a person; a wait for a
+			// known time continues until then.
+			if s.WaitUntil.IsZero() {
+				s.Waiting = ""
+			}
 		}
 	}
 	return s

@@ -1,0 +1,9 @@
+{
+  "nodes": {
+    "draft": [
+      [{"log": "writing"}, {"sleep": "1s"}, {"result": {"outcome": "done", "text": "A note without a title."}}],
+      [{"log": "writing again, following the feedback"}, {"sleep": "1s"}, {"result": {"outcome": "ok", "title": "Rotating logs", "text": "Rename the file and signal the program."}}]
+    ],
+    "review": [[{"result": {"outcome": "approved"}}]]
+  }
+}

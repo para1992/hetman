@@ -1,0 +1,49 @@
+# Two agent steps with a rework loop: a draft is written, then reviewed; a
+# review that asks for rework sends the flow back to the draft.
+#
+# The agent steps run through the stub adapter, which runs no model and
+# follows a plan file instead, so the example works without any real client.
+# Build it once, from the repository root:
+#
+#   go build -o examples/agent/bin/stub-adapter ./cmd/hetman-stub-adapter
+#
+# Then, in this folder:
+#
+#   hetman check
+#   hetman run -input input.json
+#
+# STUB_PLAN chooses another plan, to see the other paths:
+#   STUB_PLAN=plans/invalid.json    the first draft does not match its schema and is retried
+#   STUB_PLAN=plans/exhausted.json  every draft attempt fails; the flow fails
+#   STUB_PLAN=plans/limit.json      a subscription limit; the campaign waits 20s and goes on
+#   STUB_PLAN=plans/offline.json    connectivity is lost; hetman resume runs the step again
+#   STUB_PLAN=plans/slow.json       a slow draft (a minute); stop hetman during it and resume
+version: 0
+flow: agent-demo
+start: draft
+
+executors:
+  stub: {run: [./bin/stub-adapter, plans/happy.json]}
+
+nodes:
+  draft:
+    type: agent
+    executor: stub
+    prompt: prompts/draft.md
+    schema: schemas/draft.json
+    model: any-model        # passed to the adapter as is
+    effort: medium          # passed to the adapter as is
+    tools: [read, edit]     # passed to the adapter as is
+    timeout: 5m
+    idle_timeout: 1m
+    max_attempts: 3
+    on: {ok: review, fail: failed}
+  review:
+    type: agent
+    executor: stub
+    prompt: prompts/review.md
+    schema: schemas/review.json
+    timeout: 5m
+    idle_timeout: 1m
+    max_attempts: 2
+    on: {approved: done, needs_rework: draft, fail: failed}

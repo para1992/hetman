@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -241,5 +242,66 @@ func TestCompleteRunes(t *testing.T) {
 		if n != cut && (cut == 2 || cut == 4 || cut == len(text)) {
 			t.Fatalf("cut %d at a character boundary: kept %d", cut, n)
 		}
+	}
+}
+
+func TestAgentAttemptsAndWaits(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "p.md"), []byte("Do it."), 0o644)
+	os.WriteFile(filepath.Join(dir, "s.json"), []byte(`{"type": "object", "properties": {"outcome": {"type": "string", "enum": ["ok"]}}, "required": ["outcome"]}`), 0o644)
+	o, err := orders.Parse(filepath.Join(dir, "orders.yaml"), []byte(`version: 0
+start: a
+executors: {stub: {run: [x]}}
+nodes:
+  a: {type: agent, executor: stub, prompt: p.md, schema: s.json, model: m, effort: e, max_attempts: 2, on: {ok: done, fail: failed}}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry := time.Unix(1000, 0).UTC()
+	agent := func(attempt int, d chronicle.Details) chronicle.Details {
+		d.Executor, d.Model, d.Effort, d.Prompt = "stub", "m", "e", "prompts/a."+string(rune('0'+attempt))+".txt"
+		return d
+	}
+	ev := []chronicle.Event{
+		{Seq: 1, Kind: chronicle.CampaignStarted, Node: "a"},
+		{Seq: 2, Kind: chronicle.StepStarted, Node: "a", Attempt: 1, Details: agent(1, chronicle.Details{})},
+		{Seq: 3, Kind: chronicle.AgentSession, Node: "a", Attempt: 1, Details: chronicle.Details{Session: "s-1"}},
+		{Seq: 4, Kind: chronicle.StepFinished, Node: "a", Attempt: 1, Details: chronicle.Details{Failure: chronicle.FailInvalidOutput, Error: "$.outcome: bad"}},
+		{Seq: 5, Kind: chronicle.StepStarted, Node: "a", Attempt: 2, Details: agent(2, chronicle.Details{})},
+		{Seq: 6, Kind: chronicle.StepFinished, Node: "a", Attempt: 2, Details: chronicle.Details{Failure: chronicle.FailLimit, Error: "limit", RetryAt: &retry}},
+	}
+	c := build(chronicle.Campaign{ID: 1}, ev, o, dir, func() bool { return true })
+	if c.State != StateWaiting || c.Wait != chronicle.WaitLimit || c.WaitUntil == nil || !c.WaitUntil.Equal(retry) {
+		t.Fatalf("state %s wait %s until %v", c.State, c.Wait, c.WaitUntil)
+	}
+	col := c.Columns[0]
+	if col.Status != StatusWaiting || col.Executor != "stub" || col.Model != "m" || col.Effort != "e" || col.MaxAttempts != 2 {
+		t.Fatalf("column %+v", col)
+	}
+	a := c.Nodes["a"]
+	if a[0].Status != StatusFailed || a[0].Failure != chronicle.FailInvalidOutput || a[0].Session != "s-1" || a[0].Prompt != "prompts/a.1.txt" ||
+		a[0].Log != "logs/a.1.log" || a[0].Stderr != "logs/a.1.stderr.log" || a[0].Executor != "stub" {
+		t.Fatalf("attempt 1 %+v", a[0])
+	}
+	if a[1].Status != StatusInterrupted || a[1].RetryAt == nil {
+		t.Fatalf("attempt 2 %+v", a[1])
+	}
+	if c := build(chronicle.Campaign{ID: 1}, ev, o, dir, func() bool { return false }); c.State != StateInterrupted || c.Wait != chronicle.WaitLimit {
+		t.Fatalf("without a driver: %s %s", c.State, c.Wait)
+	}
+	ev[5].RetryAt = nil
+	if c := build(chronicle.Campaign{ID: 1}, ev, o, dir, func() bool { return false }); c.State != StateLimit {
+		t.Fatalf("limit without a time: %s", c.State)
+	}
+	ev[5].Failure = chronicle.FailOffline
+	if c := build(chronicle.Campaign{ID: 1}, ev, o, dir, func() bool { return true }); c.State != StateOffline {
+		t.Fatalf("offline: %s", c.State)
+	}
+	ev = append(ev, chronicle.Event{Seq: 7, Kind: chronicle.StepStarted, Node: "a", Attempt: 3, Details: agent(3, chronicle.Details{Session: "s-1"})},
+		chronicle.Event{Seq: 8, Kind: chronicle.StepFinished, Node: "a", Attempt: 3, Outcome: "ok", Details: chronicle.Details{Output: []byte(`{"outcome":"ok"}`)}})
+	c = build(chronicle.Campaign{ID: 1}, ev, o, dir, func() bool { return true })
+	if last := c.Nodes["a"][2]; last.Status != StatusPassed || last.SessionIn != "s-1" || string(last.Output) != `{"outcome":"ok"}` || c.State != StateRunning {
+		t.Fatalf("attempt 3 %+v, state %s", last, c.State)
 	}
 }

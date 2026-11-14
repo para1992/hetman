@@ -1,6 +1,7 @@
 package watchtower
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
@@ -19,6 +20,9 @@ const (
 	StateFailed      = "failed"
 	StateError       = "error"
 	StateInterrupted = "interrupted"
+	StateWaiting     = "waiting" // waits for a subscription limit to reset, then continues on its own
+	StateLimit       = "limit"   // stopped by a subscription limit with no time to retry; waits for a person
+	StateOffline     = "offline" // stopped by lost connectivity; waits for a person
 )
 
 // Step, check and tile statuses shown on the page.
@@ -40,6 +44,8 @@ type Summary struct {
 	Node          string     `json:"node"` // current position
 	HaltRequested bool       `json:"haltRequested"`
 	Error         string     `json:"error,omitempty"`
+	Wait          string     `json:"wait,omitempty"`      // limit or offline while the step at Node waits
+	WaitUntil     *time.Time `json:"waitUntil,omitempty"` // when a limit wait ends on its own
 	Started       time.Time  `json:"started"`
 	Ended         *time.Time `json:"ended,omitempty"` // last event once the campaign is not running
 	Marks         []Mark     `json:"marks"`
@@ -77,6 +83,11 @@ type Column struct {
 	Tiles    []Tile   `json:"tiles"`
 	Exits    []Exit   `json:"exits"`
 	Side     []Column `json:"side,omitempty"`
+	// Agent nodes: as in the current orders.
+	Executor    string `json:"executor,omitempty"`
+	Model       string `json:"model,omitempty"`
+	Effort      string `json:"effort,omitempty"`
+	MaxAttempts int    `json:"maxAttempts,omitempty"`
 }
 
 // Tile is one check of a gate, or the single command of a step.
@@ -113,6 +124,17 @@ type Attempt struct {
 	Transition string     `json:"transition,omitempty"`
 	Cleanup    []Cleanup  `json:"cleanup,omitempty"`
 	Checks     []CheckRun `json:"checks,omitempty"`
+	// Agent steps.
+	Executor  string          `json:"executor,omitempty"`
+	Model     string          `json:"model,omitempty"`
+	Effort    string          `json:"effort,omitempty"`
+	Prompt    string          `json:"prompt,omitempty"`    // rendered prompt file
+	Stderr    string          `json:"stderr,omitempty"`    // adapter diagnostics file
+	SessionIn string          `json:"sessionIn,omitempty"` // conversation continued by this attempt
+	Session   string          `json:"session,omitempty"`   // conversation reported by the adapter
+	Output    json.RawMessage `json:"output,omitempty"`    // validated output
+	Failure   string          `json:"failure,omitempty"`   // why the attempt failed
+	RetryAt   *time.Time      `json:"retryAt,omitempty"`   // limit: when it is tried again
 }
 
 // CheckRun is one execution of a gate check within an attempt.
@@ -158,6 +180,16 @@ type Event struct {
 	Soft      bool      `json:"soft,omitempty"`
 	Pid       int       `json:"pid,omitempty"`
 	Ident     string    `json:"ident,omitempty"`
+
+	Input    json.RawMessage `json:"input,omitempty"`
+	Executor string          `json:"executor,omitempty"`
+	Model    string          `json:"model,omitempty"`
+	Effort   string          `json:"effort,omitempty"`
+	Prompt   string          `json:"prompt,omitempty"`
+	Session  string          `json:"session,omitempty"`
+	Output   json.RawMessage `json:"output,omitempty"`
+	Failure  string          `json:"failure,omitempty"`
+	RetryAt  *time.Time      `json:"retryAt,omitempty"`
 }
 
 func eventsJSON(events []chronicle.Event) []Event {
@@ -165,7 +197,9 @@ func eventsJSON(events []chronicle.Event) []Event {
 	for i, e := range events {
 		out[i] = Event{Seq: e.Seq, At: e.At, Kind: e.Kind, Node: e.Node, Check: e.Check, Attempt: e.Attempt,
 			Outcome: e.Outcome, To: e.To, Error: e.Error, Exit: e.Exit, Ms: e.Millis, Log: e.Log,
-			Artifacts: e.Artifacts, Soft: e.Soft, Pid: e.Pid, Ident: e.Ident}
+			Artifacts: e.Artifacts, Soft: e.Soft, Pid: e.Pid, Ident: e.Ident,
+			Input: e.Input, Executor: e.Executor, Model: e.Model, Effort: e.Effort, Prompt: e.Prompt,
+			Session: e.Session, Output: e.Output, Failure: e.Failure, RetryAt: e.RetryAt}
 	}
 	return out
 }
@@ -176,6 +210,13 @@ func build(k chronicle.Campaign, events []chronicle.Event, o *orders.Orders, cam
 	st := chronicle.Replay(events)
 	c := &Campaign{Summary: Summary{ID: k.ID, Flow: k.Flow, Node: st.Node, HaltRequested: st.HaltRequested && !st.Halted,
 		Error: st.Error, Started: k.Started}, Orders: k.Orders, End: st.End, Nodes: map[string][]Attempt{}}
+	if st.End == "" && st.Waiting != "" {
+		c.Wait = st.Waiting
+		if !st.WaitUntil.IsZero() {
+			until := st.WaitUntil
+			c.WaitUntil = &until
+		}
+	}
 	switch {
 	case st.End == orders.Done:
 		c.State = StateDone
@@ -185,8 +226,15 @@ func build(k chronicle.Campaign, events []chronicle.Event, o *orders.Orders, cam
 		c.State = StateError
 	case st.Halted:
 		c.State = StateHalted
+	case st.Waiting == chronicle.WaitOffline:
+		c.State = StateOffline
+	case st.Waiting == chronicle.WaitLimit && st.WaitUntil.IsZero():
+		c.State = StateLimit
 	case driven():
 		c.State = StateRunning
+		if st.Waiting == chronicle.WaitLimit {
+			c.State = StateWaiting
+		}
 	default:
 		c.State = StateInterrupted
 	}
@@ -197,7 +245,7 @@ func build(k chronicle.Campaign, events []chronicle.Event, o *orders.Orders, cam
 			c.Ended = &at
 		}
 	}
-	live := c.State == StateRunning
+	live := c.State == StateRunning || c.State == StateWaiting
 
 	// Attempt history per node, in chronicle order.
 	soft := map[string]bool{}
@@ -216,7 +264,13 @@ func build(k chronicle.Campaign, events []chronicle.Event, o *orders.Orders, cam
 				seen = append(seen, e.Node)
 			}
 			c.Nodes[e.Node] = append(c.Nodes[e.Node], Attempt{N: e.Attempt, Status: StatusRunning, Started: e.At,
-				Log: logIfScript(o, e.Node, e.Attempt)})
+				Log: logIfScript(o, e.Node, e.Attempt), Executor: e.Executor, Model: e.Model, Effort: e.Effort,
+				Prompt: e.Prompt, SessionIn: e.Session})
+			if e.Executor != "" {
+				list := c.Nodes[e.Node]
+				list[len(list)-1].Log = engine.LogFile(e.Node, "", e.Attempt)
+				list[len(list)-1].Stderr = engine.StderrFile(e.Node, e.Attempt)
+			}
 			list := c.Nodes[e.Node]
 			cur[e.Node] = &list[len(list)-1]
 		case chronicle.StepInterrupted:
@@ -224,6 +278,10 @@ func build(k chronicle.Campaign, events []chronicle.Event, o *orders.Orders, cam
 				a.Status = StatusInterrupted
 				at := e.At
 				a.Finished = &at
+			}
+		case chronicle.AgentSession:
+			if a := find(c.Nodes[e.Node], e.Attempt); a != nil {
+				a.Session = e.Session
 			}
 		case chronicle.ProcessCleanup:
 			if a := find(c.Nodes[e.Node], e.Attempt); a != nil {
@@ -256,6 +314,14 @@ func build(k chronicle.Campaign, events []chronicle.Event, o *orders.Orders, cam
 					a.Log = e.Log
 				}
 				a.Status = finishedStatus(e.Outcome, e.Error)
+				a.Output, a.Failure, a.RetryAt = e.Output, e.Failure, e.RetryAt
+				if e.Stderr != "" {
+					a.Stderr = e.Stderr
+				}
+				if e.Failure == chronicle.FailLimit || e.Failure == chronicle.FailOffline {
+					// Cut off; the step runs again and the attempt does not count.
+					a.Status = StatusInterrupted
+				}
 				if a.Status == StatusPassed {
 					for _, ch := range a.Checks {
 						if ch.Status == StatusWarning {
@@ -399,6 +465,8 @@ func fill(col *Column, c *Campaign, st chronicle.State, soft map[string]bool) {
 	col.Attempts = len(list)
 	col.Current = col.Node == st.Node && st.End == ""
 	switch {
+	case col.Current && c.Wait != "":
+		col.Status = StatusWaiting
 	case len(list) > 0:
 		col.Status = list[len(list)-1].Status
 		if col.Current && col.Status != StatusRunning && !st.HasOutcome && c.State != StateError &&
@@ -583,6 +651,9 @@ func column(o *orders.Orders, node string, transitions map[string][]chronicle.Ev
 		return col
 	}
 	col.Known, col.Type = true, def.Type
+	if def.Type == orders.Agent {
+		col.Executor, col.Model, col.Effort, col.MaxAttempts = def.Executor, def.Model, def.Effort, def.MaxAttempts
+	}
 	for _, name := range def.Checks {
 		col.Tiles = append(col.Tiles, Tile{Check: name})
 	}

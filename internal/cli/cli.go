@@ -2,7 +2,9 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -33,6 +35,7 @@ const (
 	exitUsage       = 2 // bad arguments or rejected orders
 	exitHalted      = 3
 	exitError       = 4 // campaign stopped in the error state
+	exitWaiting     = 5 // an agent step hit a subscription limit or lost connectivity
 	exitInterrupted = 130
 )
 
@@ -50,6 +53,8 @@ commands:
 
 flags (check, run, status, halt, resume, serve):
   -f FILE  orders file (default orders.yaml)
+flags (run):
+  -input FILE  JSON file with the run input, an object prompt templates can refer to
 flags (status, halt, resume):
   -c ID    campaign id (default: the latest campaign)
 flags (status):
@@ -60,7 +65,7 @@ flags (scribe):
   -dir DIR  folder for the skill file (default .agents/skills/hetman-scribe)
   -force    replace a different skill file that is already there
 
-exit codes of run and resume: 0 done, 1 failed, 3 halted, 4 error, 130 interrupted
+exit codes of run and resume: 0 done, 1 failed, 3 halted, 4 error, 5 waiting for a person, 130 interrupted
 `
 
 // Main runs the command line and returns the process exit code.
@@ -81,9 +86,11 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	file := fs.String("f", orders.DefaultFile, "orders file")
 	var campaign *int64
 	var events *bool
-	var addr *string
+	var addr, input *string
 	switch cmd {
-	case "check", "run":
+	case "check":
+	case "run":
+		input = fs.String("input", "", "JSON file with the run input")
 	case "serve":
 		addr = fs.String("addr", DefaultAddr, "address to listen on")
 	case "status", "halt", "resume":
@@ -134,6 +141,13 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "%s: ok (flow %s, %d nodes, %d checks)\n", o.Path, o.Flow, len(o.Nodes), len(o.Checks))
 		return exitDone
 	}
+	var runInput json.RawMessage
+	if input != nil && *input != "" {
+		if runInput, err = readInput(*input); err != nil {
+			fmt.Fprintf(stderr, "hetman run: -input %s: %v\n", *input, err)
+			return exitUsage
+		}
+	}
 	if err := os.MkdirAll(engine.StateDir(o), 0o755); err != nil {
 		fmt.Fprintln(stderr, "hetman:", err)
 		return exitFailed
@@ -147,7 +161,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	c := &command{o: o, chron: chron, stdout: stdout, stderr: stderr}
 	switch cmd {
 	case "run":
-		return c.run()
+		return c.run(runInput)
 	case "status":
 		return c.status(*campaign, *events)
 	case "halt":
@@ -228,8 +242,28 @@ func (c *command) state(id int64) (chronicle.State, error) {
 	return chronicle.Replay(events), nil
 }
 
-func (c *command) run() int {
-	id, err := c.chron.NewCampaign(c.o.Flow, c.o.Path, c.o.Start)
+// readInput reads a run input file: one JSON object.
+func readInput(path string) (json.RawMessage, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return nil, fmt.Errorf("must hold one JSON object: %v", err)
+	}
+	if obj == nil {
+		return nil, errors.New("must hold one JSON object, not null")
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, data); err != nil {
+		return nil, err
+	}
+	return compact.Bytes(), nil
+}
+
+func (c *command) run(input json.RawMessage) int {
+	id, err := c.chron.NewCampaign(c.o.Flow, c.o.Path, c.o.Start, input)
 	if err != nil {
 		return c.fail(err)
 	}
@@ -265,6 +299,9 @@ func (c *command) drive(id int64) int {
 	case engine.Halted:
 		fmt.Fprintf(c.stdout, "campaign %d halted; continue with hetman resume -c %d\n", id, id)
 		return exitHalted
+	case engine.Waiting:
+		fmt.Fprintf(c.stdout, "campaign %d waits for a person; when the cause is gone, run hetman resume -c %d\n", id, id)
+		return exitWaiting
 	default:
 		fmt.Fprintf(c.stdout, "campaign %d stopped in the error state; fix the cause and run hetman resume -c %d\n", id, id)
 		return exitError

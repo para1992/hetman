@@ -183,3 +183,15 @@ func Argv(step ...string) string {
 	}
 	return "[" + strings.Join(parts, ", ") + "]"
 }
+
+// Adapter renders a YAML flow list that runs the current test binary as the
+// stub adapter, with the given arguments (usually a plan file).
+func Adapter(args ...string) string {
+	self, err := os.Executable()
+	must(err)
+	parts := []string{Quote(self), "adapter"}
+	for _, a := range args {
+		parts = append(parts, Quote(a))
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}

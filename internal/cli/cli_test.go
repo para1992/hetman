@@ -15,6 +15,7 @@ import (
 	"hetman/internal/chronicle"
 	"hetman/internal/orders"
 	"hetman/internal/scribe"
+	"hetman/internal/stubadapter"
 	"hetman/internal/teststep"
 )
 
@@ -28,6 +29,8 @@ func TestMain(m *testing.M) {
 			os.Exit(Main(os.Args[2:], os.Stdout, os.Stderr))
 		case "step":
 			os.Exit(teststep.Main(os.Args[2:]))
+		case "adapter":
+			os.Exit(stubadapter.Main(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 		}
 	}
 	os.Setenv(teststep.EnvHelper, "1")
@@ -222,6 +225,10 @@ func (w *world) waitForEvent(match func(chronicle.Event) bool, out *bytes.Buffer
 	w.t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
+		if _, err := os.Stat(filepath.Join(w.dir, ".hetman", "chronicle.db")); err != nil {
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
 		for _, e := range w.events() {
 			if match(e) {
 				return

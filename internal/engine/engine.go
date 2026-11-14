@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"hetman/internal/adapter"
 	"hetman/internal/chronicle"
 	"hetman/internal/orders"
 )
@@ -29,10 +30,11 @@ const (
 	Failed                // reached the failed end
 	Halted                // stopped by a halt
 	Errored               // stopped in the error state, waiting for a person
+	Waiting               // an agent step hit a subscription limit or lost connectivity; waiting for a person
 )
 
 func (r Result) String() string {
-	return [...]string{"done", "failed", "halted", "error"}[r]
+	return [...]string{"done", "failed", "halted", "error", "waiting"}[r]
 }
 
 // ErrInterrupted is returned when the drive was cancelled during a step. The
@@ -122,6 +124,10 @@ type Engine struct {
 	Chron    *chronicle.Chronicle
 	Campaign int64
 	Out      io.Writer // progress lines; nil for none
+	Clock    Clock     // nil for the system clock
+
+	described map[string]adapter.Description // per executor, asked once per drive
+	waitSaid  time.Time                      // the wait last announced
 }
 
 func (e *Engine) say(format string, args ...any) {
@@ -185,6 +191,22 @@ func (e *Engine) Drive(ctx context.Context) (Result, error) {
 			e.say("halted before %s", node.ID)
 			return Halted, nil
 		}
+		if st.Waiting != "" {
+			if st.WaitUntil.IsZero() {
+				what := "the subscription limit was reached"
+				if st.Waiting == chronicle.WaitOffline {
+					what = "connectivity was lost"
+				}
+				e.say("%s waits for a person: %s; hetman resume runs it again", node.ID, what)
+				return Waiting, nil
+			}
+			if e.clock().Now().Before(st.WaitUntil) {
+				if err := e.wait(ctx, node.ID, st.WaitUntil); err != nil {
+					return 0, err
+				}
+				continue
+			}
+		}
 		if st.Running {
 			e.say("%s attempt %d was interrupted; running it again", node.ID, st.Attempt)
 			if err := e.cleanup(events, node.ID, st.Attempt); err != nil {
@@ -194,7 +216,12 @@ func (e *Engine) Drive(ctx context.Context) (Result, error) {
 				return 0, err
 			}
 		}
-		if err := e.step(ctx, node, st.Attempts[node.ID]+1); err != nil {
+		if node.Type == orders.Agent {
+			err = e.agentStep(ctx, node, st.Attempts[node.ID]+1, st, events)
+		} else {
+			err = e.step(ctx, node, st.Attempts[node.ID]+1)
+		}
+		if err != nil {
 			return 0, err
 		}
 	}
@@ -330,23 +357,7 @@ func (e *Engine) exec(ctx context.Context, nodeID, check string, argv []string, 
 		r.err = err.Error()
 		return r
 	}
-	env := make([]string, 0, len(os.Environ())+len(contractEnv))
-	for _, kv := range os.Environ() {
-		name, _, _ := strings.Cut(kv, "=")
-		if !contains(contractEnv, strings.ToUpper(name)) {
-			env = append(env, kv)
-		}
-	}
-	env = append(env,
-		"HETMAN_RUN_ID="+strconv.FormatInt(e.Campaign, 10),
-		"HETMAN_NODE_ID="+nodeID,
-		"HETMAN_ATTEMPT="+strconv.Itoa(attempt),
-		"HETMAN_RUN_DIR="+filepath.Join(dir, "work"),
-		"HETMAN_RESULT_FILE="+resultFile,
-	)
-	if check != "" {
-		env = append(env, "HETMAN_CHECK_ID="+check)
-	}
+	env := e.env(nodeID, check, attempt, resultFile)
 	log, err := os.Create(filepath.Join(dir, r.log))
 	if err != nil {
 		r.err = err.Error()
@@ -394,6 +405,34 @@ func (e *Engine) exec(ctx context.Context, nodeID, check string, argv []string, 
 	}
 	r.artifacts = artifacts
 	return r
+}
+
+// env is the environment of a step process: the engine's own without any
+// HETMAN_* variable of the contract, plus those that apply. An empty node
+// gives only the campaign variables, an empty result file leaves out
+// HETMAN_RESULT_FILE.
+func (e *Engine) env(nodeID, check string, attempt int, resultFile string) []string {
+	env := make([]string, 0, len(os.Environ())+len(contractEnv))
+	for _, kv := range os.Environ() {
+		name, _, _ := strings.Cut(kv, "=")
+		if !contains(contractEnv, strings.ToUpper(name)) {
+			env = append(env, kv)
+		}
+	}
+	env = append(env,
+		"HETMAN_RUN_ID="+strconv.FormatInt(e.Campaign, 10),
+		"HETMAN_RUN_DIR="+filepath.Join(CampaignDir(e.Orders, e.Campaign), "work"),
+	)
+	if nodeID != "" {
+		env = append(env, "HETMAN_NODE_ID="+nodeID, "HETMAN_ATTEMPT="+strconv.Itoa(attempt))
+	}
+	if resultFile != "" {
+		env = append(env, "HETMAN_RESULT_FILE="+resultFile)
+	}
+	if check != "" {
+		env = append(env, "HETMAN_CHECK_ID="+check)
+	}
+	return env
 }
 
 func readResult(path string) (string, []string, error) {

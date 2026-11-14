@@ -1,17 +1,18 @@
 ---
 name: hetman-scribe
-description: Set up a Hetman flow for a project through a short interview. Use when someone wants to describe their build, check or release process as a Hetman orders.yaml, or to change an existing one. Asks plain questions one at a time, writes orders.yaml and any small check scripts the person asks for, and runs hetman check until the file is accepted.
+description: Set up a Hetman flow for a project through a short interview. Use when someone wants to describe their build, check, release or agent-driven process as a Hetman orders.yaml, or to change an existing one. Asks plain questions one at a time, writes orders.yaml, prompt templates, output schemas and any small check scripts the person asks for, and runs hetman check until the file is accepted.
 ---
 
 # Setting up a Hetman flow
 
 You are helping someone describe a process (build, test, publish, render, anything
-made of commands) as a Hetman flow. Hetman runs the flow step by step from a config
+made of commands, and steps done by a coding agent) as a Hetman flow. Hetman runs the flow step by step from a config
 file called `orders.yaml`, records every step in a journal (the chronicle) and decides
 on its own which step comes next.
 
-Your job is to interview the person, write `orders.yaml` (and small check scripts if
-they ask for them), and run `hetman check` until the file is accepted. The file you
+Your job is to interview the person, write `orders.yaml` (with the prompt templates and
+output schemas of any agent steps, and small check scripts if they ask for them), and
+run `hetman check` until the file is accepted. The file you
 write is the product: a plain file the person can read, review in version control and
 edit by hand later. Write it so that it reads well without you: short comments, step
 names that say what the step does, no clever tricks.
@@ -22,8 +23,9 @@ explain a term the first time you use it.
 ## What Hetman can express
 
 This is everything the config supports. If the person wants something that is not
-here (a person approving a step, steps running in parallel, a retry limit, conditions
-or variables in the file), say plainly that Hetman does not do that, and offer the
+here (a person approving a step, steps running in parallel, a retry limit on a script,
+conditions in the file or in a prompt template, a pool of several clients for one step),
+say plainly that Hetman does not do that, and offer the
 nearest thing that works: usually a script that does the extra logic itself. Do not
 invent keys; `hetman check` rejects any key it does not know.
 
@@ -37,6 +39,9 @@ start: build          # required: the node the flow begins with
 checks:               # optional: checks that gates can use, declared once
   style: {run: [./checks/style.sh], soft: true}
   tests: {run: [./checks/tests.sh], timeout: 10m}
+
+executors:            # optional: adapter programs that run agent steps, declared once
+  coder: {run: [./adapters/my-adapter]}
 
 nodes:                # required: the steps, by id
   build:
@@ -55,7 +60,7 @@ and `.` only. Every path in the file is relative to the folder that holds the fi
 
 ### Nodes
 
-There are two node types.
+There are three node types.
 
 - `script` runs one command. Its outcome is `ok` when the command exits with code 0
   and `fail` otherwise.
@@ -66,6 +71,10 @@ There are two node types.
     engine runs them in the listed order. The gate passes when every required check
     passed. A failed required check blocks the gate at once and the checks after it
     are not run. A failed soft check is recorded as a warning and the gate goes on.
+
+- `agent` gives one step to a coding agent through an executor adapter (see "Agent
+  steps" below). Its outcomes are the values its output schema allows for
+  `outcome`, plus `fail`.
 
 A check is `{run: [...]}` with optional `timeout` and optional `soft: true` (checks are
 required unless marked soft). A check passes only when its outcome is `ok`; a failure
@@ -107,6 +116,7 @@ Outcomes a node produces:
 | `script` | `ok`, `fail`, plus `timeout` if it has a timeout |
 | `gate` with `run` | `pass`, `blocked`, plus `timeout` if it has a timeout |
 | `gate` with `checks` | `pass`, `blocked` (nothing else is allowed in its `on`) |
+| `agent` | every value of `outcome` in its schema, plus `fail` (nothing else is allowed in its `on`) |
 
 If a step produces an outcome that has no transition, the campaign stops in an error
 state and waits for a person.
@@ -142,6 +152,71 @@ cannot see which outcomes a script writes, so when a script writes its own outco
 names, add a transition for each of them yourself. A result file that is not valid
 JSON stops the campaign in the error state.
 
+### Agent steps
+
+An agent node hands one step to a coding agent. The agent only does the step; Hetman
+decides what comes next from the outcome the agent reports and the transitions in the
+file.
+
+```yaml
+executors:
+  coder: {run: [./adapters/my-adapter]}   # the adapter program and its arguments
+
+nodes:
+  implement:
+    type: agent
+    executor: coder                  # required: a name under executors
+    prompt: prompts/implement.md     # required: the prompt template
+    schema: schemas/implement.json   # required: the JSON schema of the answer
+    model: "..."                     # optional, passed to the adapter as is
+    effort: "..."                    # optional, passed to the adapter as is
+    tools: [read, edit]              # optional, passed to the adapter as is
+    timeout: 30m                     # optional: limit for one attempt
+    idle_timeout: 5m                 # optional: limit for silence from the adapter
+    max_attempts: 3                  # optional, 1 to 100, default 3
+    on: {ok: review, fail: failed}
+```
+
+- **Executor.** An adapter is a separate program that drives one client. Hetman does
+  not know or care which client it is. Ask the person which adapter program they use
+  and how it is started; do not write an adapter yourself. `model`, `effort` and
+  `tools` mean whatever that adapter says they mean; copy the person's values, never
+  invent them.
+- **Schema.** A JSON file in a small subset of JSON Schema: `type` (object, array,
+  string, number, integer, boolean, null), `properties`, `required`, `enum`, `items`,
+  `additionalProperties`, plus `title` and `description`, which are ignored. Nothing
+  else is accepted. The top level must be an object with a required string property
+  `outcome` whose `enum` lists the outcomes the step may report. Each of them needs a
+  transition in `on`, and `on` may not name an outcome the enum leaves out (except
+  `fail`). Add the other fields the next steps need, for example `notes` for a review.
+- **Prompt template.** Plain text with placeholders in double braces, nothing else (no
+  conditions, no loops):
+
+  | Placeholder | Becomes |
+  |---|---|
+  | `{{input}}` | the whole run input, as JSON |
+  | `{{input.FIELD}}` | a field of the run input (dots go deeper: `{{input.ticket.title}}`) |
+  | `{{output.NODE}}` | the last accepted answer of agent node NODE, as JSON |
+  | `{{output.NODE.FIELD}}` | one field of that answer |
+  | `{{artifact.NODE.FILE}}` | the text of FILE in `HETMAN_RUN_DIR`, if script or gate NODE listed it as an artifact |
+  | `{{rework}}` | empty on the first visit; when the flow came back to this node, which step sent it back, with that step's outcome and answer or failed checks |
+
+  An input field that does not exist stops the campaign in the error state. A node
+  that has not run yet, a missing answer field or an artifact that was not listed
+  gives empty text. Put `{{rework}}` in the prompt of every agent node that a
+  transition can send the flow back to. `{{` followed by anything that is not a name
+  and `}}` is left as text.
+- **Run input.** `hetman run -input FILE` gives the campaign a JSON object that
+  templates read through `{{input...}}`. It is stored with the campaign, so a resumed
+  campaign sees the same input.
+- **Attempts.** An answer that does not match the schema, a transient error, a crash,
+  a timeout or an idle timeout uses one attempt and the step runs again; after a
+  rejected answer the next prompt says what was wrong. When `max_attempts` is used up
+  the outcome is `fail`. A permanent error gives `fail` at once. A subscription limit
+  or lost connectivity uses no attempt: with a reset time Hetman waits and goes on by
+  itself, otherwise the campaign waits for a person and `hetman resume` runs the step
+  again. Every visit of a node gets the full number of attempts.
+
 ## Running the interview
 
 Before asking anything, look around: find the project folder, see whether an
@@ -165,7 +240,10 @@ order, because each answer narrows the next question:
    for it, and what it should do. Sort what you hear into two kinds: steps that
    produce or change something (build, render, upload) become `script` nodes;
    steps that only verify (lint, tests, size or quality checks) become checks in a
-   gate placed where the verification has to happen. Checks in a gate get the
+   gate placed where the verification has to happen; steps a coding agent does
+   (write code, review, summarise) become `agent` nodes. For an agent step ask what
+   the agent should be told, what it must answer (this becomes the schema), and
+   which answers lead where (these become the outcomes). Checks in a gate get the
    required or soft choice and the cheapest-first order; a chain of script nodes
    gets neither.
 3. **Duration.** For each step that could hang or take long (downloads, tests,
@@ -216,6 +294,12 @@ affects a decision they make.
   step with a higher `HETMAN_ATTEMPT`. Only loop back when repeating the step can
   change the result, and have the step give up (exit non-zero or write an outcome
   that leads to `failed`) after a few attempts. Otherwise the flow can circle forever.
+- **An agent never checks itself.** Tests, linters and anything with side effects
+  (pushing, publishing, opening tickets) are script nodes or gate checks run by
+  Hetman, never a claim in an agent's answer. Put a gate after an agent step whose
+  work must be verified.
+- **Give agent steps limits.** Set `timeout` and `idle_timeout` on agent nodes so that
+  a stuck client is noticed, and keep `max_attempts` small.
 - **Keep it small.** One node per real step of the person's process. Do not add steps
   they did not describe.
 
@@ -291,9 +375,13 @@ name (`make`, `python3`) that is not on this computer's path is reported as
 run on another computer. When you see such a warning, ask the person whether the
 program is installed where the flow will run.
 
+`hetman check` also reads every prompt template and schema: an unknown placeholder or a
+schema outside the supported subset is reported at its line in that file.
+
 What `hetman check` cannot see, confirm yourself before you finish: that a script
 passed as an argument to an interpreter (`steps/build.sh` in `[sh, steps/build.sh]`)
-exists, and that every outcome a script writes to the result file has a transition.
+exists, that every outcome a script writes to the result file has a transition, and
+that the fields a template reads from the run input exist in the input file.
 
 Then show the person the flow in plain words, one line per step, for example:
 
@@ -303,7 +391,8 @@ Then show the person the flow in plain words, one line per step, for example:
 
 Mention the choices you made on their behalf, and tell them how to use it:
 
-- `hetman run -f path/to/orders.yaml` starts a new campaign and runs it to the end.
+- `hetman run -f path/to/orders.yaml` starts a new campaign and runs it to the end;
+  add `-input FILE` when templates read the run input.
 - `hetman status -f path/to/orders.yaml` shows where the latest campaign is.
 - `hetman halt -f path/to/orders.yaml` stops the latest campaign after its current
   step; `hetman resume -f path/to/orders.yaml` continues a halted, stopped or

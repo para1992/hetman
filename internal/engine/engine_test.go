@@ -14,12 +14,18 @@ import (
 
 	"hetman/internal/chronicle"
 	"hetman/internal/orders"
+	"hetman/internal/stubadapter"
 	"hetman/internal/teststep"
 )
 
 func TestMain(m *testing.M) {
-	if os.Getenv(teststep.EnvHelper) == "1" && len(os.Args) > 1 && os.Args[1] == "step" {
-		os.Exit(teststep.Main(os.Args[2:]))
+	if os.Getenv(teststep.EnvHelper) == "1" && len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "step":
+			os.Exit(teststep.Main(os.Args[2:]))
+		case "adapter":
+			os.Exit(stubadapter.Main(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+		}
 	}
 	os.Setenv(teststep.EnvHelper, "1")
 	os.Exit(m.Run())
@@ -66,7 +72,7 @@ func setup(t *testing.T, config string) *fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ch.Close() })
-	id, err := ch.NewCampaign(o.Flow, o.Path, o.Start)
+	id, err := ch.NewCampaign(o.Flow, o.Path, o.Start, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
