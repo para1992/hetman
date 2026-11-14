@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"text/tabwriter"
@@ -166,12 +165,7 @@ func (c *command) describe(id int64, st chronicle.State) string {
 	case st.Error != "":
 		return "error: " + st.Error + " (fix the cause, then hetman resume)"
 	}
-	alive := false
-	if release, err := engine.Lock(c.o, id); err == nil {
-		release()
-	} else if errors.Is(err, engine.ErrLocked) {
-		alive = true
-	}
+	alive, _ := engine.Driven(c.o, id)
 	where := "at " + st.Node
 	if st.Running {
 		where = fmt.Sprintf("running %s (attempt %d)", st.Node, st.Attempt)

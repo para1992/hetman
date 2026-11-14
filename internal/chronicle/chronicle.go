@@ -195,6 +195,35 @@ func (c *Chronicle) Latest() (Campaign, error) {
 	return c.Campaign(id)
 }
 
+// Campaigns returns up to limit campaigns, newest first.
+func (c *Chronicle) Campaigns(limit int) ([]Campaign, error) {
+	rows, err := c.db.Query(`SELECT id, flow, orders, started_at FROM campaigns ORDER BY id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Campaign
+	for rows.Next() {
+		var k Campaign
+		var started string
+		if err := rows.Scan(&k.ID, &k.Flow, &k.Orders, &started); err != nil {
+			return nil, err
+		}
+		k.Started, _ = time.Parse(timeFormat, started)
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+// LastSeq returns the sequence number of the newest event of any campaign,
+// or 0 for an empty journal. Every change to the journal raises it, and it
+// is a single index lookup, so it is cheap to ask often.
+func (c *Chronicle) LastSeq() (int64, error) {
+	var seq int64
+	err := c.db.QueryRow(`SELECT COALESCE(MAX(seq), 0) FROM events`).Scan(&seq)
+	return seq, err
+}
+
 // Append records an event. Seq and At are assigned here.
 func (c *Chronicle) Append(e Event) (Event, error) {
 	e.At = time.Now().UTC()

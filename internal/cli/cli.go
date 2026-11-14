@@ -34,6 +34,7 @@ commands:
   status   show where a campaign is
   halt     halt a campaign after its current step
   resume   continue a halted, stopped or interrupted campaign
+  serve    show every campaign live on a web page (Watchtower)
 
 flags (all commands):
   -f FILE  orders file (default orders.yaml)
@@ -41,6 +42,8 @@ flags (status, halt, resume):
   -c ID    campaign id (default: the latest campaign)
 flags (status):
   -events  also list every chronicle event
+flags (serve):
+  -addr ADDRESS  where to listen (default 127.0.0.1:8740, reachable only from this computer)
 
 exit codes of run and resume: 0 done, 1 failed, 3 halted, 4 error, 130 interrupted
 `
@@ -57,8 +60,11 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	file := fs.String("f", orders.DefaultFile, "orders file")
 	var campaign *int64
 	var events *bool
+	var addr *string
 	switch cmd {
 	case "check", "run":
+	case "serve":
+		addr = fs.String("addr", DefaultAddr, "address to listen on")
 	case "status", "halt", "resume":
 		campaign = fs.Int64("c", 0, "campaign id (default: latest)")
 		if cmd == "status" {
@@ -111,6 +117,8 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		return c.status(*campaign, *events)
 	case "halt":
 		return c.halt(*campaign)
+	case "serve":
+		return c.serve(*addr)
 	default:
 		return c.resume(*campaign)
 	}
@@ -195,34 +203,18 @@ func (c *command) halt(id int64) int {
 	if err != nil {
 		return c.fail(err)
 	}
-	st, err := c.state(k.ID)
+	result, st, err := engine.Halt(c.o, c.chron, k.ID)
 	if err != nil {
 		return c.fail(err)
 	}
-	switch {
-	case st.End != "":
-		return c.fail(fmt.Errorf("campaign %d has already ended (%s)", k.ID, st.End))
-	case st.HaltRequested:
+	switch result {
+	case engine.HaltAlready:
 		fmt.Fprintf(c.stdout, "campaign %d is already halted\n", k.ID)
-		return exitDone
-	}
-	if _, err := c.chron.Append(chronicle.Event{Campaign: k.ID, Kind: chronicle.HaltRequested, Node: st.Node}); err != nil {
-		return c.fail(err)
-	}
-	release, err := engine.Lock(c.o, k.ID)
-	if errors.Is(err, engine.ErrLocked) {
+	case engine.HaltPending:
 		fmt.Fprintf(c.stdout, "campaign %d will halt after its current step\n", k.ID)
-		return exitDone
+	default:
+		fmt.Fprintf(c.stdout, "campaign %d halted at %s\n", k.ID, st.Node)
 	}
-	if err != nil {
-		return c.fail(err)
-	}
-	defer release()
-	// No process is driving the campaign, so the halt takes effect now.
-	if _, err := c.chron.Append(chronicle.Event{Campaign: k.ID, Kind: chronicle.Halted, Node: st.Node}); err != nil {
-		return c.fail(err)
-	}
-	fmt.Fprintf(c.stdout, "campaign %d halted at %s\n", k.ID, st.Node)
 	return exitDone
 }
 
@@ -231,23 +223,13 @@ func (c *command) resume(id int64) int {
 	if err != nil {
 		return c.fail(err)
 	}
-	st, err := c.state(k.ID)
+	release, st, err := engine.Resume(c.o, c.chron, k.ID)
 	if err != nil {
 		return c.fail(err)
 	}
-	if st.End != "" {
-		return c.fail(fmt.Errorf("campaign %d has already ended (%s)", k.ID, st.End))
-	}
-	if _, err := c.chron.Append(chronicle.Event{Campaign: k.ID, Kind: chronicle.Resumed, Node: st.Node}); err != nil {
-		return c.fail(err)
-	}
-	release, err := engine.Lock(c.o, k.ID)
-	if errors.Is(err, engine.ErrLocked) {
+	if release == nil {
 		fmt.Fprintf(c.stdout, "campaign %d is being run by another process; it continues there\n", k.ID)
 		return exitDone
-	}
-	if err != nil {
-		return c.fail(err)
 	}
 	defer release()
 	fmt.Fprintf(c.stdout, "campaign %d resumed at %s\n", k.ID, st.Node)

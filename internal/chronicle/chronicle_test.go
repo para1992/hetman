@@ -101,3 +101,31 @@ func TestOpenPathWithSpecialCharacters(t *testing.T) {
 		t.Fatalf("journal mode %q (%v), want truncate", mode, err)
 	}
 }
+
+func TestCampaignsAndLastSeq(t *testing.T) {
+	c, err := Open(filepath.Join(t.TempDir(), "chronicle.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if seq, err := c.LastSeq(); err != nil || seq != 0 {
+		t.Fatalf("empty journal: seq %d, %v", seq, err)
+	}
+	first, _ := c.NewCampaign("f", "orders.yaml", "a")
+	second, _ := c.NewCampaign("g", "orders.yaml", "a")
+	seq, _ := c.LastSeq()
+	e, err := c.Append(Event{Campaign: first, Kind: StepStarted, Node: "a", Attempt: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := c.LastSeq(); after != e.Seq || after <= seq {
+		t.Fatalf("seq %d after append, before %d, event %d", after, seq, e.Seq)
+	}
+	list, err := c.Campaigns(10)
+	if err != nil || len(list) != 2 || list[0].ID != second || list[0].Flow != "g" || list[1].ID != first {
+		t.Fatalf("campaigns %+v, %v", list, err)
+	}
+	if list, _ := c.Campaigns(1); len(list) != 1 || list[0].ID != second {
+		t.Fatalf("limited list %+v", list)
+	}
+}

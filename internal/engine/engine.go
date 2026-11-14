@@ -56,12 +56,64 @@ func CampaignDir(o *orders.Orders, id int64) string {
 
 // Lock makes the calling process the only driver of a campaign until the
 // returned release is called or the process exits.
+//
+// Driven takes the same lock for an instant to look at it, so a lock found
+// taken is tried again for a moment before ErrLocked is returned; a look
+// from status or the web page never makes a real driver give up.
 func Lock(o *orders.Orders, id int64) (func(), error) {
 	dir := CampaignDir(o, id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	return lockFile(filepath.Join(dir, "lock"))
+	deadline := time.Now().Add(lockPatience)
+	for {
+		release, err := lockFile(filepath.Join(dir, "lock"))
+		if !errors.Is(err, ErrLocked) || time.Now().After(deadline) {
+			return release, err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// lockPatience is how long Lock keeps trying a taken lock.
+const lockPatience = 300 * time.Millisecond
+
+// Driven reports whether a process holds the lock of a campaign, that is
+// whether the campaign is being driven right now.
+func Driven(o *orders.Orders, id int64) (bool, error) {
+	path := filepath.Join(CampaignDir(o, id), "lock")
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	release, err := lockFile(path)
+	if errors.Is(err, ErrLocked) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	release()
+	return false, nil
+}
+
+// LogFile is the log of one execution of a step or of a check (check is
+// empty for a step), relative to the campaign folder, with forward slashes.
+func LogFile(node, check string, attempt int) string {
+	return "logs/" + execBase(node, check, attempt) + ".log"
+}
+
+// ResultFile is the result file of one execution, relative to the campaign
+// folder, with forward slashes.
+func ResultFile(node, check string, attempt int) string {
+	return "results/" + execBase(node, check, attempt) + ".json"
+}
+
+func execBase(node, check string, attempt int) string {
+	base := node
+	if check != "" {
+		base += "." + check
+	}
+	return base + "." + strconv.Itoa(attempt)
 }
 
 // Engine drives one campaign.
@@ -271,14 +323,9 @@ var contractEnv = []string{"HETMAN_RUN_ID", "HETMAN_NODE_ID", "HETMAN_CHECK_ID",
 // for exceeding the timeout, or the name written to the result file.
 func (e *Engine) exec(ctx context.Context, nodeID, check string, argv []string, timeout time.Duration, attempt int, okName, failName string) execResult {
 	dir := CampaignDir(e.Orders, e.Campaign)
-	base := nodeID
-	if check != "" {
-		base += "." + check
-	}
-	base += "." + strconv.Itoa(attempt)
 	var r execResult
-	r.log = filepath.ToSlash(filepath.Join("logs", base+".log"))
-	resultFile := filepath.Join(dir, "results", base+".json")
+	r.log = LogFile(nodeID, check, attempt)
+	resultFile := filepath.Join(dir, filepath.FromSlash(ResultFile(nodeID, check, attempt)))
 	if err := os.Remove(resultFile); err != nil && !errors.Is(err, os.ErrNotExist) {
 		r.err = err.Error()
 		return r
