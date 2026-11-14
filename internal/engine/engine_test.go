@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strconv"
@@ -367,4 +368,48 @@ func TestLockIsExclusive(t *testing.T) {
 		t.Fatalf("lock after release: %v", err)
 	}
 	release()
+}
+
+func TestCleanupStaleGuardsAgainstReusedIds(t *testing.T) {
+	ident, alive := processIdent(os.Getpid())
+	if !alive || ident == "" {
+		t.Fatalf("cannot read own start time: %q %v", ident, alive)
+	}
+	if again, _ := processIdent(os.Getpid()); again != ident {
+		t.Fatalf("start time changed: %q -> %q", ident, again)
+	}
+	// A recorded start time that does not match means the id was reused.
+	if got := cleanupStale(os.Getpid(), ident+"0"); got != cleanupReused {
+		t.Fatalf("got %s, want %s", got, cleanupReused)
+	}
+	if got := cleanupStale(os.Getpid(), ""); got != cleanupUnverified {
+		t.Fatalf("got %s, want %s", got, cleanupUnverified)
+	}
+}
+
+func TestCleanupStaleKillsLiveTreeAndReportsGone(t *testing.T) {
+	self, _ := os.Executable()
+	beat := filepath.Join(tempDir(t), "beat")
+	cmd := exec.Command(self, "step", "heartbeat", beat)
+	configure(cmd)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	exited := make(chan struct{})
+	go func() { cmd.Wait(); close(exited) }()
+	ident, alive := processIdent(cmd.Process.Pid)
+	if !alive {
+		t.Fatal("helper not alive")
+	}
+	if got := cleanupStale(cmd.Process.Pid, ident); got != cleanupKilled {
+		t.Fatalf("got %s, want %s", got, cleanupKilled)
+	}
+	select {
+	case <-exited:
+	case <-time.After(10 * time.Second):
+		t.Fatal("helper still running after cleanup")
+	}
+	if got := cleanupStale(cmd.Process.Pid, ident); got != cleanupGone {
+		t.Fatalf("second cleanup: got %s, want %s", got, cleanupGone)
+	}
 }

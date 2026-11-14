@@ -163,21 +163,9 @@ func TestKilledEngineResumesInterruptedStep(t *testing.T) {
 		t.Fatalf("status after kill:\n%s", status)
 	}
 
-	// Let a step orphaned by the kill finish, on systems where it survives
-	// the engine (on Linux the kernel kills it with the engine).
+	// A step orphaned by the kill on systems where it survives the engine
+	// is killed by resume; releasing it lets it end by itself before that.
 	w.release()
-	t.Cleanup(func() {
-		if runtime.GOOS == "linux" {
-			return
-		}
-		deadline := time.Now().Add(5 * time.Second)
-		for time.Now().Before(deadline) {
-			if _, err := os.Stat(filepath.Join(w.sync, "exited.b.1")); err == nil {
-				return
-			}
-			time.Sleep(50 * time.Millisecond)
-		}
-	})
 
 	resumed := w.call(0, "resume")
 	if !strings.Contains(resumed, "b attempt 1 was interrupted") || !strings.Contains(resumed, "campaign done") {
@@ -204,6 +192,55 @@ func TestKilledEngineResumesInterruptedStep(t *testing.T) {
 	}
 	if status := w.call(0, "status"); !strings.Contains(status, "state: done") || !strings.Contains(status, "2 (1 interrupted)") {
 		t.Fatalf("final status:\n%s", status)
+	}
+}
+
+func TestResumeKillsProcessesLeftByKilledEngine(t *testing.T) {
+	w := newWorld(t, `  a: {type: script, run: `+arg("orphan", "SYNC")+`, on: {ok: done, fail: failed}}
+`)
+	engineProc, out := w.process("run")
+	w.waitFor("started.a.1", out)
+	w.waitFor("heartbeat", out)
+	if err := engineProc.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	engineProc.Wait()
+	beat := filepath.Join(w.sync, "heartbeat")
+	// On Unix the grandchild outlives the engine; on Windows the job object
+	// kills it together with the engine.
+	if alive := teststep.Beating(beat); alive != (runtime.GOOS != "windows") {
+		t.Fatalf("grandchild alive after engine kill: %v", alive)
+	}
+
+	resumed := w.call(0, "resume")
+	state, err := os.ReadFile(filepath.Join(w.sync, "old-grandchild"))
+	if err != nil || string(state) != "dead" {
+		t.Fatalf("attempt 2 saw the old grandchild %q (%v); resume output:\n%s", state, err, resumed)
+	}
+	if teststep.Beating(beat) {
+		t.Fatal("old grandchild still alive after resume")
+	}
+	var cleanup []chronicle.Event
+	order := []string{}
+	for _, e := range w.events() {
+		switch e.Kind {
+		case chronicle.ProcessCleanup:
+			cleanup = append(cleanup, e)
+			order = append(order, e.Kind)
+		case chronicle.StepInterrupted, chronicle.StepStarted:
+			order = append(order, e.Kind)
+		}
+	}
+	want := []string{chronicle.StepStarted, chronicle.ProcessCleanup, chronicle.StepInterrupted, chronicle.StepStarted}
+	if !reflect.DeepEqual(order, want) {
+		t.Fatalf("event order %v, want %v", order, want)
+	}
+	wantOutcome := "killed"
+	if runtime.GOOS == "windows" {
+		wantOutcome = "gone"
+	}
+	if c := cleanup[0]; c.Outcome != wantOutcome || c.Attempt != 1 || c.Pid == 0 || c.Ident == "" {
+		t.Fatalf("cleanup event %+v, want outcome %s", c, wantOutcome)
 	}
 }
 

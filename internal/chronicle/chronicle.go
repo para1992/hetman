@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -23,6 +22,8 @@ const (
 	StepStarted     = "step_started"
 	StepFinished    = "step_finished"
 	StepInterrupted = "step_interrupted"
+	ProcessStarted  = "process_started" // the process of a step or check is running
+	ProcessCleanup  = "process_cleanup" // what was done with a process left by an interrupted step
 	CheckFinished   = "check_finished"
 	Transition      = "transition"
 	Stopped         = "error"
@@ -53,6 +54,8 @@ type Details struct {
 	Log       string   `json:"log,omitempty"`       // log file, relative to the campaign folder
 	Artifacts []string `json:"artifacts,omitempty"` // from the result file
 	Soft      bool     `json:"soft,omitempty"`      // check is soft
+	Pid       int      `json:"pid,omitempty"`       // process id; on Unix also its process group id
+	Ident     string   `json:"ident,omitempty"`     // process start time, to tell a reused id apart
 }
 
 // Campaign is one execution of a flow.
@@ -99,12 +102,11 @@ func Open(path string) (*Chronicle, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := filepath.ToSlash(abs)
-	if !strings.HasPrefix(p, "/") {
-		p = "/" + p // Windows drive path: file:///C:/...
-	}
-	dsn := (&url.URL{Scheme: "file", Path: p}).String() +
-		"?_pragma=busy_timeout(30000)&_pragma=foreign_keys(1)&_txlock=immediate"
+	// The rollback journal is truncated instead of deleted after each
+	// transaction: on Windows a file another process has open cannot be
+	// deleted, which would fail a commit while a second hetman process reads.
+	dsn := fileURI(filepath.ToSlash(abs)) +
+		"?_pragma=busy_timeout(30000)&_pragma=journal_mode(truncate)&_pragma=foreign_keys(1)&_txlock=immediate"
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, err
@@ -114,6 +116,30 @@ func Open(path string) (*Chronicle, error) {
 		return nil, fmt.Errorf("chronicle %s: %w", path, err)
 	}
 	return &Chronicle{db: db}, nil
+}
+
+// fileURI turns an absolute path with forward slashes into the "file:" URI
+// the driver opens. SQLite decodes the path part of the URI and hands it to
+// the file system as is, so nothing may be added to it: "file:///C:/x" would
+// reach the file system as "/C:/x". A path is therefore written without an
+// authority ("file:C:/x", "file:/home/x"), except a UNC path, which gets an
+// empty authority so that its leading "//" stays part of the path. Only the
+// characters that would end or escape the path are percent-encoded.
+func fileURI(slashPath string) string {
+	var b strings.Builder
+	b.WriteString("file:")
+	if strings.HasPrefix(slashPath, "//") {
+		b.WriteString("//")
+	}
+	for i := 0; i < len(slashPath); i++ {
+		switch c := slashPath[i]; c {
+		case '%', '?', '#', ' ':
+			fmt.Fprintf(&b, "%%%02X", c)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
 }
 
 // Close closes the journal.

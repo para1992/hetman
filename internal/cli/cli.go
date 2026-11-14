@@ -164,6 +164,9 @@ func (c *command) run() int {
 func (c *command) drive(id int64) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if err := engine.ContainChildren(); err != nil {
+		fmt.Fprintf(c.stderr, "hetman: step processes are not tied to this process (%v); they are cleaned up on resume instead\n", err)
+	}
 	e := &engine.Engine{Orders: c.o, Chron: c.chron, Campaign: id, Out: c.stdout}
 	res, err := e.Drive(ctx)
 	switch {

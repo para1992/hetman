@@ -32,6 +32,9 @@ const TraceFile = "trace.txt"
 //	heartbeat FILE      rewrite FILE with a counter every 20ms, forever
 //	block DIR           write DIR/started.<node>.<attempt>, wait for DIR/release,
 //	                    then write DIR/exited.<node>.<attempt>
+//	orphan DIR          attempt 1: start a grandchild writing DIR/heartbeat, write
+//	                    DIR/started.<node>.1 and sleep; later attempts: write
+//	                    "dead" or "alive" for that grandchild to DIR/old-grandchild
 func Main(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "teststep: no step given")
@@ -86,6 +89,25 @@ func Main(args []string) int {
 			os.WriteFile(arg(args, 1), []byte(strconv.Itoa(i)), 0o644)
 			time.Sleep(20 * time.Millisecond)
 		}
+	case "orphan":
+		dir := arg(args, 1)
+		beat := filepath.Join(dir, "heartbeat")
+		if attempt != "1" {
+			state := "dead"
+			if Beating(beat) {
+				state = "alive"
+			}
+			must(os.WriteFile(filepath.Join(dir, "old-grandchild"), []byte(state), 0o644))
+			return 0
+		}
+		self, err := os.Executable()
+		must(err)
+		child := exec.Command(self, "step", "heartbeat", beat)
+		child.Env = os.Environ()
+		must(child.Start())
+		must(os.WriteFile(filepath.Join(dir, "started."+node+"."+attempt), nil, 0o644))
+		time.Sleep(time.Hour)
+		return 0
 	case "block":
 		dir := arg(args, 1)
 		must(os.WriteFile(filepath.Join(dir, "started."+node+"."+attempt), nil, 0o644))
@@ -128,6 +150,15 @@ func must(err error) {
 		fmt.Fprintln(os.Stderr, "teststep:", err)
 		os.Exit(3)
 	}
+}
+
+// Beating reports whether the heartbeat file at path changes within a
+// moment, that is whether the process writing it is alive.
+func Beating(path string) bool {
+	first, _ := os.ReadFile(path)
+	time.Sleep(300 * time.Millisecond)
+	second, _ := os.ReadFile(path)
+	return string(first) != string(second)
 }
 
 // Trace reads the trace file of a run folder.

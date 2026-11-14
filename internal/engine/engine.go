@@ -135,6 +135,9 @@ func (e *Engine) Drive(ctx context.Context) (Result, error) {
 		}
 		if st.Running {
 			e.say("%s attempt %d was interrupted; running it again", node.ID, st.Attempt)
+			if err := e.cleanup(events, node.ID, st.Attempt); err != nil {
+				return 0, err
+			}
 			if err := e.record(chronicle.Event{Kind: chronicle.StepInterrupted, Node: node.ID, Attempt: st.Attempt}); err != nil {
 				return 0, err
 			}
@@ -143,6 +146,25 @@ func (e *Engine) Drive(ctx context.Context) (Result, error) {
 			return 0, err
 		}
 	}
+}
+
+// cleanup makes sure no process of an interrupted attempt still runs before
+// the step runs again. Only the last process the attempt started can still
+// be running; anything it left behind belongs to its process tree.
+func (e *Engine) cleanup(events []chronicle.Event, node string, attempt int) error {
+	var last *chronicle.Event
+	for i := range events {
+		if ev := &events[i]; ev.Kind == chronicle.ProcessStarted && ev.Node == node && ev.Attempt == attempt {
+			last = ev
+		}
+	}
+	if last == nil {
+		return nil
+	}
+	result := cleanupStale(last.Pid, last.Ident)
+	e.say("process %d of %s attempt %d: %s", last.Pid, node, attempt, result)
+	return e.record(chronicle.Event{Kind: chronicle.ProcessCleanup, Node: node, Check: last.Check, Attempt: attempt,
+		Outcome: result, Details: chronicle.Details{Pid: last.Pid, Ident: last.Ident}})
 }
 
 func (e *Engine) transition(node *orders.Node, outcome string) error {
@@ -280,7 +302,15 @@ func (e *Engine) exec(ctx context.Context, nodeID, check string, argv []string, 
 	}
 	defer log.Close()
 	cmd := append([]string{e.program(argv[0])}, argv[1:]...)
-	pr := runProcess(ctx, cmd, e.Orders.Dir, env, log, timeout)
+	started := func(pid int) {
+		ident, _ := processIdent(pid)
+		ev := chronicle.Event{Kind: chronicle.ProcessStarted, Node: nodeID, Check: check, Attempt: attempt,
+			Details: chronicle.Details{Pid: pid, Ident: ident}}
+		if err := e.record(ev); err != nil {
+			fmt.Fprintln(log, "hetman: cannot record the process:", err)
+		}
+	}
+	pr := runProcess(ctx, cmd, e.Orders.Dir, env, log, timeout, started)
 	switch {
 	case pr.interrupted:
 		r.interrupted = true
