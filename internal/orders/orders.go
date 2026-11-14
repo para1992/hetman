@@ -7,6 +7,7 @@ package orders
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -51,6 +52,14 @@ type Orders struct {
 	Checks  map[string]*Check
 	Nodes   map[string]*Node
 	Order   []string // node ids in file order
+
+	programs []program // the program of every run list, in file order
+}
+
+// program is the first item of a run list and where it is written.
+type program struct {
+	name      string
+	line, col int
 }
 
 // Check is a gate check declared once at the top level.
@@ -95,6 +104,52 @@ type Problem struct {
 	Line int
 	Col  int
 	Msg  string
+}
+
+// Program returns the path a run list's program is started with: a program
+// written with a path separator is relative to the orders folder; a bare name
+// is returned as is and looked up on the system path when started.
+func (o *Orders) Program(name string) string {
+	if filepath.IsAbs(name) || !strings.ContainsAny(name, `/\`) {
+		return name
+	}
+	return filepath.Join(o.Dir, filepath.FromSlash(name))
+}
+
+// CheckPrograms looks for the program of every run list on this computer.
+// A program written with a path must exist relative to the orders folder and
+// be an executable file; otherwise it is an error. A bare name that is not
+// on the system path is only a warning, because the orders may be checked on
+// one computer and run on another, or the program may be installed by an
+// earlier step.
+func (o *Orders) CheckPrograms() (errs, warnings Problems) {
+	for _, pr := range o.programs {
+		at := Problem{File: o.Path, Line: pr.line, Col: pr.col}
+		if !strings.ContainsAny(pr.name, `/\`) {
+			if _, err := exec.LookPath(pr.name); err != nil {
+				at.Msg = fmt.Sprintf("warning: program %q is not on the system path of this computer", pr.name)
+				warnings = append(warnings, at)
+			}
+			continue
+		}
+		path := o.Program(pr.name)
+		// LookPath checks what starting the program needs: a regular file
+		// with the executable bit, or on Windows one with a known extension.
+		if _, err := exec.LookPath(path); err == nil {
+			continue
+		}
+		fi, err := os.Stat(path)
+		switch {
+		case err != nil:
+			at.Msg = fmt.Sprintf("program %q does not exist (looked for %s)", pr.name, path)
+		case !fi.Mode().IsRegular():
+			at.Msg = fmt.Sprintf("program %q is not a regular file", pr.name)
+		default:
+			at.Msg = fmt.Sprintf("program %q is not executable", pr.name)
+		}
+		errs = append(errs, at)
+	}
+	return errs, warnings
 }
 
 func (p Problem) String() string {
@@ -159,12 +214,15 @@ func Parse(path string, data []byte) (*Orders, error) {
 		sort.SliceStable(p.problems, func(i, j int) bool { return p.problems[i].Line < p.problems[j].Line })
 		return nil, p.problems
 	}
+	sort.SliceStable(p.programs, func(i, j int) bool { return p.programs[i].line < p.programs[j].line })
+	o.programs = p.programs
 	return o, nil
 }
 
 type parser struct {
 	file     string
 	problems Problems
+	programs []program
 }
 
 func (p *parser) errorf(n *yaml.Node, format string, args ...any) {
@@ -263,6 +321,8 @@ func (p *parser) argv(n *yaml.Node, what string) []string {
 		p.errorf(n, "%s: program must not be empty", what)
 		return nil
 	}
+	first := resolve(n.Content[0])
+	p.programs = append(p.programs, program{name: out[0], line: first.Line, col: first.Column})
 	return out
 }
 

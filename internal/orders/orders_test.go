@@ -2,7 +2,10 @@ package orders
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -219,5 +222,70 @@ func TestProblemFormat(t *testing.T) {
 	_, err := Parse("dir/orders.yaml", []byte("version: 0\nstart: a\nnodes:\n  a: {type: agent}\n"))
 	if err == nil || !strings.HasPrefix(err.Error(), "dir/orders.yaml:4:") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func writeFile(t *testing.T, path string, mode os.FileMode) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCheckPrograms(t *testing.T) {
+	// On Windows a program is found by its extension, not by a mode bit.
+	exe := ""
+	if runtime.GOOS == "windows" {
+		exe = ".exe"
+	}
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "bin", "tool"+exe), 0o755)
+	writeFile(t, filepath.Join(dir, "bin", "plain.sh"), 0o644)
+	if err := os.MkdirAll(filepath.Join(dir, "bin", "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	onPath := t.TempDir()
+	writeFile(t, filepath.Join(onPath, "hetman-test-tool"+exe), 0o755)
+	t.Setenv("PATH", onPath)
+
+	config := `version: 0
+start: a
+checks:
+  c: {run: [./bin/missing]}
+nodes:
+  a: {type: script, run: [./bin/tool` + exe + `, --flag], on: {ok: b, fail: failed}}
+  b: {type: script, run: [hetman-test-tool], on: {ok: d, fail: failed}}
+  d: {type: script, run: [hetman-no-such-program], on: {ok: e, fail: failed}}
+  e: {type: script, run: [bin/sub], on: {ok: f, fail: failed}}
+  f: {type: gate, checks: [c], on: {pass: g, blocked: failed}}
+  g: {type: gate, run: [bin/plain.sh], on: {pass: done, blocked: failed}}
+`
+	path := filepath.Join(dir, DefaultFile)
+	o, err := Parse(path, []byte(config))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(config, "\n")
+	at := func(line int, program, msg string) string {
+		col := strings.Index(lines[line-1], program) + 1
+		return fmt.Sprintf("%s:%d:%d: %s", path, line, col, msg)
+	}
+	errs, warnings := o.CheckPrograms()
+	want := []string{
+		at(4, "./bin/missing", `program "./bin/missing" does not exist (looked for `+filepath.Join(dir, "bin", "missing")+")"),
+		at(9, "bin/sub", `program "bin/sub" is not a regular file`),
+	}
+	if runtime.GOOS != "windows" {
+		want = append(want, at(11, "bin/plain.sh", `program "bin/plain.sh" is not executable`))
+	}
+	if got := errs.Error(); got != strings.Join(want, "\n") {
+		t.Fatalf("errors\n got:\n%s\nwant:\n%s", got, strings.Join(want, "\n"))
+	}
+	wantWarn := at(8, "hetman-no-such-program", `warning: program "hetman-no-such-program" is not on the system path of this computer`)
+	if got := warnings.Error(); got != wantWarn {
+		t.Fatalf("warnings\n got: %s\nwant: %s", got, wantWarn)
 	}
 }

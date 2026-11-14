@@ -1,5 +1,9 @@
 # A toy flow: four script steps and a gate between test and publish.
 #
+# The steps are POSIX shell scripts run through sh, which Linux and macOS
+# have. On Windows, run hetman from a shell that has sh on its path, such as
+# Git Bash.
+#
 #   hetman check -f examples/toy/orders.yaml
 #   hetman run   -f examples/toy/orders.yaml
 #
@@ -12,22 +16,22 @@ flow: toy
 start: prepare
 
 checks:
-  lint:  {run: [./steps/lint.sh], soft: true}
-  tests: {run: [./steps/tests.sh], timeout: 1m}
+  lint:  {run: [sh, steps/lint.sh], soft: true}
+  tests: {run: [sh, steps/tests.sh], timeout: 1m}
 
 nodes:
   prepare:
     type: script
-    run: [./steps/prepare.sh]
+    run: [sh, steps/prepare.sh]
     on: {ok: build, fail: failed}
   build:
     type: script
-    run: [./steps/build.sh]
+    run: [sh, steps/build.sh]
     timeout: 5m
     on: {ok: test, fail: failed, timeout: failed}
   test:
     type: script
-    run: [./steps/test.sh]
+    run: [sh, steps/test.sh]
     on: {ok: ready, fail: failed}
   ready:
     type: gate
@@ -35,5 +39,5 @@ nodes:
     on: {pass: publish, blocked: failed}
   publish:
     type: script
-    run: [./steps/publish.sh]
+    run: [sh, steps/publish.sh]
     on: {ok: done, fail: failed}

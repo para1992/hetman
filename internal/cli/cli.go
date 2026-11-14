@@ -9,12 +9,22 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"hetman/internal/chronicle"
 	"hetman/internal/engine"
 	"hetman/internal/orders"
+	"hetman/internal/scribe"
 )
+
+// Version is the version of this build, set by the release script with
+// -ldflags "-X hetman/internal/cli.Version=...".
+var Version = "dev"
+
+// DefaultScribeDir is where scribe writes the setup assistant skill unless
+// told otherwise, relative to the current folder.
+const DefaultScribeDir = ".agents/skills/hetman-scribe"
 
 // Exit codes.
 const (
@@ -35,8 +45,10 @@ commands:
   halt     halt a campaign after its current step
   resume   continue a halted, stopped or interrupted campaign
   serve    show every campaign live on a web page (Watchtower)
+  scribe   write the setup assistant skill for a coding agent
+  version  print the version of hetman
 
-flags (all commands):
+flags (check, run, status, halt, resume, serve):
   -f FILE  orders file (default orders.yaml)
 flags (status, halt, resume):
   -c ID    campaign id (default: the latest campaign)
@@ -44,6 +56,9 @@ flags (status):
   -events  also list every chronicle event
 flags (serve):
   -addr ADDRESS  where to listen (default 127.0.0.1:8740, reachable only from this computer)
+flags (scribe):
+  -dir DIR  folder for the skill file (default .agents/skills/hetman-scribe)
+  -force    replace a different skill file that is already there
 
 exit codes of run and resume: 0 done, 1 failed, 3 halted, 4 error, 130 interrupted
 `
@@ -55,6 +70,12 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	cmd, args := args[0], args[1:]
+	switch cmd {
+	case "scribe":
+		return writeScribe(args, stdout, stderr)
+	case "version":
+		return version(args, stdout, stderr)
+	}
 	fs := flag.NewFlagSet("hetman "+cmd, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	file := fs.String("f", orders.DefaultFile, "orders file")
@@ -95,6 +116,20 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		}
 		return exitUsage
 	}
+	// The commands that start steps look for their programs first, so that
+	// a missing script is reported before any step with side effects runs.
+	// Status, halt and serve work on a campaign even when a program is gone.
+	if cmd == "check" || cmd == "run" || cmd == "resume" {
+		errs, warnings := o.CheckPrograms()
+		if len(warnings) > 0 {
+			fmt.Fprintln(stderr, warnings.Error())
+		}
+		if len(errs) > 0 {
+			fmt.Fprintln(stderr, errs.Error())
+			fmt.Fprintf(stderr, "orders rejected: %d problem(s)\n", len(errs))
+			return exitUsage
+		}
+	}
 	if cmd == "check" {
 		fmt.Fprintf(stdout, "%s: ok (flow %s, %d nodes, %d checks)\n", o.Path, o.Flow, len(o.Nodes), len(o.Checks))
 		return exitDone
@@ -122,6 +157,44 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	default:
 		return c.resume(*campaign)
 	}
+}
+
+// writeScribe writes the setup assistant skill into a folder.
+func writeScribe(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("hetman scribe", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dir := fs.String("dir", DefaultScribeDir, "folder for the skill file")
+	force := fs.Bool("force", false, "replace a different skill file")
+	if err := fs.Parse(args); err != nil {
+		return exitUsage
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(stderr, "hetman scribe: unexpected argument %q\n", fs.Arg(0))
+		return exitUsage
+	}
+	path, changed, err := scribe.Write(filepath.FromSlash(*dir), *force)
+	switch {
+	case errors.Is(err, scribe.ErrExists):
+		fmt.Fprintf(stderr, "hetman scribe: %s: a different file already exists; use -force to replace it\n", path)
+		return exitFailed
+	case err != nil:
+		fmt.Fprintln(stderr, "hetman scribe:", err)
+		return exitFailed
+	case changed:
+		fmt.Fprintf(stdout, "wrote %s\n", path)
+	default:
+		fmt.Fprintf(stdout, "%s is up to date\n", path)
+	}
+	return exitDone
+}
+
+func version(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 {
+		fmt.Fprintf(stderr, "hetman version: unexpected argument %q\n", args[0])
+		return exitUsage
+	}
+	fmt.Fprintf(stdout, "hetman %s\n", Version)
+	return exitDone
 }
 
 type command struct {

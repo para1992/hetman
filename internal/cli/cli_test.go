@@ -14,6 +14,7 @@ import (
 
 	"hetman/internal/chronicle"
 	"hetman/internal/orders"
+	"hetman/internal/scribe"
 	"hetman/internal/teststep"
 )
 
@@ -357,5 +358,106 @@ checks:
 		if !strings.Contains(s, want) {
 			t.Fatalf("status lacks %q:\n%s", want, s)
 		}
+	}
+}
+
+func TestScribeWritesSkill(t *testing.T) {
+	t.Chdir(tempDir(t))
+	path := filepath.Join(filepath.FromSlash(DefaultScribeDir), scribe.FileName)
+	var stdout, stderr bytes.Buffer
+	if code := Main([]string{"scribe"}, &stdout, &stderr); code != exitDone || stdout.String() != "wrote "+path+"\n" {
+		t.Fatalf("first scribe: exit %d\n%s%s", code, stdout.String(), stderr.String())
+	}
+	if data, err := os.ReadFile(path); err != nil || !bytes.Equal(data, scribe.Skill()) {
+		t.Fatalf("skill file not written (%v)", err)
+	}
+	stdout.Reset()
+	if code := Main([]string{"scribe"}, &stdout, &stderr); code != exitDone || stdout.String() != path+" is up to date\n" {
+		t.Fatalf("second scribe: exit %d\n%s%s", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestScribeRefusesDifferentFile(t *testing.T) {
+	dir := tempDir(t)
+	path := filepath.Join(dir, scribe.FileName)
+	os.WriteFile(path, []byte("my own notes\n"), 0o644)
+	var stdout, stderr bytes.Buffer
+	if code := Main([]string{"scribe", "-dir", dir}, &stdout, &stderr); code != exitFailed {
+		t.Fatalf("exit %d, want %d\n%s%s", code, exitFailed, stdout.String(), stderr.String())
+	}
+	if want := "hetman scribe: " + path + ": a different file already exists; use -force to replace it\n"; stderr.String() != want || stdout.Len() != 0 {
+		t.Fatalf("stdout %q, stderr %q", stdout.String(), stderr.String())
+	}
+	if data, _ := os.ReadFile(path); string(data) != "my own notes\n" {
+		t.Fatal("existing file was changed without -force")
+	}
+	stderr.Reset()
+	if code := Main([]string{"scribe", "-dir", dir, "-force"}, &stdout, &stderr); code != exitDone || stdout.String() != "wrote "+path+"\n" {
+		t.Fatalf("scribe -force: exit %d\n%s%s", code, stdout.String(), stderr.String())
+	}
+	if data, _ := os.ReadFile(path); !bytes.Equal(data, scribe.Skill()) {
+		t.Fatal("file not replaced with -force")
+	}
+}
+
+func TestVersion(t *testing.T) {
+	t.Chdir(tempDir(t))
+	var stdout, stderr bytes.Buffer
+	if code := Main([]string{"version"}, &stdout, &stderr); code != exitDone || stdout.String() != "hetman dev\n" {
+		t.Fatalf("exit %d\n%s%s", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestCheckAndRunLookForPrograms(t *testing.T) {
+	w := newWorld(t, `  a: {type: script, run: [hetman-no-such-program], on: {ok: done, fail: failed}}
+`)
+	warning := w.orders + `:5:27: warning: program "hetman-no-such-program" is not on the system path of this computer`
+	var stdout, stderr bytes.Buffer
+	if code := Main([]string{"check", "-f", w.orders}, &stdout, &stderr); code != exitDone || !strings.Contains(stderr.String(), warning) {
+		t.Fatalf("check with a missing bare program: exit %d\n%s%s", code, stdout.String(), stderr.String())
+	}
+	// A warning does not stop run; the step that cannot start stops the
+	// campaign in the error state.
+	stdout.Reset()
+	stderr.Reset()
+	if code := Main([]string{"run", "-f", w.orders}, &stdout, &stderr); code != exitError || !strings.Contains(stderr.String(), warning) {
+		t.Fatalf("run with a missing bare program: exit %d\n%s%s", code, stdout.String(), stderr.String())
+	}
+
+	w = newWorld(t, `  a: {type: script, run: `+arg("exit", "0")+`, on: {ok: b, fail: failed}}
+  b: {type: script, run: [./steps/missing.sh], on: {ok: done, fail: failed}}
+`)
+	problem := w.orders + `:6:27: program "./steps/missing.sh" does not exist`
+	for _, cmd := range []string{"check", "run"} {
+		stdout.Reset()
+		stderr.Reset()
+		if code := Main([]string{cmd, "-f", w.orders}, &stdout, &stderr); code != exitUsage || !strings.Contains(stderr.String(), problem) || !strings.Contains(stderr.String(), "orders rejected: 1 problem(s)") {
+			t.Fatalf("%s with a missing path program: exit %d\n%s%s", cmd, code, stdout.String(), stderr.String())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(w.dir, ".hetman")); !os.IsNotExist(err) {
+		t.Fatalf("run with a missing program created the state folder (%v)", err)
+	}
+}
+
+// The toy example runs its steps through sh; this runs it where sh exists.
+func TestToyExample(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh on the path")
+	}
+	src := filepath.Join("..", "..", "examples", "toy")
+	dir := tempDir(t)
+	if err := os.CopyFS(dir, os.DirFS(src)); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TOY_SLEEP", "0")
+	path := filepath.Join(dir, orders.DefaultFile)
+	var stdout, stderr bytes.Buffer
+	if code := Main([]string{"run", "-f", path}, &stdout, &stderr); code != exitDone {
+		t.Fatalf("run exit %d\n%s%s", code, stdout.String(), stderr.String())
+	}
+	release, err := os.ReadFile(filepath.Join(dir, ".hetman", "campaigns", "1", "work", "release.txt"))
+	if err != nil || strings.TrimSpace(string(release)) != "HELLO FROM CAMPAIGN 1" {
+		t.Fatalf("release.txt %q (%v)\n%s", release, err, stdout.String())
 	}
 }

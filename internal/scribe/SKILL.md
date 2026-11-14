@@ -284,11 +284,16 @@ line, fix each problem at the position it names, and run the check again. Repeat
 until it passes. Fix the cause the message describes rather than deleting the node or
 check it points at; if a fix would change what the flow does, ask the person first.
 
-`hetman check` reads only the file: it accepts a command whose program does not
-exist. Before you finish, confirm yourself that every program with a relative path
-exists and is executable, that every bare program name (`make`, `python3`) is
-installed, and that every outcome a script writes to the result file has a
-transition.
+`hetman check` also looks for the program of every `run` list. A program written
+with a path must exist and be executable, or the file is rejected. A bare program
+name (`make`, `python3`) that is not on this computer's path is reported as
+`FILE:LINE:COLUMN: warning: ...` and does not fail the check, because the flow may
+run on another computer. When you see such a warning, ask the person whether the
+program is installed where the flow will run.
+
+What `hetman check` cannot see, confirm yourself before you finish: that a script
+passed as an argument to an interpreter (`steps/build.sh` in `[sh, steps/build.sh]`)
+exists, and that every outcome a script writes to the result file has a transition.
 
 Then show the person the flow in plain words, one line per step, for example:
 

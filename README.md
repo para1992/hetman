@@ -13,7 +13,8 @@ moves on according to the config.
 
 ## Install
 
-Download the binary for your system from the Releases page of this repository. Each
+The source is at <https://github.com/para1992/hetman>. Download the binary for your
+system from its [Releases page](https://github.com/para1992/hetman/releases). Each
 release has one file per target, named `hetman-VERSION-OS-ARCH` (`.exe` on Windows),
 for Linux, macOS and Windows on amd64 and arm64, and a checksum file
 `hetman-VERSION-SHA256SUMS`. Check the download, make it executable and put it on
@@ -26,6 +27,7 @@ mv hetman-v0.1.0-linux-amd64 /usr/local/bin/hetman
 ```
 
 On macOS use `shasum -a 256 --check --ignore-missing` instead of `sha256sum`.
+`hetman version` prints the version of the binary.
 
 To build from source you need Go (the version named in `go.mod`). Dependencies are
 vendored, so no network access is needed:
@@ -37,8 +39,10 @@ go build -o hetman ./cmd/hetman
 ## Quick start
 
 The repository contains a toy flow in `examples/toy`: four script steps and a gate
-with two checks. The steps are shell scripts, so use Linux or macOS (or a POSIX shell
-on Windows).
+with two checks. The steps are POSIX shell scripts run through `sh`, which Linux and
+macOS have. Windows has no `sh` of its own: run the example from a shell that puts
+one on the path, such as Git Bash from Git for Windows. Your own flows do not need a
+shell; see `run` under Concepts.
 
 Check the config:
 
@@ -119,22 +123,22 @@ flow: toy
 start: prepare
 
 checks:
-  lint:  {run: [./steps/lint.sh], soft: true}
-  tests: {run: [./steps/tests.sh], timeout: 1m}
+  lint:  {run: [sh, steps/lint.sh], soft: true}
+  tests: {run: [sh, steps/tests.sh], timeout: 1m}
 
 nodes:
   prepare:
     type: script
-    run: [./steps/prepare.sh]
+    run: [sh, steps/prepare.sh]
     on: {ok: build, fail: failed}
   build:
     type: script
-    run: [./steps/build.sh]
+    run: [sh, steps/build.sh]
     timeout: 5m
     on: {ok: test, fail: failed, timeout: failed}
   test:
     type: script
-    run: [./steps/test.sh]
+    run: [sh, steps/test.sh]
     on: {ok: ready, fail: failed}
   ready:
     type: gate
@@ -142,7 +146,7 @@ nodes:
     on: {pass: publish, blocked: failed}
   publish:
     type: script
-    run: [./steps/publish.sh]
+    run: [sh, steps/publish.sh]
     on: {ok: done, fail: failed}
 ```
 
@@ -151,7 +155,9 @@ nodes:
 - Ids and names use letters, digits, `_`, `-` and `.`.
 - `run` is a list: the program followed by its arguments. There is no shell. A
   program with a slash in it is relative to the orders folder; a bare name such as
-  `make` is looked up on the path.
+  `make` is looked up on the path. On Windows a program must be one Windows can
+  start (`.exe`, `.cmd`, `.bat`); run a script through its interpreter, as in
+  `[sh, steps/build.sh]` or `[python3, steps/build.py]`.
 - `timeout` is a duration such as `30s`, `10m` or `1h30m`. When it runs out, the
   command and every process it started are killed.
 
@@ -209,14 +215,30 @@ hetman run    [-f FILE]                 start a new campaign and run it
 hetman status [-f FILE] [-c ID] [-events]  show where a campaign is
 hetman halt   [-f FILE] [-c ID]         halt a campaign after its current step
 hetman resume [-f FILE] [-c ID]         continue a halted, stopped or interrupted campaign
+hetman serve  [-f FILE] [-addr ADDRESS] show every campaign live on a web page (Watchtower)
+hetman scribe [-dir DIR] [-force]       write the setup assistant skill for a coding agent
+hetman version                          print the version of hetman
 ```
 
 - `-f FILE` is the orders file, `orders.yaml` in the current folder by default.
 - `-c ID` is the campaign number; the latest campaign by default.
 - `-events` makes `status` also list every chronicle event.
+- `-addr ADDRESS` is where `serve` listens, `127.0.0.1:8740` by default.
+- `-dir DIR` is the folder `scribe` writes `SKILL.md` into,
+  `.agents/skills/hetman-scribe` in the current folder by default. `-force` replaces
+  a different `SKILL.md` that is already there.
+
+`scribe` and `version` need no orders file.
 
 `hetman check` prints `FILE: ok (...)` or one line per problem as
-`FILE:LINE:COLUMN: message`.
+`FILE:LINE:COLUMN: message`. Besides the file itself, it looks for the program of
+every `run` list. A program written with a path that does not exist, is not a file
+or is not executable is a problem. A bare name that is not on the path of this
+computer is printed as `FILE:LINE:COLUMN: warning: ...` and does not fail the check:
+the flow may run on another computer, or an earlier step may install the program.
+`hetman run` and `hetman resume` make the same check before they start a step:
+problems stop them, warnings are printed and they go on. A bare program that still
+cannot be started stops the campaign in the error state.
 
 Exit codes:
 
@@ -269,13 +291,48 @@ from the beginning on resume; a finished step is never repeated. A step with sid
 effects must therefore tolerate a second run: a step that creates a release should
 first check whether the release already exists.
 
+## Watchtower
+
+`hetman serve` starts Watchtower, a web page that shows the campaigns of one orders
+file live:
+
+```sh
+$ hetman serve
+watchtower for /path/to/orders.yaml on http://127.0.0.1:8740/ (Ctrl+C to stop)
+```
+
+It listens on `127.0.0.1:8740` by default, so only this computer can reach it; use
+`-addr` for another address. The page lists the campaigns, newest first. For each
+campaign it shows the steps and checks with their attempts, outcomes, logs and
+artifacts, a timeline, and the chronicle events. Everything on it comes from the
+chronicle, as with `hetman status`, and updates while campaigns run.
+
+It has two controls, Halt and Resume, which do what `hetman halt` and
+`hetman resume` do. A campaign resumed from the page is run by the `hetman serve`
+process; stopping that process interrupts it, and `hetman resume` continues it.
+
 ## Setup assistant
 
-The `internal/scribe` package contains `SKILL.md`, an instruction file for a coding
-agent. Given to an agent, it interviews a person about their project in plain
-language, writes `orders.yaml` and any small check scripts they ask for, and runs
-`hetman check` until the file is accepted. The result is an ordinary orders file that
-can be read and edited by hand.
+Scribe is the setup assistant: `SKILL.md`, an instruction file for a coding agent,
+built into the binary. Given to an agent, it interviews a person about their project
+in plain language, writes `orders.yaml` and any small check scripts they ask for, and
+runs `hetman check` until the file is accepted. The result is an ordinary orders file
+that can be read and edited by hand.
+
+To hand it to an agent, run this in the project folder:
+
+```sh
+$ hetman scribe
+wrote .agents/skills/hetman-scribe/SKILL.md
+```
+
+Agents that read skills from `.agents/skills` find it there. For an agent that looks
+in another folder, pass that folder with `-dir`, or point the agent at the file. Then
+ask the agent to set up a Hetman flow for the project.
+
+Running `hetman scribe` again prints `PATH is up to date` when the file is the same.
+When it differs (an older version, or your own edits), it is left alone and the
+command fails; `hetman scribe -force` replaces it.
 
 ## Licence
 

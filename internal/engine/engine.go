@@ -353,7 +353,7 @@ func (e *Engine) exec(ctx context.Context, nodeID, check string, argv []string, 
 		return r
 	}
 	defer log.Close()
-	cmd := append([]string{e.program(argv[0])}, argv[1:]...)
+	cmd := append([]string{e.Orders.Program(argv[0])}, argv[1:]...)
 	started := func(pid int) {
 		ident, _ := processIdent(pid)
 		ev := chronicle.Event{Kind: chronicle.ProcessStarted, Node: nodeID, Check: check, Attempt: attempt,
@@ -394,15 +394,6 @@ func (e *Engine) exec(ctx context.Context, nodeID, check string, argv []string, 
 	}
 	r.artifacts = artifacts
 	return r
-}
-
-// program resolves a relative program path against the orders folder. A bare
-// name is looked up on PATH.
-func (e *Engine) program(name string) string {
-	if filepath.IsAbs(name) || !strings.ContainsAny(name, `/\`) {
-		return name
-	}
-	return filepath.Join(e.Orders.Dir, filepath.FromSlash(name))
 }
 
 func readResult(path string) (string, []string, error) {
