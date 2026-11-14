@@ -2,6 +2,7 @@ package orders
 
 import (
 	"errors"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -146,7 +147,7 @@ func TestHumanRejected(t *testing.T) {
 			}
 			want := path
 			if c.file != "" {
-				want = strings.TrimSuffix(path, DefaultFile) + c.file
+				want = filepath.Join(filepath.Dir(path), filepath.FromSlash(c.file))
 			}
 			for _, p := range ps {
 				if p.File == want && p.Line == c.line && strings.Contains(p.Msg, c.msg) {
