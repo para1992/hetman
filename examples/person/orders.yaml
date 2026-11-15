@@ -20,6 +20,7 @@
 # sh (on Windows, from Git Bash or another shell that has sh).
 version: 0
 flow: person-demo
+workdir: .   # the folder agent steps work in, relative to this file
 start: interview
 
 # What the flow addresses to a person (questions, summaries, plans) is

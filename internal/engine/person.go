@@ -297,7 +297,9 @@ func (e *Engine) notice(ev chronicle.Event) (Notice, bool) {
 	case ev.Kind == chronicle.Asked:
 		n.Reason, n.Questions, n.Outcomes, n.Command = ev.Reason, ev.Questions, ev.Outcomes, AnswerCommand(e.top().Orders, e.top().Campaign)
 		for _, s := range ev.Show {
-			n.Show = append(n.Show, filepath.Join(e.Orders.Dir, filepath.FromSlash(s)))
+			if path, ok := ShowPath(top.Orders, e.Orders, e.Campaign, s); ok {
+				n.Show = append(n.Show, path)
+			}
 		}
 		switch ev.Reason {
 		case chronicle.ReasonHuman:

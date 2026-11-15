@@ -514,6 +514,7 @@ func (w *wizard) step(op edit.Op, placed bool) (edit.Op, []edit.Op, error) {
 		if op.Effort, err = w.ask(w.p.T("wizard.effort"), ""); err != nil {
 			return op, nil, err
 		}
+		fmt.Fprintln(w.out, w.p.T("wizard.fail_on_denied_hint"))
 		outs, err := w.need(w.p.T("wizard.outcomes"), "ok")
 		if err != nil {
 			return op, nil, err
@@ -557,13 +558,10 @@ func (w *wizard) step(op edit.Op, placed bool) (edit.Op, []edit.Op, error) {
 	return op, extra, nil
 }
 
+// list splits a list the way the list flags of hetman scribe do: an entry
+// ends at a comma or space outside parentheses and quotes.
 func list(s string) []string {
-	var out []string
-	for _, x := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' }) {
-		if x != "" {
-			out = append(out, x)
-		}
-	}
+	out, _ := edit.SplitList(s)
 	return out
 }
 
@@ -741,13 +739,16 @@ func (w *wizard) changeAgent() ([]edit.Op, error) {
 	if err != nil {
 		return nil, err
 	}
-	field, err := w.choose(w.p.T("wizard.what_to_change"), []string{"executor", "model", "effort", "tools", "attempts"}, "model")
+	field, err := w.choose(w.p.T("wizard.what_to_change"), []string{"executor", "model", "effort", "tools", "attempts", "fail_on_denied"}, "model")
 	if err != nil {
 		return nil, err
 	}
 	node := w.o.Nodes[n]
 	cur := map[string]string{"executor": node.Executor, "model": node.Model, "effort": node.Effort,
-		"tools": strings.Join(node.Tools, ", "), "attempts": strconv.Itoa(node.MaxAttempts)}[field]
+		"tools": strings.Join(node.Tools, ", "), "attempts": strconv.Itoa(node.MaxAttempts), "fail_on_denied": strconv.FormatBool(node.FailOnDenied)}[field]
+	if field == "fail_on_denied" {
+		fmt.Fprintln(w.out, w.p.T("wizard.fail_on_denied_hint"))
+	}
 	v, err := w.ask(w.p.T("wizard.new_value"), cur)
 	if err != nil {
 		return nil, err

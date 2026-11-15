@@ -11,6 +11,7 @@
 //	                                   "usage" when the plan has usage)
 //	  "protocol": [0],                 protocol versions to declare (default [0])
 //	  "trace": "stub-trace.jsonl",     file to append every start message's step to
+//	  "reject_tools": ["Write(x)"],    tools entries a check (--check) reports as problems
 //	  "usage": {                       what --usage reports, per window asked for;
 //	    "five_hour": {"used": 0.4, "resets_in": "2h"},   a window not listed is
 //	    "weekly": {"used": 0.9, "resets_at": "RFC 3339"} left out
@@ -35,7 +36,8 @@
 //	{"write": "path", "text": "..."}     write a file, as an agent working in the folder would
 //	{"require_session": "id"}            go on only if the start message continues session id;
 //	                                     otherwise send a permanent error and stop
-//	{"result": {...}}                    send a result with this output
+//	{"result": {...}}                    send a result with this output; "denied": ["..."]
+//	                                     in the same move reports tool calls the client denied
 //	{"error": "KIND", "message": "...", "retry_in": "30s", "retry_at": "RFC 3339 time"}
 //	                                     send an error; retry_in or retry_at for a limit
 //
@@ -81,6 +83,7 @@ type Plan struct {
 	Features *[]string           `json:"features"`
 	Protocol []int               `json:"protocol"`
 	Trace    string              `json:"trace"`
+	Reject   []string            `json:"reject_tools"`
 	When     []When              `json:"when"`
 	Nodes    map[string][][]Move `json:"nodes"`
 	Usage    map[string]Window   `json:"usage"`
@@ -117,6 +120,7 @@ type Move struct {
 	Hang    bool            `json:"hang"`
 	Require string          `json:"require_session"`
 	Write   string          `json:"write"`
+	Denied  []string        `json:"denied"`
 	Text    string          `json:"text"`
 }
 
@@ -129,9 +133,12 @@ type stub struct {
 
 // Main runs the adapter and returns its exit code.
 func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	describeOnly := false
+	describeOnly, checkOnly := false, false
 	if n := len(args); n > 0 && args[n-1] == adapter.DescribeFlag {
 		describeOnly, args = true, args[:n-1]
+	}
+	if n := len(args); n > 0 && args[n-1] == adapter.CheckFlag {
+		checkOnly, args = true, args[:n-1]
 	}
 	var windows []string
 	usageOnly := false
@@ -155,6 +162,24 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "stub: plan %s: %v\n", planPath, err)
 			return 2
 		}
+	}
+	if checkOnly {
+		err := adapter.ServeCheck(stdin, stdout, func(st adapter.Step) []adapter.CheckProblem {
+			var out []adapter.CheckProblem
+			for i, t := range st.Tools {
+				for _, r := range plan.Reject {
+					if t == r {
+						out = append(out, adapter.ToolProblem(i, "the stub rejects this entry"))
+					}
+				}
+			}
+			return out
+		})
+		if err != nil {
+			fmt.Fprintln(stderr, "stub:", err)
+			return 2
+		}
+		return 0
 	}
 	if describeOnly {
 		d := adapter.Description{Protocol: plan.Protocol, Name: plan.Name, Features: []string{adapter.FeatureResume}}
@@ -362,7 +387,7 @@ func (s *stub) do(m Move, step adapter.Step) (int, bool) {
 	case m.Touch != "":
 		os.WriteFile(local(step.Workdir, m.Touch), nil, 0o644)
 	case len(m.Result) > 0:
-		s.send(adapter.Message{Type: adapter.TypeResult, Output: m.Result})
+		s.send(adapter.Message{Type: adapter.TypeResult, Output: m.Result, Denied: m.Denied})
 		return m.Code, true
 	case m.Error != "":
 		msg := adapter.Message{Type: adapter.TypeError, Kind: m.Error, Message: m.Message, RetryAt: m.RetryAt}

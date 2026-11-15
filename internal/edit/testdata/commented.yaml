@@ -2,6 +2,7 @@
 # Edited by hand and with hetman scribe.
 version: 0
 flow: release   # the name shown on the page
+workdir: .      # agents work next to this file
 start: build
 
 # Adapters that run agent steps.

@@ -138,6 +138,8 @@ type Engine struct {
 	described map[string]adapter.Description // per executor, asked once per drive
 	waitSaid  time.Time                      // the wait last announced
 	saidAsk   int64                          // the question last announced
+	unfenced  map[string]bool                // executors whose adapter was said to protect nothing, once per drive
+	stamp     string                         // the files of the orders when they were last read (see refresh)
 
 	outMu sync.Mutex     // progress lines come from the drive and from hooks
 	hooks sync.WaitGroup // notification hooks still running
@@ -312,6 +314,7 @@ func (e *Engine) Drive(ctx context.Context) (Result, error) {
 		if ctx.Err() != nil {
 			return 0, ErrInterrupted
 		}
+		e.refresh()
 		events, err := e.Chron.Events(e.Campaign)
 		if err != nil {
 			return 0, err
@@ -345,7 +348,7 @@ func (e *Engine) Drive(ctx context.Context) (Result, error) {
 			continue
 		}
 		if st.HasOutcome {
-			if err := e.transition(node, st.Outcome); err != nil {
+			if err := e.transition(node, st.Outcome, events); err != nil {
 				return 0, err
 			}
 			continue
@@ -482,13 +485,21 @@ func (e *Engine) cleanup(events []chronicle.Event, node string, attempt int) err
 		Outcome: result, Details: chronicle.Details{Pid: last.Pid, Ident: last.Ident}})
 }
 
-func (e *Engine) transition(node *orders.Node, outcome string) error {
-	target, ok := node.On[outcome]
+func (e *Engine) transition(node *orders.Node, outcome string, events []chronicle.Event) error {
+	took, hits := limited(node, outcome, events)
+	for _, h := range hits {
+		e.say("engine.limit_reached", "node", node.ID, "outcome", h.outcome, "n", h.max, "then", h.then)
+	}
+	target, ok := node.On[took]
 	if !ok {
-		return e.stop(node.ID, fmt.Sprintf("node %q produced outcome %q, which has no transition", node.ID, outcome))
+		return e.stop(node.ID, fmt.Sprintf("node %q produced outcome %q, which has no transition", node.ID, took))
+	}
+	instead := ""
+	if took != outcome {
+		instead = outcome
 	}
 	e.say("engine.transition", "node", node.ID, "target", target)
-	return e.record(chronicle.Event{Kind: chronicle.Transition, Node: node.ID, Outcome: outcome, Details: chronicle.Details{To: target}})
+	return e.record(chronicle.Event{Kind: chronicle.Transition, Node: node.ID, Outcome: took, Details: chronicle.Details{To: target, Instead: instead}})
 }
 
 func (e *Engine) step(ctx context.Context, node *orders.Node, attempt int) error {

@@ -29,6 +29,8 @@ import (
 //     that pattern.
 //   - --permission-mode dontAsk and --permission-prompts none deny every
 //     request that is not pre-approved instead of asking anybody.
+//   - --disallowedTools and --add-dir keep the file tools off the step's
+//     protected paths and let them reach its writable folders (fenceArgs).
 func clientArgs(st adapter.Step, session string) []string {
 	a := []string{"-p", "--output-format", "stream-json", "--verbose",
 		"--restricted", "--strict-mcp-config",
@@ -37,6 +39,7 @@ func clientArgs(st adapter.Step, session string) []string {
 	for _, t := range st.Tools {
 		a = append(a, "--allowedTools="+strings.TrimSpace(t))
 	}
+	a = append(a, fenceArgs(st)...)
 	if st.Model != "" {
 		a = append(a, "--model", st.Model)
 	}
@@ -53,16 +56,23 @@ func clientArgs(st adapter.Step, session string) []string {
 }
 
 // toolNames returns the tool names of permission entries such as
-// "Bash(git status)", each once, in order.
+// "Bash(git status)", each once, in order. An Edit rule with a path also
+// makes Write available: the rule approves creating files there too, and
+// Write is the tool that creates them.
 func toolNames(tools []string) []string {
 	var names []string
 	seen := map[string]bool{}
-	for _, t := range tools {
-		name, _, _ := strings.Cut(strings.TrimSpace(t), "(")
-		name = strings.TrimSpace(name)
+	add := func(name string) {
 		if name != "" && !seen[name] {
 			seen[name] = true
 			names = append(names, name)
+		}
+	}
+	for _, t := range tools {
+		name, _, call, _ := splitTool(t)
+		add(name)
+		if name == "Edit" && call {
+			add("Write")
 		}
 	}
 	return names
@@ -182,6 +192,7 @@ func attempt(o options, st adapter.Step, session string, out *sender, diag io.Wr
 		}
 	}()
 	s := newStream(st.Workdir, out)
+	s.allowed = st.Tools
 	for done := false; !done; {
 		select {
 		case line, ok := <-lines:

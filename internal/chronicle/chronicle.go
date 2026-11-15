@@ -69,6 +69,8 @@ const (
 	FailIdle          = "idle_timeout"   // the adapter sent no message for longer than the node's idle_timeout
 	FailLimit         = "limit"          // the subscription limit is reached; the attempt does not count
 	FailOffline       = "offline"        // no connectivity; the attempt does not count
+	FailUnable        = "unable"         // the agent reported it cannot do its work; the campaign stops for a person
+	FailDenied        = "denied"         // the client denied tool calls and the node does not accept an answer after that
 )
 
 // Counts reports whether a failed attempt uses up the attempt budget of
@@ -93,6 +95,8 @@ type Event struct {
 // Details are stored as JSON next to the indexed columns.
 type Details struct {
 	To        string   `json:"to,omitempty"`        // transition target
+	Instead   string   `json:"instead,omitempty"`   // transition: the outcome the step produced, when a limit turned the flow to Outcome
+	Denied    []string `json:"denied,omitempty"`    // agent step: the tool calls the client denied in the attempt
 	Error     string   `json:"error,omitempty"`     // why a step or the campaign stopped
 	Exit      *int     `json:"exit,omitempty"`      // process exit code
 	Millis    int64    `json:"ms,omitempty"`        // step or check duration

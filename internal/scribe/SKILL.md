@@ -143,6 +143,13 @@ Outcomes a node produces:
 If a step produces an outcome that has no transition, the campaign stops in an error
 state and waits for a person.
 
+A transition back can be limited: `blocked: {to: fix, max: 3, then: stuck}` is taken
+at most 3 times per campaign; after that the outcome `stuck` is taken instead, which
+needs its own transition in the same `on` (`stuck: failed`, or a human node), even on
+a gate. Use it instead of a helper script that counts rounds. The count comes from
+the chronicle; `hetman retry` keeps it and `hetman rewind` to a node before the loop
+resets it.
+
 ### What a step sees
 
 Each command gets these environment variables, on top of the normal environment:
@@ -196,6 +203,7 @@ nodes:
     executor: coder                  # required: a name under executors
     prompt: prompts/implement.md     # required: the prompt template
     schema: schemas/implement.json   # required: the JSON schema of the answer
+    workdir: ..                      # required here or at the top level: where the agent works
     model: "..."                     # optional, passed to the adapter as is
     effort: "..."                    # optional, passed to the adapter as is
     tools: [read, edit]              # optional, passed to the adapter as is
@@ -210,13 +218,32 @@ nodes:
   and how it is started; do not write an adapter yourself. `model`, `effort` and
   `tools` mean whatever that adapter says they mean; copy the person's values, never
   invent them.
+- **Working folder.** `workdir` is the folder the agent works in, relative to the
+  orders file: `.` for the folder of the orders, `..` when the orders live in a
+  subfolder of the project (`flow/orders.yaml`) and the agent must change the code
+  around it. Set it once at the top level (`workdir: ..`) or on each agent node;
+  there is no default. Hetman keeps every agent out of `.hetman/` and the files of the
+  orders (prompts, schemas, scripts) whatever the folder, except the campaign's work
+  folder, which stays writable; never point `workdir` into `.hetman/`. A shell command
+  the agent may run is not restricted by this, so give `Bash`-like tools only as
+  narrow patterns.
+- **Tools.** Copy the entries the person gives, one per item, quoted when they hold
+  spaces (`"Bash(go test *)"`). Parentheses must pair up. Which forms a client honours
+  is for its adapter; `hetman check` asks an adapter that can check, and reports what
+  it rejects at its line, for example an entry such as `Write(plan.md)` that a client
+  matches only when written `Edit(plan.md)`.
 - **Schema.** A JSON file in a small subset of JSON Schema: `type` (object, array,
   string, number, integer, boolean, null), `properties`, `required`, `enum`, `items`,
   `additionalProperties`, plus `title` and `description`, which are ignored. Nothing
   else is accepted. The top level must be an object with a required string property
   `outcome` whose `enum` lists the outcomes the step may report. Each of them needs a
   transition in `on`, and `on` may not name an outcome the enum leaves out (except
-  `fail`). Add the other fields the next steps need, for example `notes` for a review.
+  `fail` and `cannot_proceed`). Add the other fields the next steps need, for example
+  `notes` for a review. Do not list `cannot_proceed` in the enum or add a property
+  `cannot_proceed_reason`: Hetman adds them itself, so an agent that cannot do its
+  step (a denied tool, say) can say why. Without a transition for `cannot_proceed` the
+  campaign then stops and waits for a person with the reason; with one
+  (`cannot_proceed: ask_lead`) the flow follows it.
 - **Prompt template.** Plain text with placeholders in double braces, nothing else (no
   conditions, no loops):
 
@@ -230,7 +257,8 @@ nodes:
   | `{{answers.NODE}}` | what a person last answered at gate or human node NODE: questions, answers, comments, chosen outcome |
   | `{{answers.NODE.ID}}` | the answer to question ID there; `{{answers.NODE.ID.comment}}` its comment |
   | `{{language}}` | the English name of the language for the person (`English` when none is set); `{{language.native}}` its own name, `{{language.code}}` its code |
-  | `{{rework}}` | empty on the first visit; when the flow came back to this node, which step sent it back, with that step's outcome and answer, failed checks, or what a person answered there |
+  | `{{work}}` | the absolute path of the campaign's work folder (`HETMAN_RUN_DIR`), for telling an agent where to write a file for later steps |
+  | `{{rework}}` | empty on the first visit; when the flow came back to this node, which step sent it back (looking through script nodes that list no artifacts), with that step's outcome and answer, failed checks, or what a person answered there |
 
   An input field that does not exist stops the campaign in the error state. A node
   that has not run yet, a missing answer field or an artifact that was not listed
@@ -276,6 +304,17 @@ nodes:
   campaign wait, until the earliest reset, else for a person. A lost connection does
   not change client. A step continued on another client starts a fresh conversation
   with the full prompt and every question a person answered so far.
+- **Denied tool calls.** The adapter reports the tool calls its client denied; they
+  show in `hetman status`. For a step that must run tests or other commands, set
+  `fail_on_denied: true` on the node (`hetman scribe set NODE fail_on_denied true`),
+  so that an answer after a denied call fails the attempt instead of being accepted;
+  recommend it to the person for such steps. Give the commands as narrow patterns
+  the client can match whole: `Bash(make -C work *)` rather than a `cd work && make`
+  the agent might try.
+- **Gates tell why they blocked.** The files the checks of a gate list in their result
+  files are the gate's artifacts: `{{artifact.GATE.FILE}}`, and `{{rework}}` after a
+  blocked gate names the failed checks with their logs and artifacts. Let checks
+  write their output to a file in `HETMAN_RUN_DIR` and list it.
 - **Attempts.** An answer that does not match the schema, a transient error, a crash,
   a timeout or an idle timeout uses one attempt and the step runs again; after a
   rejected answer the next prompt says what was wrong. When `max_attempts` is used up
@@ -299,7 +338,7 @@ nodes:
         question: Does the plan cover every requirement?
       - id: risk
         question: Can the change be undone?
-    show: [plan.md]           # files to look at before answering, relative to orders.yaml
+    show: [plan.md, "{{work}}/draft.md"]   # files to look at: relative to orders.yaml, or in the campaign's work folder
     on: {pass: implement, blocked: plan}   # any "no" blocks
   release:
     type: human
@@ -313,6 +352,9 @@ nodes:
     ...
 ```
 
+- `show` entries are relative to the orders file; one that starts with `{{work}}/`
+  is a file in the campaign's own work folder, such as a plan an agent wrote there.
+  Never point `show` at a fixed campaign folder or a link to the latest campaign.
 - A question has an `id`, the `question` text and a `kind`: `yesno` (default),
   `choice` (needs `options`, at least two) or `text`. A gate asks `yesno` only. Quote
   a question that contains `?`, `:` or `#` inside `{...}`.
@@ -432,13 +474,14 @@ hetman scribe add TYPE NODE -after NODE [-via OUTCOME] [node flags]
 hetman scribe add TYPE NODE -before NODE [node flags]
 hetman scribe remove NODE                    what led to it then leads where its main outcome led
 hetman scribe rename NODE NEW                also renames it in the start, transitions and prompt templates
-hetman scribe link NODE OUTCOME TARGET       set or change a transition (TARGET: a node, done or failed)
+hetman scribe link NODE OUTCOME TARGET       set or change a transition (TARGET: a node, done or failed);
+                                             -max N -then OTHER limits it to N times, then OTHER
 hetman scribe unlink NODE OUTCOME            remove a transition
 hetman scribe set NODE FIELD VALUE           run, timeout, idle_timeout, executor, role, model, effort,
-                                             tools, attempts, dialogue, prompt, schema,
-                                             locks, segment, input, items, parallel
+                                             tools, attempts, dialogue, prompt, schema, workdir,
+                                             fail_on_denied, locks, segment, input, items, parallel
 hetman scribe unset NODE FIELD               timeout, idle_timeout, model, effort, tools, attempts, dialogue,
-                                             locks, input, parallel
+                                             workdir, fail_on_denied, locks, input, parallel
 hetman scribe check NAME -run CMD [-timeout D] [-soft | -required] [-locks A,B]   declare a check or change one
 hetman scribe executor NAME -run CMD         declare an executor or change its command
 hetman scribe gate-add GATE CHECK [-at N]    put a declared check into a gate, at position N from 1
@@ -451,6 +494,7 @@ hetman scribe role-remove ROLE N             remove the client at position N fro
 hetman scribe assistant EXECUTOR MODEL [-effort E]   the model hetman scribe may ask
 hetman scribe language CODE                  the language for the person, such as es
 hetman scribe unlanguage                     remove it: English, nothing added to prompts
+hetman scribe workdir FOLDER                 the folder agent steps work in, such as ..
 ```
 
 Node flags: `-run 'CMD ARGS'` (one string, split at spaces; quote an argument that has
@@ -461,7 +505,11 @@ outcome other than the main one leads to `failed` unless given), `-starters`
 (create a minimal prompt template and schema for an agent node where those files do
 not exist yet; it never overwrites a file), `-locks a,b` (any node), `-segment FILE`
 (segment and foreach; the file must exist), `-input REF` (segment), `-items REF` and
-`-parallel N` (foreach). A segment or foreach node's main outcome is `done`.
+`-parallel N` (foreach), `-workdir FOLDER` (an agent node's own folder; for `new`, the
+default written at the top, `.` when not given). A segment or foreach node's main
+outcome is `done`. A list flag ends an entry only at a comma or space outside
+parentheses and quotes: `-tools 'Read,Bash(make -C *),Bash(go test *)'` gives three
+entries.
 
 How they wire the flow:
 

@@ -24,6 +24,7 @@ func TestRolesViewAndClientWords(t *testing.T) {
 	}
 	p, sc := teststep.Quote(filepath.Join(files, "p.md")), teststep.Quote(filepath.Join(files, "s.json"))
 	w := newWorld(t, `version: 0
+workdir: .
 flow: rotate
 start: a
 executors:

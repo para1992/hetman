@@ -46,7 +46,9 @@ type event struct {
 	NumTurns          int             `json:"num_turns"`
 	DurationMs        int64           `json:"duration_ms"`
 	PermissionDenials []struct {
-		ToolName string `json:"tool_name"`
+		ToolName  string          `json:"tool_name"`
+		ToolUseID string          `json:"tool_use_id"`
+		ToolInput json.RawMessage `json:"tool_input"`
 	} `json:"permission_denials"`
 }
 
@@ -74,9 +76,13 @@ const answerTool = "StructuredOutput"
 // stream follows the client's events.
 type stream struct {
 	workdir string
+	allowed []string // the step's tools entries
 	out     *sender
 	session string
-	tools   map[string]string // tool name by tool use id
+	tools   map[string]string          // tool name by tool use id
+	inputs  map[string]json.RawMessage // tool input by tool use id
+	refused map[string]string          // the error the client returned for a tool call, by tool use id
+	denied  []string                   // the denied tool calls, described with the client's reason
 	result  *event
 	// API errors the client reported in assistant messages
 	apiErrors []event
@@ -86,7 +92,7 @@ type stream struct {
 }
 
 func newStream(workdir string, out *sender) *stream {
-	return &stream{workdir: workdir, out: out, tools: map[string]string{}}
+	return &stream{workdir: workdir, out: out, tools: map[string]string{}, inputs: map[string]json.RawMessage{}, refused: map[string]string{}}
 }
 
 // line handles one line of the client's standard output.
@@ -140,6 +146,7 @@ func (s *stream) line(raw []byte) {
 				}
 			case "tool_use":
 				s.tools[b.ID] = b.Name
+				s.inputs[b.ID] = b.Input
 				s.out.log(indent + "> " + s.describeTool(b.Name, b.Input))
 			}
 		}
@@ -150,6 +157,7 @@ func (s *stream) line(raw []byte) {
 			}
 			text := s.short(firstLine(resultText(b.Content), 200))
 			if b.IsError {
+				s.refused[b.ToolUseID] = s.short(clip(oneLine(resultText(b.Content)), 400))
 				s.out.log(indent + "  < error: " + text)
 			} else {
 				s.out.log(indent + "  < " + text)
@@ -159,12 +167,43 @@ func (s *stream) line(raw []byte) {
 		r := ev
 		s.result = &r
 		for _, d := range ev.PermissionDenials {
-			s.out.log("denied: " + d.ToolName + " (not among the step's tools)")
+			input := d.ToolInput
+			if len(input) == 0 {
+				input = s.inputs[d.ToolUseID]
+			}
+			reason := s.refused[d.ToolUseID]
+			if reason == "" {
+				reason = "the client gave no reason"
+			}
+			text := s.describeTool(d.ToolName, input) + ": " + s.why(d.ToolName) + "; the client said: " + reason
+			s.denied = append(s.denied, text)
+			s.out.log("denied: " + text)
 		}
 		if !ev.IsError && ev.Subtype == "success" {
 			s.out.log(fmt.Sprintf("finished after %d turns in %s", ev.NumTurns, (time.Duration(ev.DurationMs) * time.Millisecond).Round(100*time.Millisecond)))
 		}
 	}
+}
+
+// why says why the client denied a call of a tool: the adapter's own deny
+// rules name only Edit, so a call of any other tool matched none of the
+// step's tools entries for that tool.
+func (s *stream) why(tool string) string {
+	changes := tool == "Edit" || tool == "Write" || tool == "NotebookEdit" || tool == "MultiEdit"
+	var same []string
+	for _, t := range s.allowed {
+		name, _, _, _ := splitTool(t)
+		if name == tool || changes && (name == "Edit" || name == "Write") {
+			same = append(same, t)
+		}
+	}
+	switch {
+	case len(same) == 0:
+		return "not among the step's tools"
+	case changes:
+		return "outside the paths of " + strings.Join(same, ", ") + ", or on a path hetman protects"
+	}
+	return "matched none of the step's entries " + strings.Join(same, ", ")
 }
 
 func (s *stream) blocks(ev event) []block {
@@ -189,10 +228,15 @@ func (s *stream) finish(exit int, stderr string) attemptResult {
 	}
 	if r != nil && !r.IsError && r.Subtype == "success" {
 		if isObject(r.StructuredOutput) {
-			return attemptResult{final: adapter.Message{Type: adapter.TypeResult, Output: r.StructuredOutput}}
+			return attemptResult{final: adapter.Message{Type: adapter.TypeResult, Output: r.StructuredOutput, Denied: s.denied}}
 		}
 		if obj, ok := extractObject(r.Result); ok {
-			return attemptResult{final: adapter.Message{Type: adapter.TypeResult, Output: obj}}
+			return attemptResult{final: adapter.Message{Type: adapter.TypeResult, Output: obj, Denied: s.denied}}
+		}
+		if len(s.denied) > 0 {
+			// The same calls are denied again on a retry.
+			return attemptResult{final: failure(adapter.ErrPermanent, fmt.Sprintf("the client denied %d tool call(s) (%s) and the answer holds no JSON object: %s",
+				len(s.denied), clip(strings.Join(s.denied, "; "), 600), clip(oneLine(r.Result), 300)))}
 		}
 		return attemptResult{final: failure(adapter.ErrTransient, "the answer holds no JSON object: "+clip(oneLine(r.Result), 300))}
 	}

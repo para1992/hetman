@@ -119,6 +119,7 @@ func sentBack(e chronicle.Event) bool {
 type carryOver struct {
 	session  string // conversation to continue
 	feedback string // why the previous output was rejected
+	why      string // the failure that rejected it: invalid output or denied tool calls
 	rejected int    // the attempt whose output was rejected
 
 	client string // the client (clientKey) of the latest attempt of the visit
@@ -168,9 +169,9 @@ func carry(visit []chronicle.Event, node string, canResume bool) carryOver {
 		case chronicle.StepFinished:
 			cutOff = ev.Failure == chronicle.FailLimit || ev.Failure == chronicle.FailOffline
 			if chronicle.Counts(ev.Failure) {
-				c.feedback, c.rejected = "", 0
-				if ev.Failure == chronicle.FailInvalidOutput {
-					c.feedback, c.rejected = ev.Error, ev.Attempt
+				c.feedback, c.rejected, c.why = "", 0, ""
+				if ev.Failure == chronicle.FailInvalidOutput || ev.Failure == chronicle.FailDenied {
+					c.feedback, c.rejected, c.why = ev.Error, ev.Attempt, ev.Failure
 				}
 			}
 		}
@@ -202,6 +203,13 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 	if node.Dialogue > 0 && !desc.Has(adapter.FeatureResume) {
 		return e.stop(node.ID, fmt.Sprintf("%s holds a dialogue, but the adapter of executor %s (%s) does not declare the %q feature, "+
 			"so it cannot continue the conversation with a person's answers; use an adapter that can, or remove dialogue", node.ID, x.Name, desc.Name, adapter.FeatureResume))
+	}
+	if !desc.Has(adapter.FeatureProtect) && !e.unfenced[x.Name] {
+		e.say("engine.unprotected", "executor", x.Name, "adapter", desc.Name)
+		if e.unfenced == nil {
+			e.unfenced = map[string]bool{}
+		}
+		e.unfenced[x.Name] = true
 	}
 	visit := events[visitStart(events, node.ID):]
 	c := carry(visit, node.ID, desc.Has(adapter.FeatureResume))
@@ -237,13 +245,27 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 	if (c.answer == nil || moved) && left > 0 {
 		text += askInstructions(left)
 	}
+	if c.answer == nil {
+		text += unableInstruction()
+	}
 	schemaJSON := node.SchemaJSON
 	if left > 0 {
 		if schemaJSON, err = ask.DialogueSchema(node.SchemaJSON); err != nil {
 			return e.stop(node.ID, fmt.Sprintf("%s: schema: %v", node.ID, err))
 		}
 	}
-	if c.feedback != "" {
+	if schemaJSON, err = unableSchema(schemaJSON); err != nil {
+		return e.stop(node.ID, fmt.Sprintf("%s: schema: %v", node.ID, err))
+	}
+	workdir, err := e.workdir(node)
+	if err != nil {
+		return e.stop(node.ID, err.Error())
+	}
+	protect, writable := e.fence()
+	if c.feedback != "" && c.why == chronicle.FailDenied {
+		text += fmt.Sprintf("\n\n---\nYour previous answer (attempt %d) was not accepted because the client denied tool calls you made:\n- %s\nDo the step with the tools you are allowed. If it cannot be done without them, answer with the outcome %q and say what you need.\n",
+			c.rejected, strings.Join(deniedOf(c.feedback), "\n- "), orders.Unable)
+	} else if c.feedback != "" {
 		text += fmt.Sprintf("\n\n---\nYour previous answer (attempt %d) was rejected because it does not match the required output schema:\n- %s\nAnswer again with a single JSON object that matches the schema.\n",
 			c.rejected, strings.ReplaceAll(c.feedback, "; ", "\n- "))
 	}
@@ -291,8 +313,8 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 	}
 	start := adapter.EncodeStart(adapter.Step{
 		RunID: strconv.FormatInt(e.Campaign, 10), NodeID: node.ID, Attempt: attempt, Prompt: text,
-		Model: run.model, Effort: run.effort, Tools: node.Tools, Workdir: e.Orders.Dir,
-		Schema: schemaJSON, Session: session,
+		Model: run.model, Effort: run.effort, Tools: node.Tools, Workdir: workdir,
+		Schema: schemaJSON, Session: session, Protect: protect, Writable: writable,
 	})
 	reported := "" // the session id this attempt reported
 	recordErr := error(nil)
@@ -347,7 +369,7 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 			fin.Failure, fin.Error = chronicle.FailProtocol, "the step asked questions but its adapter reported no session, so the conversation cannot be continued with the answers"
 		}
 	}
-	if chronicle.Counts(fin.Failure) && fin.Outcome == "" && st.Failures+1 >= node.MaxAttempts {
+	if chronicle.Counts(fin.Failure) && fin.Failure != chronicle.FailUnable && fin.Outcome == "" && st.Failures+1 >= node.MaxAttempts {
 		fin.Outcome = orders.Fail
 	}
 	if fin.Failure != "" {
@@ -365,6 +387,8 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 			Reason: chronicle.ReasonDialogue, Questions: questions, Round: c.rounds + 1, Session: reported}})
 	case fin.Failure == "":
 		e.say("engine.finished", "node", node.ID, "outcome", fin.Outcome, "took", took)
+	case fin.Failure == chronicle.FailUnable:
+		return e.stop(node.ID, fmt.Sprintf("%s attempt %d cannot proceed: %s", node.ID, attempt, fin.Error))
 	case fin.Failure == chronicle.FailPermanent:
 		e.say("engine.failed_permanent", "node", node.ID, "attempt", attempt, "error", fin.Error)
 	case fin.Failure == chronicle.FailLimit && run.choice != nil:
@@ -411,6 +435,7 @@ func (e *Engine) judge(node *orders.Node, attempt int, r adapterRun, fin *chroni
 		return nil
 	}
 	m := r.terminal
+	fin.Denied = m.Denied
 	if m.Type == adapter.TypeError {
 		fin.Error = m.Message
 		if fin.Error == "" {
@@ -442,6 +467,26 @@ func (e *Engine) judge(node *orders.Node, attempt int, r adapterRun, fin *chroni
 	var v any
 	if err := json.Unmarshal(m.Output, &v); err != nil {
 		fin.Failure, fin.Error = chronicle.FailInvalidOutput, "output is not valid JSON: "+err.Error()
+		return nil
+	}
+	if len(m.Denied) > 0 && node.FailOnDenied {
+		if reason, ok, _ := unableReason(v); !ok || reason == "" {
+			fin.Failure, fin.Error = chronicle.FailDenied, deniedError(m.Denied)
+			return nil
+		}
+	}
+	if reason, ok, err := unableReason(v); ok {
+		if err != nil {
+			fin.Failure, fin.Error = chronicle.FailInvalidOutput, err.Error()
+			return nil
+		}
+		if _, follow := node.On[orders.Unable]; follow {
+			var compact bytes.Buffer
+			json.Compact(&compact, m.Output)
+			fin.Output, fin.Outcome = compact.Bytes(), orders.Unable
+		} else {
+			fin.Failure, fin.Error = chronicle.FailUnable, reason
+		}
 		return nil
 	}
 	if obj, ok := v.(map[string]any); ok && asking && obj[orders.OutcomeField] == ask.Outcome {
@@ -531,8 +576,10 @@ func (e *Engine) render(node *orders.Node, events []chronicle.Event, lang langua
 				return lang.Native, nil
 			}
 			return lang.Code, nil
+		case orders.RefWork:
+			return WorkDir(e.top().Orders, e.Campaign), nil
 		default:
-			return rework(events, node.ID), nil
+			return rework(e.Orders, e.dir(), events, node.ID), nil
 		}
 	})
 }
@@ -592,7 +639,7 @@ func (e *Engine) artifact(events []chronicle.Event, ref orders.Ref) (string, err
 	if fin == nil {
 		return "", nil
 	}
-	for _, a := range fin.Artifacts {
+	for _, a := range artifactsOf(events, fin) {
 		if path.Clean(filepath.ToSlash(a)) != path.Clean(ref.File) {
 			continue
 		}
@@ -608,7 +655,7 @@ func (e *Engine) artifact(events []chronicle.Event, ref orders.Ref) (string, err
 // rework explains why the flow came back to a node it has run before: the
 // step that sent it back, that step's outcome, and its output, failed
 // checks or artifacts. It is empty on the first visit.
-func rework(events []chronicle.Event, node string) string {
+func rework(o *orders.Orders, campaignDir string, events []chronicle.Event, node string) string {
 	at := visitStart(events, node) - 1
 	if at < 0 {
 		return ""
@@ -633,7 +680,13 @@ func rework(events []chronicle.Event, node string) string {
 		fmt.Fprintf(&b, "This step runs again: a person %s.\n", what)
 		return b.String()
 	}
-	fmt.Fprintf(&b, "This step runs again: step %q finished with outcome %q and sent the flow back here.\n", t.Node, t.Outcome)
+	at, via := sender(o, events, at)
+	t = events[at]
+	if len(via) > 0 {
+		fmt.Fprintf(&b, "This step runs again: step %q finished with outcome %q and sent the flow back here through %s.\n", t.Node, t.Outcome, quoteList(via))
+	} else {
+		fmt.Fprintf(&b, "This step runs again: step %q finished with outcome %q and sent the flow back here.\n", t.Node, t.Outcome)
+	}
 	fin := lastFinished(events[:at], t.Node)
 	if fin == nil {
 		return b.String()
@@ -650,14 +703,20 @@ func rework(events []chronicle.Event, node string) string {
 			if ev.Soft {
 				s += ", soft"
 			}
+			if ev.Log != "" {
+				s += ", log " + filepath.Join(campaignDir, filepath.FromSlash(ev.Log))
+			}
+			if len(ev.Artifacts) > 0 {
+				s += ", artifacts in the work folder: " + strings.Join(ev.Artifacts, " ")
+			}
 			failed = append(failed, s+")")
 		}
 	}
 	if len(failed) > 0 {
 		fmt.Fprintf(&b, "Checks that did not pass: %s\n", strings.Join(failed, ", "))
 	}
-	if len(fin.Artifacts) > 0 {
-		fmt.Fprintf(&b, "Artifacts of %q in the work folder: %s\n", t.Node, strings.Join(fin.Artifacts, ", "))
+	if arts := artifactsOf(events[:at], fin); len(arts) > 0 {
+		fmt.Fprintf(&b, "Artifacts of %q in the work folder: %s\n", t.Node, strings.Join(arts, ", "))
 	}
 	if asked, answer := answersOf(events[:at], t.Node); answer != nil && asked.Attempt == fin.Attempt {
 		who := "A person"

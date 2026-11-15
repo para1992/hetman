@@ -105,6 +105,13 @@ nodes:
 		return false
 	}, out)
 	w.waitIn(yChild, func(e chronicle.Event) bool { return e.Kind == chronicle.ProcessStarted && e.Node == "work" }, out)
+	// A child can be shown on its own while it runs and once it finished,
+	// although its segment lies next to the orders.
+	for _, child := range []int64{yChild, finished.Child} {
+		if status := w.call(0, "status", "-c", itoa(child)); !strings.Contains(status, "work") {
+			t.Fatalf("status of child %d:\n%s", child, status)
+		}
+	}
 	if err := engineProc.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
@@ -116,6 +123,9 @@ nodes:
 		if !strings.Contains(status, want) {
 			t.Fatalf("status after the kill lacks %q:\n%s", want, status)
 		}
+	}
+	if status := w.call(0, "status", "-c", itoa(yChild)); !strings.Contains(status, "work") {
+		t.Fatalf("status of the interrupted child:\n%s", status)
 	}
 	w.release()
 	resumed := w.call(0, "resume")

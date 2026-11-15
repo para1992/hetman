@@ -137,6 +137,17 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if cmd == "check" {
+		// Adapters that can check a step without running it look at the
+		// model, effort and tools of the agent nodes.
+		errs, warnings := engine.CheckAdapters(context.Background(), o)
+		if len(warnings) > 0 {
+			fmt.Fprintln(stderr, warnings.Error())
+		}
+		if len(errs) > 0 {
+			fmt.Fprintln(stderr, errs.Error())
+			fmt.Fprintln(stderr, p.T("cli.orders_rejected", "n", len(errs)))
+			return exitUsage
+		}
 		fmt.Fprintln(stdout, p.T("cli.check_ok", "path", o.Path, "flow", o.Flow, "nodes", len(o.Nodes), "checks", len(o.Checks), "language", languageNote(p, lang)))
 		return exitDone
 	}
@@ -246,7 +257,18 @@ func (c *command) campaign(id int64) (chronicle.Campaign, error) {
 // ordersOf makes the command work with the orders file a campaign was
 // started from, when it is another flow in the same folder than the one
 // given with -f, so that it is driven and shown by its own nodes.
+//
+// A child campaign of a segment or for-each records the segment's file; it
+// is shown and driven through the orders of the campaign a person started,
+// whose nodes lead to that segment, wherever the segment file lies.
 func (c *command) ordersOf(k chronicle.Campaign) {
+	if k.Parent != 0 {
+		if top, err := engine.Top(c.chron, k.ID); err == nil {
+			if tk, err := c.chron.Campaign(top); err == nil {
+				k = tk
+			}
+		}
+	}
 	if k.Orders == "" || k.Orders == c.o.Path || filepath.Dir(k.Orders) != c.o.Dir {
 		return
 	}
@@ -307,12 +329,14 @@ func languageFor(o *orders.Orders) (string, error) {
 // personPrinter speaks the person's language: the one in the environment
 // variable, else the one in the orders, else English. An unknown code in
 // the variable is reported by check and run; the interface falls back.
+//
+// The interface language is the person's own: HETMAN_LANGUAGE, else
+// English. The orders' language key is the flow's, for what the flow
+// addresses to a person, and does not change the interface, so the same
+// command speaks the same language for an orders file and for its
+// segments, and setting the key while building a flow switches nothing.
 func personPrinter(o *orders.Orders) *i18n.Printer {
-	var fromOrders string
-	if o != nil {
-		fromOrders = o.Language
-	}
-	return i18n.For(i18n.Resolve(os.Getenv(languageEnv), fromOrders))
+	return i18n.For(i18n.Resolve(os.Getenv(languageEnv), ""))
 }
 
 // languageNote names a campaign's language for the person after other

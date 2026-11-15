@@ -77,6 +77,7 @@ func (f *fixture) traced(x string) []adapter.Step {
 		if err := json.Unmarshal(sc.Bytes(), &s); err != nil {
 			f.t.Fatal(err)
 		}
+		s.Prompt = strings.Replace(s.Prompt, unableInstruction(), "", 1)
 		out = append(out, s)
 	}
 	return out
@@ -112,6 +113,7 @@ func ran(t *testing.T, ch *chronicle.Chronicle, top int64) []string {
 
 // roleOrders has three agent steps x, y and z run through role r.
 const roleOrders = `version: 0
+workdir: .
 start: x
 executors:
   a: {run: PLAN_a}
@@ -174,6 +176,7 @@ func TestRoleRoundRobinTakesTurnsAcrossARestart(t *testing.T) {
 }
 
 const turnSegment = `version: 0
+workdir: .
 flow: item
 start: work
 executors:
@@ -191,6 +194,7 @@ func TestRoleRoundRobinTakesTurnsAcrossChildren(t *testing.T) {
 	for _, parallel := range []string{"1", "3"} {
 		t.Run("parallel "+parallel, func(t *testing.T) {
 			f := setupRole(t, `version: 0
+workdir: .
 start: plan
 executors:
   a: {run: PLAN_a}

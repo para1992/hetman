@@ -4,7 +4,7 @@
 //
 // Usage:
 //
-//	hetman-adapter-claude [--client PROGRAM] [--env NAME]... [--describe]
+//	hetman-adapter-claude [--client PROGRAM] [--env NAME]... [--describe | --check]
 //
 // --client names the client program, "claude" on the path by default.
 // --env passes one more variable of the adapter's own environment to the
@@ -80,6 +80,7 @@ func parseArgs(args []string) (o options, describe bool, err error) {
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	args, check := cutFlag(args, adapter.CheckFlag)
 	o, describe, err := parseArgs(args)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s adapter: %v\n", adapterName, err)
@@ -87,8 +88,15 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if describe {
 		data, _ := json.Marshal(adapter.Description{Protocol: []int{adapter.Version}, Name: adapterName,
-			Features: []string{adapter.FeatureResume}})
+			Features: []string{adapter.FeatureResume, adapter.FeatureProtect, adapter.FeatureCheck}})
 		fmt.Fprintf(stdout, "%s\n", data)
+		return 0
+	}
+	if check {
+		if err := adapter.ServeCheck(stdin, stdout, func(st adapter.Step) []adapter.CheckProblem { return stepProblems(o, st, stderr) }); err != nil {
+			fmt.Fprintf(stderr, "%s adapter: %v\n", adapterName, err)
+			return 2
+		}
 		return 0
 	}
 	in := bufio.NewReader(stdin)
@@ -147,6 +155,20 @@ func (s *sender) session(id string) {
 	s.send(adapter.Message{Type: adapter.TypeSession, ID: id})
 }
 
+// cutFlag removes a flag from args and reports whether it was there.
+func cutFlag(args []string, flag string) ([]string, bool) {
+	var out []string
+	found := false
+	for _, a := range args {
+		if a == flag {
+			found = true
+			continue
+		}
+		out = append(out, a)
+	}
+	return out, found
+}
+
 func failure(kind, message string) adapter.Message {
 	return adapter.Message{Type: adapter.TypeError, Kind: kind, Message: message}
 }
@@ -163,6 +185,12 @@ func step(o options, st adapter.Step, out *sender, diag io.Writer, cancel <-chan
 	if st.Session != nil {
 		session = *st.Session
 	}
+	for _, name := range toolNames(st.Tools) {
+		if name == "Bash" {
+			out.log(readOnlyNote)
+			break
+		}
+	}
 	r := attempt(o, st, session, out, diag, cancel)
 	if r.missingSession && session != "" {
 		out.log(fmt.Sprintf("session %s cannot be continued here; starting a new conversation", session))
@@ -175,20 +203,11 @@ func step(o options, st adapter.Step, out *sender, diag io.Writer, cancel <-chan
 // value with a warning, so the adapter rejects it instead.
 var efforts = []string{"low", "medium", "high", "xhigh", "max"}
 
+// checkStep rejects a step the client would not run as written, naming
+// the first problem (see stepProblems).
 func checkStep(st adapter.Step) error {
-	if st.Effort != "" {
-		ok := false
-		for _, e := range efforts {
-			ok = ok || st.Effort == e
-		}
-		if !ok {
-			return fmt.Errorf("effort %q is not one of %s", st.Effort, strings.Join(efforts, ", "))
-		}
-	}
-	for _, t := range st.Tools {
-		if strings.TrimSpace(t) == "" {
-			return errors.New("tools contains an empty name")
-		}
+	if ps := stepProblems(options{}, st, io.Discard); len(ps) > 0 {
+		return errors.New(adapter.ProblemText(st, ps[0]))
 	}
 	return nil
 }

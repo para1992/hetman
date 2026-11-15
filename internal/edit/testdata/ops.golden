@@ -1,7 +1,7 @@
 == add script after
 --- orders.yaml
 +++ orders.yaml
-@@ -39,6 +39,12 @@
+@@ -40,6 +40,12 @@
        - id: notes
          question: 'Are the release notes written?'
 -    on: {pass: ship, blocked: build}
@@ -18,7 +18,7 @@
 == add script after via
 --- orders.yaml
 +++ orders.yaml
-@@ -30,7 +30,12 @@
+@@ -31,7 +31,12 @@
      on:
        approved: ready
 -      needs_rework: build   # back for another round
@@ -35,7 +35,7 @@
 == add gate before
 --- orders.yaml
 +++ orders.yaml
-@@ -29,8 +29,13 @@
+@@ -30,8 +30,13 @@
      schema: schemas/review.json
      on:
 -      approved: ready
@@ -53,14 +53,14 @@
 == add agent before start
 --- orders.yaml
 +++ orders.yaml
-@@ -3,5 +3,5 @@
- version: 0
+@@ -4,5 +4,5 @@
  flow: release   # the name shown on the page
+ workdir: .      # agents work next to this file
 -start: build
 +start: plan
  
  # Adapters that run agent steps.
-@@ -15,4 +15,15 @@
+@@ -16,4 +16,15 @@
  
  nodes:
 +  plan:
@@ -99,7 +99,7 @@
 == add human after and ask
 --- orders.yaml
 +++ orders.yaml
-@@ -39,6 +39,15 @@
+@@ -40,6 +40,15 @@
        - id: notes
          question: 'Are the release notes written?'
 -    on: {pass: ship, blocked: build}
@@ -119,7 +119,7 @@
 == remove
 --- orders.yaml
 +++ orders.yaml
-@@ -20,16 +20,5 @@
+@@ -21,16 +21,5 @@
      run: [sh, steps/build.sh, "--mode=fast"]   # quoted on purpose
      timeout: 5m
 -    on: {ok: review, fail: failed, timeout: failed}
@@ -140,28 +140,28 @@
 == rename
 --- orders.yaml
 +++ orders.yaml
-@@ -3,5 +3,5 @@
- version: 0
+@@ -4,5 +4,5 @@
  flow: release   # the name shown on the page
+ workdir: .      # agents work next to this file
 -start: build
 +start: compile
  
  # Adapters that run agent steps.
-@@ -16,5 +16,5 @@
+@@ -17,5 +17,5 @@
  nodes:
    # Compile everything.
 -  build:
 +  compile:
      type: script
      run: [sh, steps/build.sh, "--mode=fast"]   # quoted on purpose
-@@ -30,5 +30,5 @@
+@@ -31,5 +31,5 @@
      on:
        approved: ready
 -      needs_rework: build   # back for another round
 +      needs_rework: compile   # back for another round
        fail: failed
  
-@@ -39,5 +39,5 @@
+@@ -40,5 +40,5 @@
        - id: notes
          question: 'Are the release notes written?'
 -    on: {pass: ship, blocked: build}
@@ -178,7 +178,7 @@
 == link new outcome
 --- orders.yaml
 +++ orders.yaml
-@@ -44,4 +44,4 @@
+@@ -45,4 +45,4 @@
      type: script
      run: [sh, steps/ship.sh]
 -    on: {ok: done, fail: failed, again: ship}   # the end
@@ -187,7 +187,7 @@
 == link in a block
 --- orders.yaml
 +++ orders.yaml
-@@ -30,5 +30,5 @@
+@@ -31,5 +31,5 @@
      on:
        approved: ready
 -      needs_rework: build   # back for another round
@@ -197,7 +197,7 @@
 == unlink
 --- orders.yaml
 +++ orders.yaml
-@@ -44,4 +44,4 @@
+@@ -45,4 +45,4 @@
      type: script
      run: [sh, steps/ship.sh]
 -    on: {ok: done, fail: failed, again: ship}   # the end
@@ -206,7 +206,7 @@
 == set timeout
 --- orders.yaml
 +++ orders.yaml
-@@ -44,4 +44,5 @@
+@@ -45,4 +45,5 @@
      type: script
      run: [sh, steps/ship.sh]
 -    on: {ok: done, fail: failed, again: ship}   # the end
@@ -216,7 +216,7 @@
 == set existing timeout
 --- orders.yaml
 +++ orders.yaml
-@@ -19,5 +19,5 @@
+@@ -20,5 +20,5 @@
      type: script
      run: [sh, steps/build.sh, "--mode=fast"]   # quoted on purpose
 -    timeout: 5m
@@ -226,7 +226,7 @@
 == unset timeout
 --- orders.yaml
 +++ orders.yaml
-@@ -19,6 +19,5 @@
+@@ -20,6 +20,5 @@
      type: script
      run: [sh, steps/build.sh, "--mode=fast"]   # quoted on purpose
 -    timeout: 5m
@@ -237,7 +237,7 @@
 == set run
 --- orders.yaml
 +++ orders.yaml
-@@ -18,5 +18,5 @@
+@@ -19,5 +19,5 @@
    build:
      type: script
 -    run: [sh, steps/build.sh, "--mode=fast"]   # quoted on purpose
@@ -247,13 +247,13 @@
 == set executor model effort tools attempts
 --- orders.yaml
 +++ orders.yaml
-@@ -8,4 +8,5 @@
+@@ -9,4 +9,5 @@
  executors:
    stub:   {run: [./bin/stub, plan.json]}   # no real model
 +  other: {run: [./bin/other, --quiet]}
  
  checks:
-@@ -25,7 +26,11 @@
+@@ -26,7 +27,11 @@
    review:
      type: agent
 -    executor: stub
@@ -269,7 +269,7 @@
 == declare check
 --- orders.yaml
 +++ orders.yaml
-@@ -13,4 +13,5 @@
+@@ -14,4 +14,5 @@
    lint:   {run: [sh, checks/lint.sh], soft: true}
    tests:  {run: [sh, checks/tests.sh], timeout: 20m}
 +  style: {run: [sh, checks/style.sh], soft: true}
@@ -278,7 +278,7 @@
 == check required
 --- orders.yaml
 +++ orders.yaml
-@@ -11,5 +11,5 @@
+@@ -12,5 +12,5 @@
  checks:
    # quick ones first
 -  lint:   {run: [sh, checks/lint.sh], soft: true}
@@ -288,7 +288,7 @@
 == check soft and timeout
 --- orders.yaml
 +++ orders.yaml
-@@ -12,5 +12,5 @@
+@@ -13,5 +13,5 @@
    # quick ones first
    lint:   {run: [sh, checks/lint.sh], soft: true}
 -  tests:  {run: [sh, checks/tests.sh], timeout: 20m}
@@ -298,13 +298,13 @@
 == gate add at a position
 --- orders.yaml
 +++ orders.yaml
-@@ -13,4 +13,5 @@
+@@ -14,4 +14,5 @@
    lint:   {run: [sh, checks/lint.sh], soft: true}
    tests:  {run: [sh, checks/tests.sh], timeout: 20m}
 +  style: {run: [sh, checks/style.sh]}
  
  nodes:
-@@ -35,5 +36,5 @@
+@@ -36,5 +37,5 @@
    ready:
      type: gate
 -    checks: [lint, tests]
@@ -314,7 +314,7 @@
 == gate remove
 --- orders.yaml
 +++ orders.yaml
-@@ -35,5 +35,5 @@
+@@ -36,5 +36,5 @@
    ready:
      type: gate
 -    checks: [lint, tests]
@@ -324,7 +324,7 @@
 == ask
 --- orders.yaml
 +++ orders.yaml
-@@ -39,4 +39,6 @@
+@@ -40,4 +40,6 @@
        - id: notes
          question: 'Are the release notes written?'
 +      - id: docs
@@ -334,7 +334,7 @@
 == assistant
 --- orders.yaml
 +++ orders.yaml
-@@ -5,4 +5,6 @@
+@@ -6,4 +6,6 @@
  start: build
  
 +scribe: {executor: stub, model: small-model, effort: low}
@@ -344,7 +344,7 @@
 == language
 --- orders.yaml
 +++ orders.yaml
-@@ -5,4 +5,6 @@
+@@ -6,4 +6,6 @@
  start: build
  
 +language: hi
@@ -354,7 +354,7 @@
 == language changed
 --- orders.yaml
 +++ orders.yaml
-@@ -5,4 +5,6 @@
+@@ -6,4 +6,6 @@
  start: build
  
 +language: uk
@@ -365,7 +365,7 @@
 == add segment after
 --- orders.yaml
 +++ orders.yaml
-@@ -39,6 +39,12 @@
+@@ -40,6 +40,12 @@
        - id: notes
          question: 'Are the release notes written?'
 -    on: {pass: ship, blocked: build}
@@ -382,7 +382,7 @@
 == add foreach after and set
 --- orders.yaml
 +++ orders.yaml
-@@ -44,4 +44,11 @@
+@@ -45,4 +45,11 @@
      type: script
      run: [sh, steps/ship.sh]
 -    on: {ok: done, fail: failed, again: ship}   # the end
@@ -398,7 +398,7 @@
 == set and unset locks
 --- orders.yaml
 +++ orders.yaml
-@@ -44,4 +44,5 @@
+@@ -45,4 +45,5 @@
      type: script
      run: [sh, steps/ship.sh]
 +    locks: [prod, writer]
@@ -407,7 +407,7 @@
 == check locks
 --- orders.yaml
 +++ orders.yaml
-@@ -12,5 +12,5 @@
+@@ -13,5 +13,5 @@
    # quick ones first
    lint:   {run: [sh, checks/lint.sh], soft: true}
 -  tests:  {run: [sh, checks/tests.sh], timeout: 20m}
@@ -417,7 +417,7 @@
 == role declared and pointed at
 --- orders.yaml
 +++ orders.yaml
-@@ -8,5 +8,13 @@
+@@ -9,5 +9,13 @@
  executors:
    stub:   {run: [./bin/stub, plan.json]}   # no real model
 +  other: {run: [./bin/other]}
@@ -431,7 +431,7 @@
 +
  checks:
    # quick ones first
-@@ -25,5 +33,5 @@
+@@ -26,5 +34,5 @@
    review:
      type: agent
 -    executor: stub
@@ -441,7 +441,7 @@
 == role mode, clients added and removed
 --- orders.yaml
 +++ orders.yaml
-@@ -8,5 +8,13 @@
+@@ -9,5 +9,13 @@
  executors:
    stub:   {run: [./bin/stub, plan.json]}   # no real model
 +  other: {run: [./bin/other]}
@@ -458,14 +458,14 @@
 == agent added through a role, then given an executor
 --- orders.yaml
 +++ orders.yaml
-@@ -3,5 +3,5 @@
- version: 0
+@@ -4,5 +4,5 @@
  flow: release   # the name shown on the page
+ workdir: .      # agents work next to this file
 -start: build
 +start: plan
  
  # Adapters that run agent steps.
-@@ -9,4 +9,10 @@
+@@ -10,4 +10,10 @@
    stub:   {run: [./bin/stub, plan.json]}   # no real model
  
 +roles:
@@ -476,7 +476,7 @@
 +
  checks:
    # quick ones first
-@@ -15,4 +21,11 @@
+@@ -16,4 +22,11 @@
  
  nodes:
 +  plan:

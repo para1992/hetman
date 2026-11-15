@@ -27,6 +27,7 @@ nodes:
     prompt: prompts/write.md
     schema: schemas/write.json
     on: {ok: done, fail: failed}
+workdir: .
 `
 
 func TestRoles(t *testing.T) {

@@ -28,6 +28,7 @@ func newAgentWorld(t *testing.T, plan, prompt string) *world {
 		"s.json":     `{"type": "object", "properties": {"outcome": {"type": "string", "enum": ["ok"]}}, "required": ["outcome"]}`,
 		"plan.json":  plan,
 		orders.DefaultFile: `version: 0
+workdir: .
 flow: test
 start: a
 executors:
@@ -172,7 +173,7 @@ func TestRunInput(t *testing.T) {
 	if code := Main([]string{"run", "-f", w.orders, "-input", input}, &stdout, &stderr); code != exitDone {
 		t.Fatalf("run exit %d\n%s%s", code, stdout.String(), stderr.String())
 	}
-	if steps := w.trace(); len(steps) != 1 || steps[0].Prompt != "Task: write the docs" {
+	if steps := w.trace(); len(steps) != 1 || !strings.HasPrefix(steps[0].Prompt, "Task: write the docs\n\n---\nIf you cannot do this step") {
 		t.Fatalf("starts %+v", steps)
 	}
 	stdout.Reset()

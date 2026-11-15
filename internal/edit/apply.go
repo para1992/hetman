@@ -20,8 +20,8 @@ import (
 
 // The order keys are written in, used to place a key that is added.
 var (
-	topOrder      = []string{"version", "flow", "start", "language", "scribe", "notify", "executors", "roles", "checks", "nodes"}
-	nodeOrder     = []string{"type", "run", "segment", "input", "items", "parallel", "executor", "role", "prompt", "schema", "model", "effort", "tools", "checks", "ask", "show", "timeout", "idle_timeout", "max_attempts", "dialogue", "locks", "on"}
+	topOrder      = []string{"version", "flow", "workdir", "start", "language", "scribe", "notify", "executors", "roles", "checks", "nodes"}
+	nodeOrder     = []string{"type", "run", "segment", "input", "items", "parallel", "executor", "role", "prompt", "schema", "model", "effort", "tools", "workdir", "checks", "ask", "show", "timeout", "idle_timeout", "max_attempts", "dialogue", "fail_on_denied", "locks", "on"}
 	checkOrder    = []string{"run", "timeout", "soft", "locks"}
 	questionOrder = []string{"id", "question", "kind", "options"}
 	scribeOrder   = []string{"executor", "model", "effort", "timeout"}
@@ -268,6 +268,12 @@ func (e *editing) apply() error {
 	case OpUnlanguage:
 		e.unset(e.root(), "language")
 		return nil
+	case OpWorkdir:
+		if strings.TrimSpace(e.op.Workdir) == "" {
+			return fmt.Errorf("workdir needs a folder, such as . or ..")
+		}
+		e.set(e.root(), "workdir", str(e.op.Workdir), topOrder)
+		return nil
 	}
 	return fmt.Errorf("unknown operation %q", e.op.Op)
 }
@@ -295,7 +301,7 @@ func (e *editing) build(op Op, next string, flowNode, flowOn bool) (*yaml.Node, 
 	allowed := map[string][]string{
 		orders.Script:  {"run", "timeout", "locks", "on"},
 		orders.Gate:    {"run", "timeout", "checks", "locks", "on"},
-		orders.Agent:   {"executor", "role", "model", "effort", "tools", "attempts", "prompt", "schema", "outcomes", "timeout", "starters", "locks", "on"},
+		orders.Agent:   {"executor", "role", "model", "effort", "tools", "attempts", "prompt", "schema", "outcomes", "timeout", "starters", "locks", "workdir", "on"},
 		orders.Human:   {"outcomes", "locks", "on"},
 		orders.Segment: {"segment", "input", "locks", "on"},
 		orders.ForEach: {"segment", "items", "parallel", "locks", "on"},
@@ -305,7 +311,7 @@ func (e *editing) build(op Op, next string, flowNode, flowOn bool) (*yaml.Node, 
 		return nil, fmt.Errorf("unknown node type %q (script, gate, agent, human, segment or foreach)", op.Type)
 	}
 	for _, f := range op.Fields() {
-		if contains(nodeFields, f) && !contains(list, f) {
+		if contains(nodeFields, f) && !contains(list, f) && !(f == "workdir" && op.Op == OpNew) {
 			return nil, fmt.Errorf("a %s node does not take %s", op.Type, f)
 		}
 	}
@@ -476,8 +482,8 @@ func (e *editing) agent(op Op, add func(string, *yaml.Node)) ([]string, error) {
 		schemaRel = "schemas/" + op.Node + ".json"
 	}
 	for _, o := range op.Outcomes {
-		if !namePattern.MatchString(o) || o == orders.Fail || o == ask.Outcome {
-			return nil, fmt.Errorf("outcome %q cannot be reported by a model: use letters, digits, '_', '-' and '.', and not fail or questions", o)
+		if !namePattern.MatchString(o) || o == orders.Fail || o == ask.Outcome || o == orders.Unable {
+			return nil, fmt.Errorf("outcome %q cannot be reported by a model: use letters, digits, '_', '-' and '.', and not fail, questions or %s", o, orders.Unable)
 		}
 	}
 	var outcomes []string
@@ -517,6 +523,9 @@ func (e *editing) agent(op Op, add func(string, *yaml.Node)) ([]string, error) {
 	}
 	if len(op.Tools) > 0 {
 		add("tools", flowSeq(op.Tools))
+	}
+	if op.Workdir != "" && op.Op != OpNew {
+		add("workdir", str(op.Workdir))
 	}
 	if op.Timeout != "" {
 		add("timeout", str(op.Timeout))
@@ -575,9 +584,15 @@ func (e *editing) create() error {
 	if err != nil {
 		return err
 	}
+	// The folder agent steps work in is written out, so the file says it.
+	workdir := op.Workdir
+	if workdir == "" {
+		workdir = "."
+	}
 	root := mapping(false,
 		str("version"), num(0),
 		str("flow"), str(flow),
+		str("workdir"), str(workdir),
 		str("start"), str(op.Node),
 		str("nodes"), mapping(false, str(op.Node), n))
 	var b bytes.Buffer
@@ -628,8 +643,8 @@ func (e *editing) add() error {
 		if i < 0 {
 			return fmt.Errorf("%s has no outcome %q (its outcomes: %s)", op.After, via, strings.Join(keys(on), ", "))
 		}
-		next = to.Value
-		rewire = append(rewire, func() { e.t.replace(on, i, str(op.Node)) })
+		next = targetOf(to)
+		rewire = append(rewire, func() { e.retarget(on, i, op.Node) })
 		index = e.nodeIndex(op.After) + 1
 	} else {
 		y, err := e.node(op.Before)
@@ -645,8 +660,8 @@ func (e *editing) add() error {
 				continue
 			}
 			main := Main(keys(on))
-			if i, to := lookup(on, main); i >= 0 && to.Value == op.Before {
-				rewire = append(rewire, func() { e.t.replace(on, i, str(op.Node)) })
+			if i, to := lookup(on, main); i >= 0 && targetOf(to) == op.Before {
+				rewire = append(rewire, func() { e.retarget(on, i, op.Node) })
 			}
 		}
 		if i, start := lookup(e.root(), "start"); i >= 0 && start.Value == op.Before {
@@ -685,7 +700,7 @@ func (e *editing) removeNode() error {
 	if on != nil {
 		_, to := lookup(on, Main(keys(on)))
 		if to != nil {
-			next = to.Value
+			next = targetOf(to)
 		}
 	}
 	if next == "" || next == op.Node {
@@ -697,8 +712,8 @@ func (e *editing) removeNode() error {
 		}
 		if zon := onOf(it[1]); zon != nil {
 			for i, it2 := range items(zon) {
-				if it2[1].Value == op.Node {
-					e.t.replace(zon, i, str(next))
+				if targetOf(it2[1]) == op.Node {
+					e.retarget(zon, i, next)
 				}
 			}
 		}
@@ -774,8 +789,8 @@ func (e *editing) rename() error {
 	for _, it := range items(nodes) {
 		if on := onOf(it[1]); on != nil {
 			for i, it2 := range items(on) {
-				if it2[1].Value == op.Node {
-					e.t.replace(on, i, str(op.Name))
+				if targetOf(it2[1]) == op.Node {
+					e.retarget(on, i, op.Name)
 				}
 			}
 		}
@@ -823,15 +838,33 @@ func (e *editing) link() error {
 	if err := e.target(op.Target); err != nil {
 		return err
 	}
+	v := str(op.Target)
+	if op.Max != 0 {
+		if op.Max < 1 || op.Max > orders.MaxLimit {
+			return fmt.Errorf("max must be a whole number from 1 to %d", orders.MaxLimit)
+		}
+		if !namePattern.MatchString(op.Then) || op.Then == op.Outcome {
+			return fmt.Errorf("then %q: name another outcome of %s, with letters, digits, '_', '-' and '.' only", op.Then, op.Node)
+		}
+		v = mapping(true, str("to"), str(op.Target), str("max"), num(op.Max), str("then"), str(op.Then))
+	}
 	on := onOf(n)
 	if on == nil {
-		e.set(n, "on", mapping(e.flowOn(), str(op.Outcome), str(op.Target)), nodeOrder)
-		return nil
+		e.set(n, "on", mapping(e.flowOn(), str(op.Outcome), v), nodeOrder)
+		on = onOf(n)
+	} else {
+		if _, to := lookup(on, op.Outcome); to != nil && to.Kind == yaml.ScalarNode && to.Value == op.Target && op.Max == 0 {
+			return fmt.Errorf("%s already leads to %s on %s", op.Node, op.Target, op.Outcome)
+		}
+		e.set(on, op.Outcome, v, nil)
 	}
-	if _, to := lookup(on, op.Outcome); to != nil && to.Value == op.Target {
-		return fmt.Errorf("%s already leads to %s on %s", op.Node, op.Target, op.Outcome)
+	// The outcome a limit turns to needs a transition of its own; until one
+	// is linked it ends the campaign in failed.
+	if op.Then != "" {
+		if i, _ := lookup(on, op.Then); i < 0 {
+			e.t.insert(on, len(on.Content)/2, str(op.Then), str(orders.Failed))
+		}
 	}
-	e.set(on, op.Outcome, str(op.Target), nil)
 	return nil
 }
 
@@ -869,7 +902,7 @@ func (e *editing) setField() error {
 	}
 	typ := scalarOf(n, "type")
 	agentOnly := map[string]bool{"idle_timeout": true, "executor": true, "role": true, "model": true, "effort": true, "tools": true,
-		"attempts": true, "dialogue": true, "prompt": true, "schema": true}
+		"attempts": true, "dialogue": true, "prompt": true, "schema": true, "workdir": true, "fail_on_denied": true}
 	if agentOnly[op.Field] && typ != orders.Agent {
 		return fmt.Errorf("%s is a %s node; %s is set only on an agent node", op.Node, typ, op.Field)
 	}
@@ -909,10 +942,22 @@ func (e *editing) setField() error {
 			return fmt.Errorf("%s must be a whole number from 1 to 100, not %q", op.Field, op.Value)
 		}
 		v = num(k)
+	case "fail_on_denied":
+		if op.Value != "true" && op.Value != "false" {
+			return fmt.Errorf("fail_on_denied is true or false, not %q", op.Value)
+		}
+		v = &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: op.Value}
 	case "tools":
-		v = flowSeq(splitList(op.Value))
+		list, err := SplitList(op.Value)
+		if err != nil {
+			return err
+		}
+		v = flowSeq(list)
 	case "locks":
-		list := splitList(op.Value)
+		list, err := SplitList(op.Value)
+		if err != nil {
+			return err
+		}
 		if len(list) == 0 {
 			return fmt.Errorf("locks needs at least one name")
 		}
@@ -1364,9 +1409,78 @@ func (e *editing) assistant() error {
 	return nil
 }
 
-// splitList splits a list written with commas or spaces.
-func splitList(s string) []string {
-	return strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' })
+// SplitList splits a list written with commas or spaces, as a list flag
+// takes it. An entry ends only at a comma or space outside parentheses and
+// quotes, so "Read,Bash(make -C *)" is two entries; single or double quotes
+// keep their contents together and are dropped. A parenthesis left open
+// keeps the rest of the text in its entry, for the orders check to report.
+func SplitList(s string) ([]string, error) {
+	var out []string
+	var cur strings.Builder
+	depth := 0
+	var quote rune
+	flush := func() {
+		if cur.Len() > 0 {
+			out = append(out, cur.String())
+			cur.Reset()
+		}
+	}
+	for _, c := range s {
+		switch {
+		case quote != 0:
+			if c == quote {
+				quote = 0
+			} else {
+				cur.WriteRune(c)
+			}
+		case c == '"' || c == '\'':
+			quote = c
+		case (c == ',' || c == ' ' || c == '\t') && depth == 0:
+			flush()
+		default:
+			switch c {
+			case '(':
+				depth++
+			case ')':
+				if depth > 0 {
+					depth--
+				}
+			}
+			cur.WriteRune(c)
+		}
+	}
+	if quote != 0 {
+		return nil, fmt.Errorf("unclosed quote in %q", s)
+	}
+	flush()
+	return out, nil
+}
+
+// targetOf is the target of a transition: its value, or the "to" of a
+// limited transition written as a mapping.
+func targetOf(v *yaml.Node) string {
+	if v == nil {
+		return ""
+	}
+	if v.Kind == yaml.MappingNode {
+		_, to := lookup(v, "to")
+		if to != nil {
+			return to.Value
+		}
+		return ""
+	}
+	return v.Value
+}
+
+// retarget makes transition i of on lead to target, keeping its limit.
+func (e *editing) retarget(on *yaml.Node, i int, target string) {
+	if v := on.Content[2*i+1]; v.Kind == yaml.MappingNode {
+		if j, _ := lookup(v, "to"); j >= 0 {
+			e.t.replace(v, j, str(target))
+			return
+		}
+	}
+	e.t.replace(on, i, str(target))
 }
 
 // SplitCommand splits a command line into the program and its arguments

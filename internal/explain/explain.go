@@ -385,6 +385,9 @@ func (x *explainer) history() []string {
 				if e.Outcome != "" {
 					s += p.T("explain.its_outcome", "outcome", e.Outcome)
 				}
+				if e.Failure != chronicle.FailDenied && len(e.Denied) > 0 {
+					s += p.T("explain.denied", "n", len(e.Denied), "calls", strings.Join(e.Denied, "; "))
+				}
 			case e.Error != "":
 				s = x.unfinished(e)
 			case e.Outcome == "":
@@ -395,6 +398,9 @@ func (x *explainer) history() []string {
 						"checks", strings.Join(cs, ", "))
 				} else {
 					s = p.T("explain.finished", "node", e.Node, "attempt", e.Attempt, "outcome", e.Outcome, "took", dur(e.Millis))
+				}
+				if len(e.Denied) > 0 {
+					s += p.T("explain.denied", "n", len(e.Denied), "calls", strings.Join(e.Denied, "; "))
 				}
 			}
 			if t := x.transitionAfter(i, e.Node); t != nil && e.Outcome != "" {

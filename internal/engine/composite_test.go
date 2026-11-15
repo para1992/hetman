@@ -116,6 +116,7 @@ func byItem(spans []span) map[string]span {
 }
 
 const itemSegment = `version: 0
+workdir: .
 flow: one-item
 start: work
 nodes:
@@ -127,6 +128,7 @@ func segmentWith(run string) string { return strings.Replace(itemSegment, "%s", 
 func forEachOrders(items string, parallel int, extra string) string {
 	list := strings.ReplaceAll(items, "'", "''")
 	return `version: 0
+workdir: .
 flow: many
 start: plan
 nodes:
@@ -247,6 +249,7 @@ func TestLockSharedByItemsIsNeverHeldTwice(t *testing.T) {
 	// recorded waiting for the lock, so a wait happens by construction too.
 	items := `[{"id":"a","wait":true},{"id":"b","wait":true},{"id":"c","wait":true},{"id":"d","wait":true}]`
 	seg := `version: 0
+workdir: .
 flow: one-item
 start: prepare
 nodes:
@@ -301,6 +304,7 @@ nodes:
 
 func TestLocksOfAGateAndItsChecksAreTakenInNameOrder(t *testing.T) {
 	f := setup(t, `version: 0
+workdir: .
 start: g
 checks:
   unit: {run: `+arg("exit", "0")+`, locks: [b-stand]}
@@ -323,6 +327,7 @@ nodes:
 
 func TestStepWaitingForALockIsVisibleAndHaltable(t *testing.T) {
 	f := setup(t, `version: 0
+workdir: .
 start: a
 nodes:
   a: {type: script, run: `+arg("exit", "0")+`, locks: [stand], on: {ok: done, fail: failed}}
@@ -353,6 +358,7 @@ nodes:
 
 func TestSegmentGetsAnOutputAsInputAndEndsAsItsOutcome(t *testing.T) {
 	config := `version: 0
+workdir: .
 start: plan
 executors:
   stub: {run: ` + teststep.Adapter() + `}
@@ -365,6 +371,7 @@ nodes:
 		"p.md":   "plan",
 		"s.json": `{"type":"object","properties":{"outcome":{"type":"string","enum":["ok"]},"task":{"type":"object"}},"required":["outcome"]}`,
 		"seg/review.yaml": `version: 0
+workdir: .
 flow: review
 start: look
 nodes:
@@ -398,17 +405,20 @@ nodes:
 
 func TestNestedSegments(t *testing.T) {
 	f, _ := setupFiles(t, `version: 0
+workdir: .
 start: outer
 nodes:
   outer: {type: segment, segment: a.yaml, on: {done: done, failed: failed}}
 `, map[string]string{
 		"a.yaml": `version: 0
+workdir: .
 flow: a
 start: mid
 nodes:
   mid: {type: segment, segment: deep/b.yaml, on: {done: done, failed: failed}}
 `,
 		"deep/b.yaml": `version: 0
+workdir: .
 flow: b
 start: leaf
 nodes:
@@ -450,10 +460,12 @@ nodes:
 
 func TestChildAskingIsAnsweredThroughTheParent(t *testing.T) {
 	f, _ := setupFiles(t, `version: 0
+workdir: .
 start: s
 nodes:
   s: {type: segment, segment: seg.yaml, on: {done: done, failed: failed}}
 `, map[string]string{"seg.yaml": `version: 0
+workdir: .
 flow: seg
 start: decide
 nodes:
@@ -485,10 +497,12 @@ nodes:
 
 func TestHaltReachesTheChildAndResumeContinuesIt(t *testing.T) {
 	f, sync := setupFiles(t, `version: 0
+workdir: .
 start: s
 nodes:
   s: {type: segment, segment: seg.yaml, on: {done: done, failed: failed}}
 `, map[string]string{"seg.yaml": `version: 0
+workdir: .
 flow: seg
 start: a
 nodes:

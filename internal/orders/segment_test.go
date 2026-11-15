@@ -52,6 +52,7 @@ nodes:
     parallel: 3
     on: {done: g, failed: plan}
   g: {type: gate, checks: [unit], locks: [copy], on: {pass: done, blocked: failed}}
+workdir: .
 `, "p.md": "plan", "s.json": `{"type":"object","properties":{"outcome":{"type":"string","enum":["ok"]}},"required":["outcome"]}`})
 	o, err := Load(filepath.Join(dir, "orders.yaml"))
 	if err != nil {

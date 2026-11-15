@@ -255,7 +255,8 @@ nodes:
   default). `start` is required. `language` optionally names the language of what
   the flow addresses to a person (see Language for the person). `scribe` optionally
   names the executor and model the setup assistant may ask (see Setup assistant);
-  the engine ignores it.
+  the engine ignores it. `workdir` names the folder agent steps work in (see Agent
+  steps); orders with agent nodes must name it here or on each agent node.
 - Ids and names use letters, digits, `_`, `-` and `.`.
 - `run` is a list: the program followed by its arguments. There is no shell. A
   program with a slash in it is relative to the orders folder; a bare name such as
@@ -289,6 +290,28 @@ Any node may also name `locks`: resources its steps hold exclusively.
 two ends, `done` and `failed`. A node with a `timeout` also has the outcome
 `timeout`. Every outcome a node can produce must have a transition; `hetman check`
 rejects the file otherwise. A transition may lead back to an earlier node.
+
+A transition can be limited: written as `{to: TARGET, max: N, then: OUTCOME}`, it is
+taken at most N times (1 to 100) in one campaign; when the node produces its outcome
+once more, the flow takes the transition of OUTCOME instead. OUTCOME is a name of your
+choosing with a transition of its own under the same `on`, even on a gate, whose own
+outcomes are only `pass` and `blocked`; it may be limited in turn, but limits may not
+name each other in a circle.
+
+```yaml
+  tests:
+    type: gate
+    checks: [unit]
+    on: {pass: done, blocked: {to: fix, max: 3, then: stuck}, stuck: ask_lead}
+```
+
+The count is read from the chronicle, so it survives a restart, and each child
+campaign of a segment or for-each counts its own. A transition taken instead counts
+for the outcome it was taken on, and is recorded with the outcome the node produced
+(`instead`). `hetman retry` keeps the count: it runs a failed step again and undoes no
+transition. `hetman rewind -to NODE` undoes the transitions taken since the campaign
+first reached NODE (in the history earlier rewinds kept), so those no longer count; a
+rewind to a node after the loop leaves the count as it is.
 
 **Checks.** Declared once under the top-level `checks` and listed by name in a gate.
 The gate runs them in the listed order. A check is required unless it has
@@ -333,7 +356,8 @@ instead. It holds the validated output object and is written, like `input.json`,
 from the chronicle before every step, so it is restored after a crash or an edit;
 it does not exist until the node has an accepted output.
 
-Add `.hetman/` to your version control ignore list.
+Add `.hetman/` to your version control ignore list. Agent steps may not write it,
+except the campaign's own `work/` folder (see Working folder below).
 
 **Halt and resume.** `hetman halt` asks a campaign to stop after its current step;
 if no process is running it, it halts at once. `hetman resume` continues a halted
@@ -342,8 +366,20 @@ a campaign stopped in the error state. A campaign stops in the error state, and
 waits for a person, when a program cannot be started, a result file is not valid
 JSON, an outcome has no transition, the current node is no longer in the orders, an
 adapter does not describe itself properly, or a prompt template reads a run input
-field that does not exist. Fix the cause and resume. The orders file is read again
-on every resume.
+field that does not exist. Fix the cause and resume.
+
+**Changing the orders while a campaign runs.** Before every step a campaign looks at
+the files of its orders (the orders file, its prompt templates, schemas and programs,
+and every segment's) and reads the orders again when any of them changed, so an edit
+takes effect at the next step that starts. This holds alike for the campaign a person
+started and for its running children: a child takes its segment from the orders read
+afresh, through the nodes that led to it, so an operation on a segment's file (say
+`hetman scribe set build effort high -f task.yaml`) reaches the next step of every
+child running that segment. The progress output says `FILE changed; the next steps use
+it as it is now`. Orders that do not pass the check at that moment are not used: the
+campaign goes on with the version it read before and says why. A step already running
+finishes with the version it started with, and a for-each keeps the list it recorded
+when it started (see Segments, for-each and locks).
 
 **Retry and rewind.** `hetman retry` runs the failed step of a campaign again with a
 fresh attempt budget and continues from there. It applies to a campaign that ended in
@@ -394,18 +430,51 @@ nodes:
     executor: coder                  # a name under executors
     prompt: prompts/implement.md     # prompt template
     schema: schemas/implement.json   # schema of the answer
+    workdir: ..                      # the folder the agent works in, relative to this file
     model: "..."                     # optional, passed to the adapter unchanged
     effort: "..."                    # optional, passed to the adapter unchanged
     tools: [read, edit]              # optional, passed to the adapter unchanged
     timeout: 30m                     # optional: limit for one attempt
     idle_timeout: 5m                 # optional: limit for silence from the adapter
     max_attempts: 3                  # optional, 1 to 100, default 3
+    fail_on_denied: true             # optional: an answer after a denied tool call fails the attempt
     on: {ok: review, fail: failed}
 ```
 
 **Executors.** `executors` maps a name to the program of an adapter, an argv list
 like `run` of a script. The adapter is what talks to a client; Hetman never knows
-which one. `hetman check` looks for the adapter program as it does for scripts.
+which one. `hetman check` looks for the adapter program as it does for scripts, and
+asks an adapter that declares the `check` feature to check the `model`, `effort` and
+`tools` of its agent nodes without contacting a model; what the adapter rejects is
+reported at its line of the orders file.
+
+**Tools.** `tools` is passed to the adapter as written; which names and patterns a
+client honours is for its adapter to say (see Adapters). `hetman check` rejects an
+empty entry and one whose parentheses do not pair up, as `Bash(make` is when a list
+was split at a space inside an entry. An adapter rejects an entry it knows its client
+would accept and never honour as a `permanent` error naming the entry, before any
+model request.
+
+**Working folder.** `workdir` names the folder the agent works in, relative to the
+orders folder: `.` for the orders folder itself, `..` for a project whose flow lives
+in a subfolder such as `flow/orders.yaml`. It is set on the node or once at the top
+level for every agent node that names none; there is no default, so orders with agent
+nodes must set it somewhere. It may not lie in `.hetman/` (except inside a campaign's
+own work folder) and must exist when the step runs, else the campaign stops in the
+error state. A segment's orders name their own. The adapter runs the client there and
+keeps the client's file tools inside it.
+
+Whatever the folder, Hetman's own files are out of an agent's reach: each attempt
+tells the adapter to protect `.hetman/` (the chronicle and every campaign folder) and
+the files of the orders (the orders file, its prompt templates, schemas and the
+programs it names with a path, and the same for every segment), and to keep the
+campaign's work folder writable, since steps hand files to each other there; when the
+work folder lies outside `workdir` it is opened to the file tools as well. An adapter
+says it does this by declaring the `protect` feature; for one that does not, Hetman
+says so once per run. A client enforces it only for its own file tools: a shell
+command the agent is allowed to run can still write anywhere the user can, and
+scripts, gates and checks, which are trusted code, are not restricted at all. See
+each adapter for exactly what its client enforces.
 
 **Schema.** The answer of an agent step is checked against a JSON file written in
 this subset of JSON Schema: `type` (`object`, `array`, `string`, `number`,
@@ -437,19 +506,24 @@ expressions, conditions or loops.
 | `{{input.a.b}}` | a field of the run input |
 | `{{output.NODE}}` | the last accepted answer of agent node NODE, as JSON |
 | `{{output.NODE.a}}` | a field of that answer |
-| `{{artifact.NODE.FILE}}` | the text of FILE in the work folder, when script or gate NODE listed it in its result file |
+| `{{artifact.NODE.FILE}}` | the text of FILE in the work folder, when script or gate NODE listed it in its result file, or, for a gate with checks, when one of its checks did in the gate's latest attempt (a check after a required one that failed did not run). All of them are files of the one work folder, so a name two checks list is one file, as the later check left it |
 | `{{answers.NODE}}` | the latest answers a person gave at gate or human node NODE: each question, answer and comment, and the chosen outcome |
 | `{{answers.NODE.ID}}` | the answer to question ID there (`yes`, `no`, an option or the text) |
 | `{{answers.NODE.ID.comment}}` | the comment on that answer |
 | `{{language}}` | the English name of the campaign's language for the person (`English` when none is set) |
 | `{{language.native}}` | its own name, in its own script |
 | `{{language.code}}` | its code, such as `hi` |
+| `{{work}}` | the absolute path of the campaign's work folder (`HETMAN_RUN_DIR`), where steps hand files to each other |
 | `{{rework}}` | empty on the first visit of the node; when the flow came back to it, the step that sent it back, its outcome and its answer, failed checks or artifacts, and what a person answered there |
 
 A text value is inserted as it is, any other value as indented JSON. A node id may
 contain dots; the longest node id that fits is used. A run input field that does not
 exist stops the campaign in the error state; an answer or artifact that does not
-exist yet gives empty text. `hetman check` reports an unknown placeholder, an
+exist yet gives empty text. `{{rework}}` looks through a script node that only passes
+the flow on, one whose run in that visit listed no artifacts (such as a script that
+counts the rounds of a loop and picks the way back): it names the step whose
+transition led to that script, and the scripts it passed. Gates, agent, human,
+segment and for-each nodes are never looked through. `hetman check` reports an unknown placeholder, an
 `output` of a node that is not an agent, and a field the node's schema rules out,
 at its line in the template. `{{` not followed by a name and `}}` stays as text. The
 prompt of every attempt is stored under `prompts/` in the campaign folder.
@@ -496,6 +570,34 @@ exits without a proper answer or breaks the protocol, the attempt runs past
 After a rejected answer, the next prompt ends with what was wrong with it. When the
 attempts are used up, the node's outcome is `fail`. A permanent error gives `fail`
 at once. A node the flow comes back to starts with all its attempts again.
+
+**Denied tool calls.** An adapter reports the tool calls its client denied in a step
+with the answer; they are recorded with the attempt and shown in `hetman status`
+(`denied` lines under the attempt), `hetman scribe explain` and the step card. By
+default the answer is still accepted. With `fail_on_denied: true` on the node, an
+answer after any denied call fails the attempt (failure `denied`, which uses an
+attempt) unless the answer is `cannot_proceed`, and the next attempt's prompt quotes
+the denied calls and asks the agent to work with the tools it has or to say it cannot
+proceed. Set it on a step that must run tests or other commands, so that an agent
+whose only test command was denied cannot answer `ok` without having run it.
+
+**Cannot proceed.** An agent that cannot do its step at all, for example because a
+tool or file it needs is denied, answers with the reserved outcome `cannot_proceed`
+and its reason in `cannot_proceed_reason`. Hetman adds both to the schema the adapter
+gets and tells the model about them at the end of every first prompt of an attempt:
+
+```
+---
+If you cannot do this step at all, for example because a tool or file you need is denied or out of reach, or the task contradicts itself, do not guess and do not pretend it is done: reply with a JSON object whose "outcome" is "cannot_proceed" and whose "cannot_proceed_reason" says in a sentence or two what stops you, naming the tool or file. Fill any other required field with an empty value. A person reads the reason; this step is not retried by itself.
+```
+
+Such an answer is not retried. With a transition for `cannot_proceed` under `on`, the
+flow follows it like any other outcome (the answer, with its reason, is the node's
+output and the next step's `{{rework}}`); without one, the attempt fails with the
+failure `unable` and the campaign stops in the error state with the reason, waiting
+for a person, who fixes the cause and runs `hetman retry`. An answer with that outcome
+and no reason is invalid output. The schema of a node may not list `cannot_proceed`
+nor have a property `cannot_proceed_reason`.
 
 **Limits and connectivity.** When the adapter reports a subscription limit, the
 attempt does not count. If the adapter says when to retry, the campaign waits until
@@ -627,7 +729,7 @@ nodes:
         question: Does the plan cover every acceptance criterion?
       - id: risk
         question: Is the migration reversible?
-    show: [plan.md]           # files the person looks at before answering
+    show: [plan.md, "{{work}}/notes.md"]   # files the person looks at before answering
     on: {pass: implement, blocked: plan}
   release:
     type: human
@@ -647,7 +749,11 @@ nodes:
 `.`), the `question`, and a `kind`: `yesno` (the default), `choice` (with `options`,
 at least two) or `text`. A person may add a comment to any yes/no or choice answer.
 `show` lists files, relative to the orders folder, that the person is pointed to (in
-the terminal) or can read (on the page) before answering.
+the terminal) or can read (on the page) before answering. An entry that starts with
+`{{work}}/` names a file in the work folder of the campaign that asks instead, as in
+`show: ["{{work}}/plan.md"]` for a plan an agent step wrote there; it is resolved per
+campaign, so two campaigns, or the children of a segment or for-each, each show their
+own file. Either way an entry must stay inside its folder (`..` is rejected).
 
 **Gate with questions.** A gate may have `ask` with or without `checks` (not with
 `run`). The checks run first; only if they let the gate pass is the person asked.
@@ -770,7 +876,11 @@ or can no longer run: `done` when every item reached `done`, else `failed`. A li
 that is not an array of such objects, has the same id twice, needs an id it does not
 have, or whose needs form a cycle makes the node fail at once with the reason, so
 `failed` can lead back to the step that wrote it. The list is recorded when the node
-starts, so a resumed campaign runs the same list.
+starts, so a resumed campaign runs the same list. The input of one item cannot be
+changed after that: change what writes the list (the step's prompt, its script, or
+the run input it reads), then `hetman rewind -to NODE` the for-each node to read the
+list again, or rewind to the step that writes it to have it written again. A
+`hetman retry` of the for-each node keeps the recorded list.
 
 **Children.** Each child is a campaign of its own: its own events in the chronicle,
 its own folder under `.hetman/campaigns/`, its own attempts. The parent records
@@ -863,13 +973,14 @@ nodes:
     ...
 ```
 
-For each attempt it runs the client in the orders folder, with the prompt on
+For each attempt it runs the client in the step's `workdir`, with the prompt on
 standard input:
 
 ```
 claude -p --output-format stream-json --verbose --restricted --strict-mcp-config
   --permission-mode dontAsk --permission-prompts none
   --tools=Read,Edit,Write,Grep,Glob,Bash --allowedTools=Read ... --allowedTools=Bash(go test *)
+  [--add-dir WORK] --disallowedTools=Edit(//PROTECTED) --disallowedTools=Edit(//PROTECTED/**) ...
   --model sonnet --effort high --json-schema SCHEMA [--resume SESSION]
 ```
 
@@ -884,7 +995,35 @@ claude -p --output-format stream-json --verbose --restricted --strict-mcp-config
   asking anybody. No tools means none. The adapter never uses an option that skips
   permission checks. In `--restricted` mode the client ignores the user, project and
   local settings files (their permission rules, hooks and tool servers do not apply)
-  and its file tools stay inside the orders folder.
+  and its file tools stay inside the working folders: `workdir` and, when it lies
+  outside, the campaign's work folder.
+- A file path in a rule is matched by the client only in `Edit(...)` rules, which
+  cover every tool that changes files (`Edit`, `Write`, `MultiEdit`, `NotebookEdit`),
+  and in `Read(...)` rules, which cover the tools that read files. The client accepts
+  `Write(path)`, `MultiEdit(path)`, `NotebookEdit(path)` and `Glob(path)` and then
+  never matches them, so every such call would be denied; the adapter rejects them at
+  once as a `permanent` error that names the entry and the rule to write instead
+  (`Write(plan.md)` becomes `Edit(plan.md)`). It also rejects an entry that does not
+  end at its closing parenthesis, empty parentheses, a lower-case tool name, the
+  `:*` form outside Bash rules and tools of tool servers, which are not loaded. An
+  `Edit(path)` rule makes `Write` available too, approved for the same paths, since
+  `Write` is the tool that creates files. `hetman check` reports the same problems at
+  their line, through the adapter's `check` feature.
+- Protection: each protected path gets an `Edit` deny rule for itself and everything
+  inside it. The client's deny rules always win over its allow rules, so a protected
+  folder that holds the writable work folder (`.hetman/` holds `campaigns/N/work/`)
+  is denied entry by entry around the way to it: the chronicle, the other campaigns'
+  folders, this campaign's `logs/`, `results/`, `prompts/` and lock. Entries created
+  there after the attempt starts are not covered. The client enforces this for its
+  file tools only; `Bash` commands allowed by `tools` are not restricted by it.
+- A limit of the client the adapter cannot change: whenever `Bash` is available (any
+  `Bash` or `Bash(...)` entry), the client also runs, without a matching entry,
+  commands it judges read-only, such as `ls`, `cat`, `head`, `tail`, `grep`, `find`,
+  `wc`, `diff` or `stat`, also chained with `&&` or `|`; no option of print mode
+  turns this off, and a deny rule cannot carve them out, since it would also deny
+  the allowed entries. The adapter says so in the step's log when Bash is available.
+  A compound command such as `cd work && make` is checked as a whole and is denied
+  unless an entry matches it; write `Bash(make -C work *)` instead.
 - The answer is the client's structured output, checked by the client against the
   node's schema and again by Hetman. When the client gives only text, the last JSON
   object in it is taken; no object at all is a transient error.
@@ -892,7 +1031,12 @@ claude -p --output-format stream-json --verbose --restricted --strict-mcp-config
   one; a failed connection is `offline`; not logged in, an unknown model and bad
   arguments are `permanent`; anything else is `transient`.
 - The log shows what the client does: its text, each tool call and what it was
-  called on, and the first line of each tool result.
+  called on, and the first line of each tool result. A call the client denied is
+  listed at the end as `denied: TOOL TARGET: WHY; the client said: REASON`, where WHY
+  names the step's entries for that tool that it matched none of (or that the tool is
+  not among the step's tools), and the calls are reported with the answer (see Denied
+  tool calls). An answer without a JSON object after a denied call is a `permanent`
+  error that lists the denied calls, since a retry would meet the same denial.
 - The client gets only the environment it needs: the system's basic variables,
   proxy and certificate settings, `CLAUDE_CONFIG_DIR` and `CLAUDE_CODE_OAUTH_TOKEN`.
   `--env NAME` adds one more. `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are never
@@ -952,7 +1096,7 @@ nodes:
     ...
 ```
 
-For each attempt it runs the client in the orders folder, with the prompt on
+For each attempt it runs the client in the step's `workdir`, with the prompt on
 standard input:
 
 ```
@@ -961,7 +1105,8 @@ opencode run --format json --pure --print-logs --log-level INFO --agent hetman-X
 ```
 
 and gives it, in `OPENCODE_CONFIG_CONTENT`, an agent made for this run only whose
-permissions deny everything and then allow the node's tools.
+permissions deny everything, then allow the node's tools, then deny writing the
+protected paths.
 
 - `model` is a model in the client's `provider/model` notation, as `opencode models`
   lists it; empty means the client's default. An unknown model, or a provider the
@@ -977,9 +1122,15 @@ permissions deny everything and then allow the node's tools.
   `bash(git status)` or `read(*.md)`, which allow a tool only for what matches the
   pattern. Every other tool is denied and not offered to the model, and the client
   never asks anybody in this mode. No tools means none. The adapter never uses an
-  option that skips permission checks (`--auto`), and its file tools stay inside the
-  orders folder. `task` is refused, because the subagents it starts run with the
-  client's default permissions. External plugins are not loaded (`--pure`). The
+  option that skips permission checks (`--auto`), and its file tools stay inside
+  `workdir` (outside folders are denied as external directories, except the
+  campaign's work folder). `task` is refused, because the subagents it starts run with
+  the client's default permissions. The client governs writing files with `edit`
+  alone, so `write`, `patch`, `apply_patch` and `multiedit` would never match and are
+  rejected, as are a pattern on `todowrite`, `webfetch` or `websearch`, which take
+  none, and `external_directory`, `doom_loop` and `question`, which the adapter sets
+  itself; each as a `permanent` error naming the entry, and by `hetman check` at its
+  line. External plugins are not loaded (`--pure`). The
   restriction has limits: tool servers (MCP) from your or the project's configuration
   are still started, although their tools are denied unless named, and an
   organisation's remote or managed configuration is applied after the adapter's and
@@ -993,9 +1144,22 @@ permissions deny everything and then allow the node's tools.
   instead of letting it retry. A failed connection is `offline`; an unknown model or
   provider, missing credentials and bad arguments are `permanent`; anything else is
   `transient`.
+- Protection: the `edit` permission denies each protected path and what is inside
+  it after the node's own rules, written relative to `workdir` and to every folder
+  above it, because the client matches a path relative to its worktree (the root of
+  the git repository holding `workdir`, or the root of the file system outside one).
+  The client applies the last rule that matches, so when the node may edit everywhere,
+  the work folder is allowed again after the denials and new files in `.hetman/` are
+  covered too; when the node may edit only some patterns, the protected paths are
+  denied entry by entry around the work folder, as for Claude Code. The client
+  enforces this for `edit`, `write` and `apply_patch`; `bash` commands allowed by
+  `tools` are not restricted by it. The client's patterns know only `*` and `?`, so
+  a protected path holding either matches more than itself.
 - The log shows what the client does: its text, each tool call and what it was
   called on, the first line of each tool result or error, and the model steps and
-  tokens at the end.
+  tokens at the end. A call the client's permissions refused is logged as
+  `denied: TOOL TARGET: REASON` and reported with the answer (see Denied tool calls),
+  and an answer without a JSON object after one is a `permanent` error.
 - The client gets only the environment it needs: the system's basic variables, its
   configuration and data folders (`XDG_*`), where it finds its stored logins, and
   proxy and certificate settings. Provider API keys in the environment are not
@@ -1037,8 +1201,10 @@ the extra argument `--describe`. It must print one line and exit with code 0:
 ```
 
 `protocol` lists the versions it speaks and must include 0. The features are
-`resume`, which dialogue steps need, and `usage`, which the `quota` mode of a role
-reads.
+`resume`, which dialogue steps need; `usage`, which the `quota` mode of a role
+reads; `protect`, which says the adapter keeps the client's file tools off the paths
+in `protect` (below); and `check`, which says it can check steps without running
+them.
 
 **Usage.** An adapter that declares `usage` answers the extra arguments `--usage
 five_hour weekly` with one line and exit code 0, without making a model request: its
@@ -1058,11 +1224,36 @@ declare the feature, and Hetman estimates from what it saw.
 ```json
 {"v":0,"type":"start","step":{"run_id":"1","node_id":"implement","attempt":1,
  "prompt":"...","model":"...","effort":"...","tools":["read","edit"],
- "workdir":"/path/to/project","schema":{...},"session":null}}
+ "workdir":"/path/to/project","schema":{...},"session":null,
+ "protect":["/path/to/project/flow/.hetman","/path/to/project/flow/orders.yaml","..."],
+ "writable":["/path/to/project/flow/.hetman/campaigns/1/work"]}}
 ```
 
 `model`, `effort` and `tools` are the strings from the orders (empty when not set).
-`schema` is the node's schema. `session` is null, or the id to continue.
+`workdir` is the node's working folder; run the client there and keep its file tools
+inside it. `schema` is the node's schema with the reserved outcome `cannot_proceed`
+and its field `cannot_proceed_reason` added. `session` is null, or the id to
+continue. `protect` lists absolute paths the client's file tools must not write, with
+everything inside them; `writable` lists folders that must stay readable and
+writable although they lie inside a protected path or outside `workdir`. An adapter
+whose client can enforce this declares `protect`. A tools entry the client would
+accept and never honour should be a `permanent` error that names it.
+
+**Check.** An adapter that declares `check` is run by `hetman check` with the extra
+argument `--check` and gets one line listing the agent nodes that use it:
+
+```json
+{"v":0,"type":"check","steps":[{"node_id":"implement","model":"...","effort":"...","tools":["Read","Write(plan.md)"],...}]}
+```
+
+Without contacting a model it prints one line and exits with code 0:
+
+```json
+{"v":0,"type":"checked","problems":[{"node_id":"implement","field":"tools","item":1,"message":"..."}]}
+```
+
+`field` is `model`, `effort` or `tools`, `item` the index of a tools entry from 0.
+Hetman reports each problem at its line of the orders file and rejects the file.
 
 **Messages from the adapter.**
 
@@ -1076,6 +1267,11 @@ declare the feature, and Hetman estimates from what it saw.
 - `log` lines are shown live as the step's log.
 - `session` reports the id of the conversation; send it only with the `resume`
   feature.
+- `result` may carry `"denied"`: the tool calls the client denied during the step,
+  each as one line naming the tool, what it was called on and the reason. Hetman
+  records them with the attempt and shows them in `hetman status`, the explanation
+  and the step card; an agent node with `fail_on_denied: true` fails such an
+  attempt.
 - `result` carries the answer. Hetman, not the adapter, checks it against the
   schema.
 - `error` has `kind` `transient` (worth retrying), `permanent` (retrying cannot
@@ -1382,8 +1578,8 @@ prompt templates read as `{{input.hetman_task.kind}}` and scripts find in
 route's own `limit` of that route, and keeps looking for new tasks every second
 (`-poll`) until stopped; with `-once` it stops when nothing is left to start or
 running. One dispatcher runs per folder; a second one is refused. The routing file is
-read when the dispatcher starts; an orders file is read again whenever a campaign of it
-starts or continues.
+read when the dispatcher starts; an orders file is read again before every step of a
+campaign of it, as described under Concepts.
 
 A campaign that waits for a person takes no place in the limits: the dispatcher lets
 go of it, and once the person has answered (`hetman answer`, or the page) it continues
@@ -1441,10 +1637,12 @@ folder use the orders file the campaign was started from.
 
 Hetman's own messages (the command line, the wizard, campaigns in plain words and the
 Watchtower page) come in the language of the person reading them: the one in
-`HETMAN_LANGUAGE`, else the orders' `language` key, else English. For a command about
-a campaign the person's language still wins over the language the campaign recorded:
-the interface speaks to whoever is looking, while the campaign's language is for what
-the flow produces. Any of the six codes can be chosen; a language without a translation
+`HETMAN_LANGUAGE`, else English. The orders' `language` key does not change it: that
+key is the flow's language, for what the flow addresses to a person, so the same
+command speaks the same language for an orders file and for its segments, and setting
+the key while building a flow does not switch the interface. Likewise the language a
+campaign recorded is for what the flow produces, while the interface speaks to
+whoever is looking. Any of the six codes can be chosen; a language without a translation
 shows English. English and Ukrainian are translated now.
 
 ```sh
@@ -1518,7 +1716,7 @@ hetman scribe new TYPE NODE [-flow NAME] [node flags]       start a new orders f
 hetman scribe add TYPE NODE (-after NODE [-via OUTCOME] | -before NODE) [node flags]
 hetman scribe remove NODE                    remove a node and connect around it
 hetman scribe rename NODE NEW                rename a node wherever it is referenced
-hetman scribe link NODE OUTCOME TARGET       set or change a transition
+hetman scribe link NODE OUTCOME TARGET [-max N -then OUTCOME]   set or change a transition, limited or not
 hetman scribe unlink NODE OUTCOME            remove a transition
 hetman scribe set NODE FIELD VALUE           set a field of a node
 hetman scribe unset NODE FIELD               remove a field of a node
@@ -1535,20 +1733,27 @@ hetman scribe role-remove ROLE N             remove the client at position N fro
 hetman scribe assistant EXECUTOR MODEL [-effort E]   name the model Scribe may ask
 hetman scribe language CODE                  set the language for the person
 hetman scribe unlanguage                     remove it: English, and nothing added to prompts
+hetman scribe workdir FOLDER                 set the folder agent steps work in by default
 ```
 
 `TYPE` is `script`, `gate`, `agent`, `human`, `segment` or `foreach`. The node flags
 are `-run CMD` (one string split at spaces; quotes keep spaces in an argument),
 `-timeout D`, `-checks A,B`, `-executor NAME`, `-role NAME` (instead of `-executor`,
-`-model` and `-effort`), `-model M`, `-effort E`, `-tools A,B`, `-attempts N`, `-prompt FILE`, `-schema FILE`, `-outcomes A,B` (of an agent or human
-node), `-on OUTCOME=TARGET` (repeatable), `-starters`, `-locks A,B` (any node),
+`-model` and `-effort`), `-model M`, `-effort E`, `-tools A,B`, `-attempts N`,
+`-prompt FILE`, `-schema FILE`, `-outcomes A,B` (of an agent or human node),
+`-workdir FOLDER` (of an agent node; for `new`, the default of the file),
+`-on OUTCOME=TARGET` (repeatable), `-starters`, `-locks A,B` (any node),
 `-segment FILE` (segment and foreach), `-input REF` (segment), `-items REF` and
-`-parallel N` (foreach). The fields of `set` are `run`, `timeout`, `idle_timeout`,
-`executor`, `role`, `model`, `effort`, `tools`, `attempts`, `dialogue`, `prompt`, `schema`,
-`locks`, `segment`, `input`, `items` and `parallel`; `unset` takes the optional ones
-of these. For example, `hetman scribe add foreach build-all -after plan -segment
-segments/item.yaml -items output.plan.items -parallel 2` and
-`hetman scribe set test locks test-stand`.
+`-parallel N` (foreach). A list flag, and a list given as the value of `set`, ends an
+entry only at a comma or a space outside parentheses and quotes, so
+`-tools 'Read,Edit,Write,Grep,Glob,Bash(go test *)'` gives six entries, the last one
+whole; quotes keep an entry with a comma together and are dropped. The fields of
+`set` are `run`, `timeout`, `idle_timeout`, `executor`, `role`, `model`, `effort`,
+`tools`, `attempts`, `dialogue`, `prompt`, `schema`, `workdir`, `fail_on_denied`
+(`true` or `false`), `locks`, `segment`,
+`input`, `items` and `parallel`; `unset` takes the optional ones of these. For
+example, `hetman scribe add foreach build-all -after plan -segment segments/item.yaml
+-items output.plan.items -parallel 2` and `hetman scribe set test locks test-stand`.
 `hetman scribe help` lists everything.
 
 How the flow is wired:
@@ -1567,6 +1772,12 @@ How the flow is wired:
   `{{answers.NODE...}}`).
 - `set NODE timeout` on a script, or a gate with `run`, adds `timeout: failed` when
   the node has no transition for `timeout`; `unset NODE timeout` removes it.
+- `link NODE OUTCOME TARGET -max N -then OTHER` writes a limited transition
+  `{to: TARGET, max: N, then: OTHER}` and adds `OTHER: failed` when OTHER has no
+  transition yet; `link` without them writes a plain one, removing a limit.
+  `rename` and `remove` keep the limit of a transition they redirect.
+- `new` writes `workdir: .` at the top (or the folder `-workdir` names), so a flow
+  started with any node can take agent steps later.
 - `set NODE role R` removes the node's `executor`, `model` and `effort`, since each
   client of the role names its own; `set NODE executor X` on a node run through a role
   removes `role`. A client's `allowance` is written by hand.
@@ -1590,7 +1801,11 @@ Every operation, from the command line or not, works the same way:
 - It runs the orders check on the result. If the result would not pass, nothing is
   written, the problems are printed and the command exits with 2. A program in a
   `run` list that does not exist yet is only a warning, since the script may be
-  written after the step that runs it; `hetman check` still requires it.
+  written after the step that runs it; `hetman check` still requires it. So is a
+  prompt placeholder that names a node the orders do not have yet, such as
+  `{{artifact.prove.self-test.log}}` before `prove` is added (`there is no node
+  "prove" in the orders (yet)`), so a flow can be built front to back without
+  `-force`; `hetman check` still rejects it.
 - It prints the change as a unified diff. `-dry-run` prints it and writes nothing.
 - `-force` writes a result that does not pass the check. It is for a state meant to
   be finished by the next operation: a gate that only asks a person is added with

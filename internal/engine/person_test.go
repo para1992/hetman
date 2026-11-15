@@ -53,6 +53,7 @@ func (f *fixture) wait(done chan driveResult, want Result) {
 }
 
 const gateOrders = `version: 0
+workdir: .
 start: fix
 executors: {stub: {run: PLAN}}
 checks:
@@ -118,6 +119,7 @@ func TestGateWithFailedCheckAsksNobody(t *testing.T) {
 
 func TestHumanNodeOutcomeAndAnswersInTemplates(t *testing.T) {
 	f := setupAgent(t, `version: 0
+workdir: .
 start: decide
 executors: {stub: {run: PLAN}}
 nodes:
@@ -169,6 +171,7 @@ nodes:
 }
 
 const dialogueOrders = `version: 0
+workdir: .
 start: a
 executors: {stub: {run: PLAN}}
 nodes:

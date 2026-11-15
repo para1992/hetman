@@ -22,7 +22,7 @@ import (
 // limit_free, badmodel, offline, resume_missing and badargs (output and
 // standard error as the client printed them, with ids, request ids and
 // local paths replaced). Written by hand after the client's event schema:
-// normal, resume, ok, questions, garbage, noauth, limit_go and
+// normal, resume, ok, questions, garbage, noauth, limit_go, denied and
 // models.txt.
 const (
 	envSelf   = "HETMAN_TEST_ADAPTER_SELF" // the test binary runs the adapter
@@ -90,7 +90,7 @@ func fakeClient(scenario string) int {
 		}
 	}
 	switch scenario {
-	case "normal", "garbage":
+	case "normal", "garbage", "denied":
 		return replay(scenario, 0)
 	case "resume":
 		if session == "" {
@@ -403,7 +403,7 @@ func TestNormalRun(t *testing.T) {
 	}
 	log := logText(msgs)
 	for _, want := range []string{"model the client's default, tools: none", "I will write the note first.",
-		"> write note.txt\n  < Wrote file successfully.", "> bash rm -rf build\n  < error: The user has specified a rule",
+		"> write note.txt\n  < Wrote file successfully.", "> bash rm -rf build\ndenied: bash rm -rf build: The user has specified a rule which prevents you from using this specific tool call.\n",
 		"> read note.txt\n  < 1: alpha (+1 lines)", "finished after 3 model steps in 5.4s, 27500 tokens in, 300 out"} {
 		if !strings.Contains(log, want) {
 			t.Errorf("log lacks %q:\n%s", want, log)

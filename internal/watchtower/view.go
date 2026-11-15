@@ -210,6 +210,7 @@ type Attempt struct {
 	Session   string          `json:"session,omitempty"`   // conversation reported by the adapter
 	Output    json.RawMessage `json:"output,omitempty"`    // validated output
 	Failure   string          `json:"failure,omitempty"`   // why the attempt failed
+	Denied    []string        `json:"denied,omitempty"`    // tool calls the client denied in the attempt
 	RetryAt   *time.Time      `json:"retryAt,omitempty"`   // limit: when it is tried again
 	Ask       *Ask            `json:"ask,omitempty"`       // the questions this attempt put to a person
 	// A step run through a role: how its client was chosen, and the same
@@ -455,7 +456,7 @@ func build(k chronicle.Campaign, events []chronicle.Event, o *orders.Orders, cam
 					a.Log = e.Log
 				}
 				a.Status = finishedStatus(e.Outcome, e.Error)
-				a.Output, a.Failure, a.RetryAt = e.Output, e.Failure, e.RetryAt
+				a.Output, a.Failure, a.RetryAt, a.Denied = e.Output, e.Failure, e.RetryAt, e.Denied
 				if e.Stderr != "" {
 					a.Stderr = e.Stderr
 				}

@@ -29,6 +29,7 @@
 # skips first wherever it would choose it.
 version: 0
 flow: roles-demo
+workdir: .   # the folder agent steps work in, relative to this file
 start: outline
 
 executors:

@@ -47,7 +47,10 @@ func OrdersOf(o *orders.Orders, ch *chronicle.Chronicle, id int64) (*orders.Orde
 		return nil, fmt.Errorf("campaign %d has no events", id)
 	}
 	n := po.Nodes[events[0].ParentNode]
-	if n == nil || n.Segment == nil {
+	if n == nil {
+		return nil, fmt.Errorf("campaign %d was started by node %q of campaign %d, which the orders %s do not have", id, events[0].ParentNode, k.Parent, po.Path)
+	}
+	if n.Segment == nil {
 		return nil, fmt.Errorf("campaign %d was started by node %q of campaign %d, which no longer runs a segment", id, events[0].ParentNode, k.Parent)
 	}
 	return n.Segment, nil
@@ -80,6 +83,25 @@ func childAsks(ch *chronicle.Chronicle, st chronicle.State, depth int) ([]*chron
 		out = append(out, more...)
 	}
 	return out, nil
+}
+
+// OpenNeeds lists the items a for-each item that has not started still
+// waits for: those it needs whose child has not reached done. Empty means it
+// waits only for a free place under the node's parallel.
+func OpenNeeds(list []Child, ch Child) []string {
+	done := map[string]bool{}
+	for _, c := range list {
+		if c.Item != "" && c.Outcome == orders.Done {
+			done[c.Item] = true
+		}
+	}
+	var open []string
+	for _, n := range ch.Needs {
+		if !done[n] {
+			open = append(open, n)
+		}
+	}
+	return open
 }
 
 // Child is one child of the latest attempt of a segment or for-each node,

@@ -19,11 +19,14 @@ import (
 	"hetman/internal/adapter"
 )
 
-// rule allows one tool: everywhere, or only for the listed patterns.
+// rule allows one tool: everywhere, or only for the listed patterns; then
+// denies the patterns in deny, and allows those in reallow again.
 type rule struct {
 	tool     string
 	all      bool
 	patterns []string
+	deny     []string
+	reallow  []string
 }
 
 var (
@@ -40,21 +43,13 @@ func permissions(tools []string) ([]rule, error) {
 	var rules []rule
 	index := map[string]int{}
 	for _, t := range tools {
+		if msg := toolProblem(t); msg != "" {
+			return nil, fmt.Errorf("tools entry %q: %s", strings.TrimSpace(t), msg)
+		}
 		t = strings.TrimSpace(t)
 		name, pattern, hasPattern := t, "", false
 		if g := toolRule.FindStringSubmatch(t); g != nil {
 			name, pattern, hasPattern = strings.TrimSpace(g[1]), strings.TrimSpace(g[2]), true
-			if pattern == "" {
-				return nil, fmt.Errorf("tool %q has an empty pattern", t)
-			}
-		}
-		switch {
-		case t == "":
-			return nil, fmt.Errorf("tools contains an empty name")
-		case !toolName.MatchString(name):
-			return nil, fmt.Errorf("tool %q is not a client permission name such as read, edit, glob, grep, list, bash, webfetch or websearch, optionally with a pattern as in bash(git status)", t)
-		case name == "task":
-			return nil, fmt.Errorf("tool task is refused: the subagents it starts run with the client's default permissions, not the step's tools")
 		}
 		i, seen := index[name]
 		if !seen {
@@ -90,18 +85,24 @@ func agentConfig(agent string, rules []rule) string {
 	b.WriteString(`:{"mode":"primary","description":"One step of a Hetman flow.","permission":{"*":"deny"`)
 	for _, r := range rules {
 		b.WriteString("," + q(r.tool) + ":")
-		if r.all {
+		if r.all && len(r.deny) == 0 {
 			b.WriteString(`"allow"`)
 			continue
 		}
-		b.WriteString("{")
-		for i, p := range r.patterns {
-			if i > 0 {
-				b.WriteString(",")
-			}
-			b.WriteString(q(p) + `:"allow"`)
+		var entries []string
+		if r.all {
+			entries = append(entries, `"*":"allow"`)
 		}
-		b.WriteString("}")
+		for _, p := range r.patterns {
+			entries = append(entries, q(p)+`:"allow"`)
+		}
+		for _, p := range r.deny {
+			entries = append(entries, q(p)+`:"deny"`)
+		}
+		for _, p := range r.reallow {
+			entries = append(entries, q(p)+`:"allow"`)
+		}
+		b.WriteString("{" + strings.Join(entries, ",") + "}")
 	}
 	b.WriteString(`}}}}`)
 	return b.String()

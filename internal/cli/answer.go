@@ -229,7 +229,10 @@ func printAsked(p *i18n.Printer, w io.Writer, o, no *orders.Orders, id int64, as
 	}
 	fmt.Fprintln(w, p.T("answer.asks."+asked.Reason, "node", node, "seq", asked.Seq, "at", at, "round", asked.Round))
 	for _, s := range asked.Show {
-		path := filepath.Join(no.Dir, filepath.FromSlash(s))
+		path, ok := engine.ShowPath(o, no, asked.Campaign, s)
+		if !ok {
+			continue
+		}
 		if _, err := os.Stat(path); err != nil {
 			path = p.T("answer.not_found", "path", path)
 		}

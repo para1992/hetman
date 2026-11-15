@@ -50,6 +50,7 @@ explain.answer_comment: " (comment {comment})"
 explain.cut_off: "{node} attempt {attempt} was cut off ({failure}): {error}; it does not count."
 explain.attempt_failed: "{node} attempt {attempt} failed ({failure}): {error}."
 explain.its_outcome: " Its outcome is {outcome}."
+explain.denied: " The client denied {n} tool call(s): {calls}."
 explain.could_not_finish: "{node} attempt {attempt} could not finish: {error}."
 explain.finished: "{node} attempt {attempt} finished with {outcome} after {took}."
 explain.finished_checks: "{node} attempt {attempt} finished with {outcome} after {took}; checks: {checks}."
@@ -109,6 +110,8 @@ op.words.add_after_via: add the {type} node {node} after {after} (on its outcome
 op.words.remove: remove the node {node} and lead whatever led to it where its main outcome led
 op.words.rename: rename the node {node} to {name} everywhere it is referenced
 op.words.link: make the outcome {outcome} of {node} lead to {target}
+op.words.link_limited: make the outcome {outcome} of {node} lead to {target} at most {n} time(s) per campaign, and then take the outcome {then} instead
+op.words.workdir: let agent steps work in {workdir}, relative to the orders folder, unless a node names its own folder
 op.words.unlink: remove the transition of {node} on the outcome {outcome}
 op.words.set: set {field} of {node} to {value}
 op.words.unset: remove {field} from {node}
@@ -130,6 +133,7 @@ op.words.assistant: let Scribe ask the model {model} through the executor {execu
 op.words.assistant_effort: let Scribe ask the model {model} through the executor {executor} with the effort {effort}
 op.words.with_checks: with the checks {checks}
 op.words.through_executor: through the executor {executor}
+op.words.working_in: working in {workdir}
 op.words.model: model {model}
 op.words.effort: effort {effort}
 op.words.outcomes: outcomes {outcomes}
@@ -145,7 +149,7 @@ op.summary.new: create the orders file with its first node, whose main outcome l
 op.summary.add: add a node after a node (on its main outcome, or the outcome via) or before a node; the flow is rewired through it
 op.summary.remove: remove a node; whatever led to it then leads where its main outcome led
 op.summary.rename: rename a node in the start, every transition and every prompt template placeholder
-op.summary.link: make an outcome of a node lead to a node, done or failed
+op.summary.link: make an outcome of a node lead to a node, done or failed; with max and then, at most max times per campaign, after which the outcome then is taken instead
 op.summary.unlink: remove the transition of an outcome of a node
 op.summary.set: "set a field of a node: {fields}"
 op.summary.unset: "remove a field of a node: {fields}"
@@ -157,6 +161,7 @@ op.summary.ask: add a question to a gate (yes or no) or a human node (yesno, cho
 op.summary.assistant: name the executor and model Scribe may ask to turn a sentence into one operation
 op.summary.language: write what the flow addresses to a person (questions, summaries, plans) in this language, given by its code; code and the repository stay English
 op.summary.unlanguage: "remove the language for the person: the flow uses English and adds no language instruction"
+op.summary.workdir: set the folder agent steps work in, relative to the orders folder, for every agent node that names none of its own
 
 # ---- problems with answers to questions (hetman answer, the answer form)
 
@@ -218,6 +223,10 @@ engine.item_not_run_not_run: "{node}: item {item} will not run: needs {needs}, w
 engine.foreach_finished: "{node} finished: {outcome} ({done} of {n} item(s) done, {took})"
 engine.item_kept: "{node}: item {item} is kept from attempt {attempt} (campaign {child}, done)"
 engine.segment_retried: "{node} retries its campaign {child} at {at}"
+engine.limit_reached: "{node}: the transition on {outcome} was taken {n} time(s), its limit; taking {then} instead"
+engine.orders_reread: "{path} changed; the next steps use it as it is now"
+engine.orders_kept: "{path} changed but does not pass the check now, so the version read before stays in use: {error}"
+engine.unprotected: "the adapter of executor {executor} ({adapter}) does not protect hetman's own files and the orders from agent steps"
 
 # ---- the command line
 
@@ -377,6 +386,7 @@ status.agent.asked: asked the person {n} question(s)
 status.agent.outcome: outcome {outcome}
 status.agent.attempt: "  attempt {n}  {status}  [{facts}]"
 status.agent.prompt: "    prompt   {file}"
+status.agent.denied: "    denied   {call}"
 status.agent.continued: "    continued session {session}"
 status.agent.session: "    session  {session}"
 status.agent.output: "    output   {output}"
@@ -404,6 +414,7 @@ status.part_of_item: "{node}, item {item}"
 status.child.segment: segment
 status.child.item: item {item}
 status.child.needs: needs {items}
+status.child.slot: waits for a free place (parallel)
 status.child.campaign: campaign {id}
 status.child.why_failed: needs {item}, which failed
 status.child.why_not_run: needs {item}, which did not run
@@ -571,6 +582,7 @@ wizard.which_executor: Which executor runs it?
 wizard.no_executor: No executor is declared yet; declare the adapter that runs agent steps.
 wizard.model: Model, passed to the adapter as is (Enter for none)
 wizard.effort: Effort, passed to the adapter as is (Enter for none)
+wizard.fail_on_denied_hint: "Recommended for a step that must run tests or other commands: fail_on_denied true (under \"change an agent step\"), so that an answer after a tool call the client denied fails the attempt instead of being accepted."
 wizard.outcomes: Outcomes the model may report, separated by commas
 wizard.if_outcome: If the outcome is {outcome}, go to
 wizard.if_step_fails: If the step fails, go to
@@ -649,6 +661,8 @@ page.failure.timeout: the attempt ran past its timeout
 page.failure.idle_timeout: the adapter sent nothing for longer than the idle timeout
 page.failure.limit: the subscription limit was reached; the attempt does not count
 page.failure.offline: connectivity was lost; the attempt does not count
+page.failure.unable: the agent reported it cannot do its work; the campaign waits for a person
+page.failure.denied: the client denied tool calls, and the node does not accept an answer after that
 page.cleanup.gone: nothing of the old process tree was alive
 page.cleanup.killed: the old process tree was still alive and was killed
 page.cleanup.reused: the process id now belongs to an unrelated process, which was left alone
@@ -748,6 +762,7 @@ page.tile.lock: waits for lock {lock} (held by {holder})
 page.tile.child.why_failed: needs {item}, which failed
 page.tile.child.why_not_run: needs {item}, which did not run
 page.tile.child.needs: needs {items}
+page.tile.child.slot: waits for a free place
 page.tile.child.error: "error: {error}"
 page.tile.child.halted: halted
 page.tile.child.kept: kept from attempt {n}
@@ -795,6 +810,7 @@ page.kv.continued: Continued
 page.kv.continued_session: session {session}
 page.kv.session: Session
 page.kv.why_failed: Why it failed
+page.kv.denied: Denied tool calls
 page.kv.retry_at: Retry at
 page.kv.details: Details
 page.kv.error: Error
@@ -964,6 +980,8 @@ page.field.id: Question id
 page.field.question: Question
 page.field.kind: Kind of answer
 page.field.options: Options
+page.field.max: At most, times per campaign
+page.field.then: Then take the outcome
 page.field.check: Check
 page.field.at: Position
 page.field.soft: The check
@@ -976,6 +994,7 @@ page.field.hint.value: A duration such as 30s, 5m or 1h; empty removes the setti
 page.field.hint.at: From 1; empty for the end.
 page.field.hint.starters: Only files that do not exist yet are created, next to the orders.
 page.field.hint.options: Separated by commas.
+page.field.hint.max: How many times this transition may be taken in one campaign; once it has been, the outcome under "Then take the outcome" is taken instead. Empty for no limit.
 page.kv.type: Type
 page.kv.run: Command
 page.kv.timeout: Timeout

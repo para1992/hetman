@@ -71,6 +71,8 @@ type Orders struct {
 	Notify    *Notify  // the notification hook, or nil
 	Scribe    *Scribe  // the model the setup assistant may ask, or nil
 	Language  string   // code of the language text for a person is written in; empty for none
+	Workdir   string   // the folder agent steps work in unless a node names its own, absolute; empty when not set
+	Later     Problems // ParseBuilding only: placeholders naming a node the orders do not have yet
 
 	programs []program // the program of every run list, in file order
 }
@@ -120,6 +122,7 @@ type Node struct {
 	Timeout time.Duration
 	Checks  []string
 	On      map[string]string
+	Limits  map[string]Limit // outcome to the limit of its transition, for the transitions that have one
 
 	// Gates and human nodes.
 	Ask  []ask.Question // questions for a person
@@ -141,6 +144,13 @@ type Node struct {
 	IdleTimeout time.Duration
 	MaxAttempts int
 	Dialogue    int // how many rounds of questions the step may ask a person; 0 for none
+
+	// Agent nodes: the folder the agent works in, absolute: the node's own
+	// or the orders' default.
+	Workdir string
+	// Agent nodes: an answer after a tool call the client denied fails the
+	// attempt instead of being accepted.
+	FailOnDenied bool
 
 	// Any node: resources its steps hold exclusively, as written.
 	Locks []string
@@ -302,7 +312,11 @@ func ParseOverlay(path string, data []byte, files map[string][]byte) (*Orders, e
 // parse checks one orders file; stack holds the files whose segments led to
 // it, itself last, so that a segment running itself is found.
 func parse(path string, data []byte, files map[string][]byte, stack []string) (*Orders, error) {
-	p := &parser{file: path, overlay: files, stack: stack}
+	return parseWith(path, data, files, stack, false)
+}
+
+func parseWith(path string, data []byte, files map[string][]byte, stack []string, building bool) (*Orders, error) {
+	p := &parser{file: path, overlay: files, stack: stack, building: building}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		msg := err.Error()
@@ -345,6 +359,9 @@ type parser struct {
 	programs []program
 	overlay  map[string][]byte // files read instead of the disk
 	stack    []string          // the orders files being read, outermost first
+
+	topWorkdir bool // the top level has a workdir key, valid or not
+	building   bool // placeholders naming a node not there yet go to Later
 }
 
 func (p *parser) errorf(n *yaml.Node, format string, args ...any) {
@@ -468,7 +485,7 @@ func (p *parser) duration(n *yaml.Node, what string) time.Duration {
 }
 
 func (p *parser) top(root *yaml.Node, o *Orders) {
-	entries, ok := p.mapping(root, "orders", "version", "flow", "start", "language", "scribe", "checks", "executors", "roles", "notify", "nodes")
+	entries, ok := p.mapping(root, "orders", "version", "flow", "start", "language", workdirKey, "scribe", "checks", "executors", "roles", "notify", "nodes")
 	if !ok {
 		return
 	}
@@ -502,6 +519,9 @@ func (p *parser) top(root *yaml.Node, o *Orders) {
 			rolesN = e.value
 		case "notify":
 			p.notify(e.value, o)
+		case workdirKey:
+			p.topWorkdir = true
+			o.Workdir = p.workdir(e.value, "workdir")
 		case "scribe":
 			scribeN = e.value
 		case "nodes":
@@ -642,12 +662,12 @@ func (p *parser) nodes(n *yaml.Node, o *Orders) {
 
 func (p *parser) node(id string, keyN, n *yaml.Node, o *Orders) (*Node, *yaml.Node) {
 	what := fmt.Sprintf("node %q", id)
-	fields, ok := p.mapping(n, what, append(append([]string{"type", "run", "timeout", "checks", "ask", "show", lockKey, "on"}, agentKeys...), compositeKeys...)...)
+	fields, ok := p.mapping(n, what, append(append([]string{"type", "run", "timeout", "checks", "ask", "show", lockKey, workdirKey, "on"}, agentKeys...), compositeKeys...)...)
 	if !ok {
 		return nil, nil
 	}
 	node := &Node{ID: id, On: map[string]string{}}
-	var typeN, runN, timeoutN, checksN, askN, showN, onN *yaml.Node
+	var typeN, runN, timeoutN, checksN, askN, showN, onN, workdirN *yaml.Node
 	agent := map[string]entry{}
 	composite := map[string]entry{}
 	for _, f := range fields {
@@ -666,6 +686,9 @@ func (p *parser) node(id string, keyN, n *yaml.Node, o *Orders) (*Node, *yaml.No
 			showN = f.value
 		case "on":
 			onN = f.value
+		case workdirKey:
+			workdirN = f.keyN
+			node.Workdir = p.workdir(f.value, what+": workdir")
 		case lockKey:
 			node.Locks = p.locks(f.value, what)
 		default:
@@ -743,6 +766,9 @@ func (p *parser) node(id string, keyN, n *yaml.Node, o *Orders) (*Node, *yaml.No
 				p.errorf(f.keyN, "%s: %s is allowed only on an agent node", what, k)
 			}
 		}
+		if workdirN != nil {
+			p.errorf(workdirN, "%s: workdir is allowed only on an agent node", what)
+		}
 	} else {
 		if runN != nil {
 			p.errorf(runN, "%s: an agent node has no run; its executor is declared under the top-level executors", what)
@@ -753,6 +779,7 @@ func (p *parser) node(id string, keyN, n *yaml.Node, o *Orders) (*Node, *yaml.No
 			checksN = nil
 		}
 		p.agentNode(node, keyN, agent, o)
+		p.agentReach(node, keyN, agent, o, workdirN != nil)
 	}
 	if runN != nil {
 		node.Run = p.argv(runN, what+": run")
@@ -825,19 +852,26 @@ func (p *parser) transitions(node *Node, onN, keyN, nodesN *yaml.Node, o *Orders
 	if !ok {
 		return
 	}
+	thens := limitThens(entries)
 	for _, e := range entries {
 		outcome, ok := p.name(e.keyN, what+": outcome")
 		if !ok {
 			continue
 		}
-		if node.Type == Gate && (len(node.Checks) > 0 || len(node.Ask) > 0) && outcome != Pass && outcome != Blocked {
+		if node.Type == Gate && (len(node.Checks) > 0 || len(node.Ask) > 0) && outcome != Pass && outcome != Blocked && !thens[outcome] {
 			p.errorf(e.keyN, "%s: a gate with checks or ask only produces pass or blocked, not %q", what, outcome)
 			continue
 		}
 		if node.Type == Human {
 			node.Decisions = append(node.Decisions, outcome)
 		}
-		target, ok := p.name(e.value, what+": transition target")
+		targetN := e.value
+		if e.value.Kind == yaml.MappingNode {
+			if targetN = p.limit(node, outcome, e.value, what); targetN == nil {
+				continue
+			}
+		}
+		target, ok := p.name(targetN, what+": transition target")
 		if !ok {
 			continue
 		}
@@ -861,16 +895,17 @@ func (p *parser) transitions(node *Node, onN, keyN, nodesN *yaml.Node, o *Orders
 			}
 		}
 	}
+	p.checkLimits(node, entries, what)
 	if node.Composite() {
 		for _, e := range entries {
-			if !contains(compositeOutcomes, e.key) {
+			if !contains(compositeOutcomes, e.key) && !thens[e.key] {
 				p.errorf(e.keyN, "%s: outcome %q can never happen: a %s node ends with done or failed", what, e.key, node.Type)
 			}
 		}
 	}
 	if node.Type == Agent && node.Schema != nil {
 		for _, e := range entries {
-			if e.key != Fail && !contains(node.Outcomes(), e.key) {
+			if e.key != Fail && e.key != Unable && !thens[e.key] && !contains(node.Outcomes(), e.key) {
 				p.errorf(e.keyN, "%s: outcome %q can never happen: the schema does not allow it for \"outcome\" (allowed: %s)", what, e.key, strings.Join(node.ModelOutcomes(), ", "))
 			}
 		}

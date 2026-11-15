@@ -32,6 +32,7 @@ const (
 	OpRoleRemove = "role-remove" // remove a client from a role
 	OpLanguage   = "language"    // set the language for the person
 	OpUnlanguage = "unlanguage"  // remove the language for the person
+	OpWorkdir    = "workdir"     // set the folder agent steps work in unless a node names its own
 )
 
 // Op is one operation on an orders file. Only the fields its operation
@@ -76,6 +77,9 @@ type Op struct {
 	Items    string            `json:"items,omitempty"`    // foreach node: the list, such as output.plan.items
 	Parallel int               `json:"parallel,omitempty"` // foreach node: how many items run at the same time
 	Locks    []string          `json:"locks,omitempty"`    // a new node or a check: resources it holds exclusively
+	Workdir  string            `json:"workdir,omitempty"`  // workdir: the default folder of agent steps; add: an agent node's own; new: the default
+	Max      int               `json:"max,omitempty"`      // link: how many times the transition may be taken
+	Then     string            `json:"then,omitempty"`     // link with max: the outcome taken instead after that
 	Role     string            `json:"role,omitempty"`     // a new agent node: the role whose clients run it
 	Select   string            `json:"select,omitempty"`   // role: fixed, round_robin or quota
 }
@@ -91,7 +95,7 @@ type Spec struct {
 
 // nodeFields are the fields that describe a new node.
 var nodeFields = []string{"run", "timeout", "checks", "executor", "role", "model", "effort", "tools", "attempts", "prompt", "schema", "outcomes", "on", "starters",
-	"segment", "input", "items", "parallel", "locks"}
+	"segment", "input", "items", "parallel", "locks", "workdir"}
 
 // Specs lists every operation.
 var Specs = []Spec{
@@ -103,8 +107,8 @@ var Specs = []Spec{
 		"remove a node; whatever led to it then leads where its main outcome led"},
 	{OpRename, []string{"node", "name"}, []string{"node", "name"}, nil,
 		"rename a node in the start, every transition and every prompt template placeholder"},
-	{OpLink, []string{"node", "outcome", "target"}, []string{"node", "outcome", "target"}, nil,
-		"make an outcome of a node lead to a node, done or failed"},
+	{OpLink, []string{"node", "outcome", "target"}, []string{"node", "outcome", "target"}, []string{"max", "then"},
+		"make an outcome of a node lead to a node, done or failed; with max and then, at most max times per campaign, after which the outcome then is taken instead"},
 	{OpUnlink, []string{"node", "outcome"}, []string{"node", "outcome"}, nil,
 		"remove the transition of an outcome of a node"},
 	{OpSet, []string{"node", "field", "value"}, []string{"node", "field", "value"}, nil,
@@ -133,6 +137,8 @@ var Specs = []Spec{
 		"write what the flow addresses to a person (questions, summaries, plans) in this language, given by its code; code and the repository stay English"},
 	{OpUnlanguage, nil, nil, nil,
 		"remove the language for the person: the flow uses English and adds no language instruction"},
+	{OpWorkdir, []string{"workdir"}, []string{"workdir"}, nil,
+		"set the folder agent steps work in, relative to the orders folder, for every agent node that names none of its own"},
 }
 
 // SummaryIn is the summary in the language of p; in English it is Summary.
@@ -160,8 +166,8 @@ func SpecOf(op string) (Spec, bool) {
 // Node fields set and unset can change.
 var (
 	setFields = []string{"run", "timeout", "idle_timeout", "executor", "role", "model", "effort", "tools", "attempts", "dialogue", "prompt", "schema",
-		"locks", "segment", "input", "items", "parallel"}
-	unsetFields = []string{"timeout", "idle_timeout", "model", "effort", "tools", "attempts", "dialogue", "locks", "input", "parallel"}
+		"locks", "segment", "input", "items", "parallel", "workdir", "fail_on_denied"}
+	unsetFields = []string{"timeout", "idle_timeout", "model", "effort", "tools", "attempts", "dialogue", "locks", "input", "parallel", "workdir", "fail_on_denied"}
 )
 
 // Fields lists the fields an Op has set, by their JSON names.
@@ -209,6 +215,9 @@ func (op Op) Validate() error {
 	if op.Via != "" && op.After == "" {
 		return fmt.Errorf("via is given only with after")
 	}
+	if op.Op == OpLink && (op.Max == 0) != (op.Then == "") {
+		return fmt.Errorf("link takes max and then together: the transition may be taken max times, then the outcome then is taken instead")
+	}
 	if (op.Op == OpSet || op.Op == OpUnset) && op.Field != "" {
 		list := setFields
 		if op.Op == OpUnset {
@@ -224,7 +233,7 @@ func (op Op) Validate() error {
 	if op.Executor != "" && op.Role != "" {
 		return fmt.Errorf("%s: an agent node names either a role or an executor, not both", op.Op)
 	}
-	for _, s := range append(append(append([]string{op.Value, op.Question, op.Model, op.Effort, op.Segment, op.Input, op.Items}, op.Run...), op.Options...), op.Tools...) {
+	for _, s := range append(append(append([]string{op.Value, op.Question, op.Model, op.Effort, op.Segment, op.Input, op.Items, op.Workdir, op.Then}, op.Run...), op.Options...), op.Tools...) {
 		if strings.ContainsAny(s, "\r\n") {
 			return fmt.Errorf("%s: values must be one line", op.Op)
 		}
@@ -258,7 +267,12 @@ func (op Op) WordsIn(p *i18n.Printer) string {
 	case OpRename:
 		return p.T("op.words.rename", "node", op.Node, "name", op.Name)
 	case OpLink:
+		if op.Max > 0 {
+			return p.T("op.words.link_limited", "outcome", op.Outcome, "node", op.Node, "target", op.Target, "n", op.Max, "then", op.Then)
+		}
 		return p.T("op.words.link", "outcome", op.Outcome, "node", op.Node, "target", op.Target)
+	case OpWorkdir:
+		return p.T("op.words.workdir", "workdir", op.Workdir)
 	case OpUnlink:
 		return p.T("op.words.unlink", "node", op.Node, "outcome", op.Outcome)
 	case OpSet:
@@ -357,6 +371,9 @@ func nodeWords(p *i18n.Printer, op Op) string {
 	}
 	if op.Executor != "" {
 		parts = append(parts, p.T("op.words.through_executor", "executor", op.Executor))
+	}
+	if op.Workdir != "" {
+		parts = append(parts, p.T("op.words.working_in", "workdir", op.Workdir))
 	}
 	if op.Role != "" {
 		parts = append(parts, p.T("op.words.through_role", "role", op.Role))

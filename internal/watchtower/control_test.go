@@ -67,6 +67,7 @@ func (w *world) campaigns() int {
 }
 
 const twoSteps = `version: 0
+workdir: .
 flow: pair
 start: a
 language: uk
@@ -81,8 +82,8 @@ func pair(a, b string) string { return strings.NewReplacer("A", a, "B", b).Repla
 func TestStartFromThePage(t *testing.T) {
 	ok := arg("exit", "0")
 	w := newWorld(t, pair(ok, ok))
-	w.write("other.yaml", "version: 0\nflow: other\nstart: x\nnodes:\n  x: {type: script, run: "+arg("input")+", on: {ok: done, fail: failed}}\n")
-	w.write("missing.yaml", "version: 0\nflow: missing\nstart: x\nnodes:\n  x: {type: script, run: [./no-such-program], on: {ok: done, fail: failed}}\n")
+	w.write("other.yaml", "version: 0\nworkdir: .\nflow: other\nstart: x\nnodes:\n  x: {type: script, run: "+arg("input")+", on: {ok: done, fail: failed}}\n")
+	w.write("missing.yaml", "version: 0\nworkdir: .\nflow: missing\nstart: x\nnodes:\n  x: {type: script, run: [./no-such-program], on: {ok: done, fail: failed}}\n")
 	w.write("notes.yaml", "just: a list\n")
 
 	var flows []watchtower.FlowFile
@@ -214,6 +215,7 @@ func TestRetryAfterExhaustedAttemptsOverHTTP(t *testing.T) {
 	os.WriteFile(filepath.Join(w.dir, "p.md"), []byte("Do it."), 0o644)
 	os.WriteFile(filepath.Join(w.dir, "s.json"), []byte(`{"type": "object", "properties": {"outcome": {"type": "string", "enum": ["ok"]}}, "required": ["outcome"]}`), 0o644)
 	w.write("orders.yaml", `version: 0
+workdir: .
 flow: agent
 start: a
 executors: {stub: {run: `+teststep.Adapter(plan)+`}}
@@ -255,6 +257,7 @@ func TestRetryAndRewindRefusedWhileDriven(t *testing.T) {
 
 const editable = `# A flow the page edits.
 version: 0
+workdir: .
 flow: edit
 start: build
 executors:
@@ -501,4 +504,4 @@ func TestControlRoutesRefuseCrossSite(t *testing.T) {
 }
 
 // placeholder is orders a world starts with before a test writes its own.
-const placeholder = "version: 0\nstart: a\nnodes:\n  a: {type: script, run: [x], on: {ok: done, fail: failed}}\n"
+const placeholder = "version: 0\nworkdir: .\nstart: a\nnodes:\n  a: {type: script, run: [x], on: {ok: done, fail: failed}}\n"

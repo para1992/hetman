@@ -80,6 +80,9 @@ func (f *fixture) steps() []adapter.Step {
 		if err := json.Unmarshal(sc.Bytes(), &s); err != nil {
 			f.t.Fatal(err)
 		}
+		// Every first message of an attempt ends with how to say the step
+		// cannot proceed; TestUnableInstructionAndSchema looks at it.
+		s.Prompt = strings.Replace(s.Prompt, unableInstruction(), "", 1)
 		out = append(out, s)
 	}
 	return out
@@ -91,7 +94,7 @@ func (f *fixture) file(rel string) string {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	return string(data)
+	return strings.Replace(string(data), unableInstruction(), "", 1)
 }
 
 func (f *fixture) state() chronicle.State { return chronicle.Replay(f.events("")) }
@@ -113,6 +116,7 @@ func want(t *testing.T, got, want []string) {
 }
 
 const pipelineOrders = `version: 0
+workdir: .
 start: build
 executors:
   stub: {run: PLAN}
@@ -153,7 +157,7 @@ func TestAgentStepRendersPromptAndFollowsOutcome(t *testing.T) {
 	w := steps[0]
 	if w.Prompt != "Task: fix the bug (priority 2)" || w.Model != "model-a" || w.Effort != "high" ||
 		strings.Join(w.Tools, ",") != "read,edit" || w.Workdir != f.e.Orders.Dir || w.Session != nil || w.Attempt != 1 ||
-		w.RunID != strconv.FormatInt(f.e.Campaign, 10) || string(w.Schema) != strings.ReplaceAll(okSchema, " ", "") {
+		w.RunID != strconv.FormatInt(f.e.Campaign, 10) || string(w.Schema) != withUnable(t, okSchema) {
 		t.Fatalf("write step %+v", w)
 	}
 	r := steps[1]
@@ -188,6 +192,7 @@ func TestAgentStepRendersPromptAndFollowsOutcome(t *testing.T) {
 
 func TestInvalidOutputIsRetriedWithFeedback(t *testing.T) {
 	f := setupAgent(t, `version: 0
+workdir: .
 start: review
 executors: {stub: {run: PLAN}}
 nodes:
@@ -221,6 +226,7 @@ nodes:
 }
 
 const oneAgent = `version: 0
+workdir: .
 start: a
 executors: {stub: {run: PLAN}}
 nodes:
@@ -490,6 +496,7 @@ func TestInterruptedAgentStepContinuesItsSession(t *testing.T) {
 
 func TestReworkLoopEndsByExhaustingAttempts(t *testing.T) {
 	f := setupAgent(t, `version: 0
+workdir: .
 start: implement
 executors: {stub: {run: PLAN}}
 nodes:
@@ -533,6 +540,7 @@ nodes:
 
 func TestGateReturnExplainsFailedChecks(t *testing.T) {
 	f := setupAgent(t, `version: 0
+workdir: .
 start: fix
 executors: {stub: {run: PLAN}}
 checks:
@@ -545,7 +553,7 @@ nodes:
 	// attempts crash until the budget is used up.
 	f.drive(Failed)
 	p := f.steps()[1].Prompt
-	if !strings.Contains(p, `step "tests" finished with outcome "blocked"`) || !strings.Contains(p, "Checks that did not pass: unit (fail)") {
+	if !strings.Contains(p, `step "tests" finished with outcome "blocked"`) || !strings.Contains(p, "Checks that did not pass: unit (fail, log ") {
 		t.Fatalf("prompt %q", p)
 	}
 }

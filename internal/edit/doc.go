@@ -178,8 +178,12 @@ func (d *Doc) overlay() map[string][]byte {
 // Check runs the orders check on the changed text, reading created and
 // changed files from memory. It returns the checked orders or the
 // problems as orders.Problems.
+//
+// A prompt placeholder naming a node the orders do not have yet does not
+// fail the check here, since a flow is built one node at a time; Warnings
+// lists it, and hetman check still rejects it.
 func (d *Doc) Check() (*orders.Orders, error) {
-	return orders.ParseOverlay(d.Path, d.text, d.overlay())
+	return orders.ParseBuilding(d.Path, d.text, d.overlay())
 }
 
 // Warnings checks the programs of the run lists of checked orders. None of
@@ -187,7 +191,7 @@ func (d *Doc) Check() (*orders.Orders, error) {
 func Warnings(o *orders.Orders) []string {
 	errs, warnings := o.CheckPrograms()
 	var out []string
-	for _, p := range append(errs, warnings...) {
+	for _, p := range append(append(errs, warnings...), o.Later...) {
 		msg := strings.TrimPrefix(p.Msg, "warning: ")
 		out = append(out, fmt.Sprintf("%s:%d:%d: %s", filepath.Base(p.File), p.Line, p.Col, msg))
 	}

@@ -32,6 +32,7 @@ const runInput = `{"ticket": {"id": "T-1", "title": "Fix it"}, "n": 2}`
 
 func TestInputFileReachesScriptsChecksAndHook(t *testing.T) {
 	f := setupAgent(t, `version: 0
+workdir: .
 start: a
 notify: {run: `+arg("input")+`}
 checks:
@@ -60,6 +61,7 @@ nodes:
 
 func TestInputFileWithoutInputIsAnEmptyObject(t *testing.T) {
 	f := setup(t, `version: 0
+workdir: .
 start: a
 nodes:
   a: {type: script, run: `+arg("input")+`, on: {ok: done, fail: failed}}
@@ -76,6 +78,7 @@ func TestInputFileIsRestoredOnResume(t *testing.T) {
 	f.drive(Done)
 	// The engine died during a, and the file was edited meanwhile.
 	g := setupAgent(t, `version: 0
+workdir: .
 start: a
 nodes:
   a: {type: script, run: `+arg("input")+`, on: {ok: done, fail: failed}}
@@ -100,6 +103,7 @@ nodes:
 
 func TestAcceptedAgentOutputIsWrittenForScripts(t *testing.T) {
 	f := setupAgent(t, `version: 0
+workdir: .
 start: review
 executors: {stub: {run: PLAN}}
 nodes:

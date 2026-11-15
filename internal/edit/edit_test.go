@@ -412,6 +412,7 @@ func TestNewFlow(t *testing.T) {
 	}
 	want := `version: 0
 flow: demo
+workdir: .
 start: prepare
 
 nodes:

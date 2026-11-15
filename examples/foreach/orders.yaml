@@ -25,6 +25,7 @@
 # item cli fail: docs, which needs it, is then not run, and the rest finish.
 version: 0
 flow: foreach-demo
+workdir: .   # the folder agent steps work in, relative to this file
 start: plan
 
 executors:

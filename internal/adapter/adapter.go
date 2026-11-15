@@ -40,6 +40,12 @@ const (
 	// FeatureResume: the adapter can continue an earlier conversation when
 	// the start message carries the session id it reported then.
 	FeatureResume = "resume"
+	// FeatureProtect: the adapter keeps the client's file tools from writing
+	// the paths in the start message's protect list (see Step).
+	FeatureProtect = "protect"
+	// FeatureCheck: the adapter checks the model, effort and tools of steps
+	// without running them when started with CheckFlag (see check.go).
+	FeatureCheck = "check"
 	// FeatureUsage: the adapter answers UsageFlag with its client's usage
 	// of the named windows, measured by the client, without a model
 	// request.
@@ -194,6 +200,13 @@ type Step struct {
 	Workdir string          `json:"workdir"`
 	Schema  json.RawMessage `json:"schema"`
 	Session *string         `json:"session"`
+	// Protect lists absolute paths the client's file tools must not write,
+	// with everything inside them: the engine's own files and the files of
+	// the orders. Writable lists absolute folders the step must be able to
+	// read and write although they lie inside a protected path or outside
+	// Workdir: the campaign's work folder.
+	Protect  []string `json:"protect,omitempty"`
+	Writable []string `json:"writable,omitempty"`
 }
 
 // Start is the engine's first message to the adapter.
@@ -231,6 +244,9 @@ type Message struct {
 	Kind    string          `json:"kind,omitempty"`     // error
 	Message string          `json:"message,omitempty"`  // error
 	RetryAt string          `json:"retry_at,omitempty"` // error of kind limit: RFC 3339 time
+	// Denied lists, on a result, the tool calls the client denied during
+	// the step, each as the tool, what it was called on and the reason.
+	Denied []string `json:"denied,omitempty"`
 }
 
 // Terminal reports whether the message ends the step.

@@ -17,6 +17,7 @@ func input(answers ...string) *strings.Reader {
 
 const fourSteps = `version: 0
 flow: toy
+workdir: .
 start: prepare
 
 checks:

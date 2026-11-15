@@ -90,8 +90,10 @@ func (s *Server) childTiles(col *Column, o *orders.Orders, events []chronicle.Ev
 		case ch.NotRunNeeds != "":
 			t.Note, t.Args = "page.tile.child.why"+"_"+ch.NotRunKind, map[string]string{"item": ch.NotRunNeeds}
 		case ch.ID == 0:
-			if len(ch.Needs) > 0 {
-				t.Note, t.Args = "page.tile.child.needs", map[string]string{"items": strings.Join(ch.Needs, ", ")}
+			if open := engine.OpenNeeds(list, ch); len(open) > 0 {
+				t.Note, t.Args = "page.tile.child.needs", map[string]string{"items": strings.Join(open, ", ")}
+			} else if ch.Item != "" {
+				t.Note = "page.tile.child.slot"
 			}
 		case ch.KeptFrom > 0:
 			t.Status, t.Note, t.Args = StatusPassed, "page.tile.child.kept", map[string]string{"n": strconv.Itoa(ch.KeptFrom)}

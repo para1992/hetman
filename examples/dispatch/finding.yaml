@@ -5,6 +5,7 @@
 # (see routes.yaml); the task input names the file.
 version: 0
 flow: finding
+workdir: .   # the folder agent steps work in, relative to this file
 start: apply
 
 notify: {run: [sh, notify.sh], timeout: 10s}

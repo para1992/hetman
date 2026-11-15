@@ -105,8 +105,16 @@ func (p *parser) show(n *yaml.Node, what string) []string {
 		if !ok {
 			continue
 		}
-		if s == "" || !filepath.IsLocal(filepath.FromSlash(s)) {
-			p.errorf(item, "%s: show %q must be a relative path inside the orders folder", what, s)
+		if rest, ok := strings.CutPrefix(s, WorkPrefix); ok {
+			if rest == "" || !filepath.IsLocal(filepath.FromSlash(rest)) {
+				p.errorf(item, "%s: show %q must name a file inside the campaign's work folder after %s", what, s, WorkPrefix)
+				continue
+			}
+			out = append(out, s)
+			continue
+		}
+		if s == "" || strings.Contains(s, "{{") || !filepath.IsLocal(filepath.FromSlash(s)) {
+			p.errorf(item, "%s: show %q must be a relative path inside the orders folder, or start with %s for a file in the campaign's work folder", what, s, WorkPrefix)
 			continue
 		}
 		out = append(out, s)
@@ -139,7 +147,7 @@ func (p *parser) notify(n *yaml.Node, o *Orders) {
 func (o *Orders) answersRef(name, rest string) (Ref, error) {
 	node, tail := o.longestNode(rest)
 	if node == "" {
-		return Ref{}, fmt.Errorf("{{%s}}: answers must be followed by a node id, as in {{answers.NODE}}", name)
+		return Ref{}, noNode(name, RefAnswers, rest)
 	}
 	def := o.Nodes[node]
 	r := Ref{Kind: RefAnswers, Node: node}

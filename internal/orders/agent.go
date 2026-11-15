@@ -3,6 +3,7 @@ package orders
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,7 +18,7 @@ import (
 )
 
 // agentKeys are the keys only an agent node may have.
-var agentKeys = []string{"executor", "role", "prompt", "model", "effort", "tools", "schema", "idle_timeout", "max_attempts", "dialogue"}
+var agentKeys = []string{"executor", "role", "prompt", "model", "effort", "tools", "schema", "idle_timeout", "max_attempts", "dialogue", FailOnDeniedKey}
 
 // OutcomeField is the field of an agent's output that names its outcome.
 const OutcomeField = "outcome"
@@ -284,6 +285,7 @@ const (
 	RefRework   = "rework"   // {{rework}}: why the flow came back to this node
 	RefAnswers  = "answers"  // {{answers.NODE}}, {{answers.NODE.ID}}, {{answers.NODE.ID.comment}}: what a person answered
 	RefLanguage = "language" // {{language}}, {{language.native}}, {{language.code}}: the language for the person
+	RefWork     = "work"     // {{work}}: the path of the campaign's work folder
 )
 
 // Fields of the language placeholder after "language.".
@@ -305,11 +307,11 @@ type Ref struct {
 func (o *Orders) Ref(name string) (Ref, error) {
 	head, rest, _ := strings.Cut(name, ".")
 	switch head {
-	case RefRework:
+	case RefRework, RefWork:
 		if rest != "" || strings.Contains(name, "/") {
-			return Ref{}, fmt.Errorf("{{%s}}: rework takes no fields", name)
+			return Ref{}, fmt.Errorf("{{%s}}: %s takes no fields", name, head)
 		}
-		return Ref{Kind: RefRework}, nil
+		return Ref{Kind: head}, nil
 	case RefInput:
 		r := Ref{Kind: RefInput}
 		if strings.HasSuffix(name, ".") {
@@ -339,7 +341,7 @@ func (o *Orders) Ref(name string) (Ref, error) {
 	case RefOutput, RefArtifact:
 		node, tail := o.longestNode(rest)
 		if node == "" {
-			return Ref{}, fmt.Errorf("{{%s}}: %s must be followed by a node id, as in {{%s.NODE}}", name, head, head)
+			return Ref{}, noNode(name, head, rest)
 		}
 		def := o.Nodes[node]
 		r := Ref{Kind: head, Node: node}
@@ -369,7 +371,7 @@ func (o *Orders) Ref(name string) (Ref, error) {
 		}
 		return r, nil
 	}
-	return Ref{}, fmt.Errorf("{{%s}} is not a known placeholder (use input, output.NODE, artifact.NODE.FILE, answers.NODE, language or rework)", name)
+	return Ref{}, fmt.Errorf("{{%s}} is not a known placeholder (use input, output.NODE, artifact.NODE.FILE, answers.NODE, language, work or rework)", name)
 }
 
 // longestNode splits "a.b.c" into the longest node id prefix and the rest.
@@ -409,6 +411,11 @@ func checkOutputPath(name string, def *Node, path []string) error {
 func (p *parser) template(node *Node, o *Orders) {
 	for _, ph := range node.Template.Placeholders() {
 		if _, err := o.Ref(ph.Name); err != nil {
+			var missing *MissingNode
+			if p.building && errors.As(err, &missing) {
+				o.Later = append(o.Later, Problem{File: node.Prompt, Line: ph.Line, Col: ph.Col, Msg: err.Error()})
+				continue
+			}
 			p.errorIn(node.Prompt, ph.Line, ph.Col, "%v", err)
 		}
 	}

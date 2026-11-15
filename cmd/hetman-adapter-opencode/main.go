@@ -5,7 +5,7 @@
 //
 // Usage:
 //
-//	hetman-adapter-opencode [--client PROGRAM] [--env NAME]... [--describe]
+//	hetman-adapter-opencode [--client PROGRAM] [--env NAME]... [--describe | --check]
 //
 // --client names the client program, "opencode" on the path by default.
 // --env passes one more variable of the adapter's own environment to the
@@ -80,6 +80,7 @@ func parseArgs(args []string) (o options, describe bool, err error) {
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	args, check := cutFlag(args, adapter.CheckFlag)
 	o, describe, err := parseArgs(args)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s adapter: %v\n", adapterName, err)
@@ -87,8 +88,15 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if describe {
 		data, _ := json.Marshal(adapter.Description{Protocol: []int{adapter.Version}, Name: adapterName,
-			Features: []string{adapter.FeatureResume}})
+			Features: []string{adapter.FeatureResume, adapter.FeatureProtect, adapter.FeatureCheck}})
 		fmt.Fprintf(stdout, "%s\n", data)
+		return 0
+	}
+	if check {
+		if err := adapter.ServeCheck(stdin, stdout, func(st adapter.Step) []adapter.CheckProblem { return stepProblems(o, st, stderr) }); err != nil {
+			fmt.Fprintf(stderr, "%s adapter: %v\n", adapterName, err)
+			return 2
+		}
 		return 0
 	}
 	in := bufio.NewReader(stdin)
@@ -147,6 +155,20 @@ func (s *sender) session(id string) {
 	s.send(adapter.Message{Type: adapter.TypeSession, ID: id})
 }
 
+// cutFlag removes a flag from args and reports whether it was there.
+func cutFlag(args []string, flag string) ([]string, bool) {
+	var out []string
+	found := false
+	for _, a := range args {
+		if a == flag {
+			found = true
+			continue
+		}
+		out = append(out, a)
+	}
+	return out, found
+}
+
 func failure(kind, message string) adapter.Message {
 	return adapter.Message{Type: adapter.TypeError, Kind: kind, Message: message}
 }
@@ -160,6 +182,7 @@ func step(o options, st adapter.Step, out *sender, diag io.Writer, cancel <-chan
 	if err != nil {
 		return failure(adapter.ErrPermanent, err.Error())
 	}
+	perms = fence(st, perms)
 	if err := checkEffort(o, st, diag); err != nil {
 		return failure(adapter.ErrPermanent, err.Error())
 	}

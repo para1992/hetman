@@ -161,6 +161,11 @@ func Main(args []string) int {
 		must(os.WriteFile(filepath.Join(runDir, arg(args, 1)), []byte(arg(args, 2)), 0o644))
 		writeResult(map[string]any{"artifacts": []string{arg(args, 1)}})
 		return 0
+	case "writeexit": // writeexit FILE TEXT CODE: write FILE, list it as an artifact, exit with CODE
+		must(os.WriteFile(filepath.Join(runDir, arg(args, 1)), []byte(arg(args, 2)), 0o644))
+		writeResult(map[string]any{"artifacts": []string{arg(args, 1)}})
+		n, _ := strconv.Atoi(arg(args, 3))
+		return n
 	case "item":
 		dir := arg(args, 1)
 		data, err := os.ReadFile(os.Getenv("HETMAN_INPUT_FILE"))

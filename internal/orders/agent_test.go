@@ -80,6 +80,7 @@ nodes:
     schema: schemas/review.json
     max_attempts: 5
     on: {ok: done, needs_rework: write, fail: failed}
+workdir: .
 `
 
 func TestAgentNode(t *testing.T) {
@@ -238,7 +239,7 @@ func TestScribeSetting(t *testing.T) {
 func TestParseOverlay(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, DefaultFile)
-	config := "version: 0\nstart: a\nexecutors:\n  x: {run: [adapter]}\nnodes:\n  a: {type: agent, executor: x, prompt: p.md, schema: s.json, on: {ok: done, fail: failed}}\n"
+	config := "version: 0\nworkdir: .\nstart: a\nexecutors:\n  x: {run: [adapter]}\nnodes:\n  a: {type: agent, executor: x, prompt: p.md, schema: s.json, on: {ok: done, fail: failed}}\n"
 	if _, err := Parse(path, []byte(config)); err == nil {
 		t.Fatal("missing files accepted")
 	}

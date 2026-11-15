@@ -453,8 +453,12 @@
     ops.push({ key: 'remove', fields: () => [], op: () => ({ op: 'remove', node: n.id }) });
     ops.push({ key: 'rename', fields: () => [{ name: 'name', kind: 'text', value: n.id }], op: (v) => ({ op: 'rename', node: n.id, name: v.name || '' }) });
     ops.push({ key: 'link', fields: () => [{ name: 'outcome', kind: 'outcome', options: n.outcomes, value: n.outcomes[0] },
-      { name: 'target', kind: 'select', options: others.concat(['done', 'failed']) }],
-    op: (v) => ({ op: 'link', node: n.id, outcome: v.outcome || '', target: v.target || '' }) });
+      { name: 'target', kind: 'select', options: others.concat(['done', 'failed']) }, { name: 'max', kind: 'number' }, { name: 'then', kind: 'text' }],
+    op: (v) => {
+      const op = { op: 'link', node: n.id, outcome: v.outcome || '', target: v.target || '' };
+      if (Number(v.max) > 0) { op.max = Number(v.max); op.then = (v.then || '').trim(); }
+      return op;
+    } });
     if (Object.keys(n.on || {}).length) {
       ops.push({ key: 'unlink', fields: () => [{ name: 'outcome', kind: 'select', options: Object.keys(n.on) }],
         op: (v) => ({ op: 'unlink', node: n.id, outcome: v.outcome || '' }) });
@@ -465,7 +469,7 @@
     }
     if (n.type === 'agent') {
       const agentFields = (n.role ? ['role', 'executor'] : ['executor', 'model', 'effort'].concat(f.roles.length ? ['role'] : []))
-        .concat(['attempts', 'dialogue', 'idle_timeout', 'tools', 'prompt', 'schema']);
+        .concat(['attempts', 'dialogue', 'idle_timeout', 'tools', 'workdir', 'prompt', 'schema']);
       const first = n.role ? 'role' : 'model';
       const valueField = (field) => {
         if (field === 'executor') return { name: 'value', kind: 'select', options: f.executors, value: n.executor };
@@ -614,7 +618,7 @@
       I18N_HINTS.includes(fd.name) ? h('span', { class: 'hint', text: t('page.field.hint.' + fd.name) }) : null);
   }
 
-  const I18N_HINTS = ['run', 'outcomes', 'via', 'value', 'at', 'starters', 'options'];
+  const I18N_HINTS = ['run', 'outcomes', 'via', 'value', 'at', 'starters', 'options', 'max'];
 
   Object.assign(W.hooks, { listTop, campaignButtons, cardTop, columnNote, openFlow, renderFlow });
 })();

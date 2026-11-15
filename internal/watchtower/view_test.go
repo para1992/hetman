@@ -26,6 +26,7 @@ func parse(t *testing.T, config string) *orders.Orders {
 
 // A flow with a rework loop and a node reached only on failure.
 const branchy = `version: 0
+workdir: .
 start: build
 nodes:
   build:  {type: script, run: [b], on: {ok: test, fail: fix}}
@@ -144,6 +145,7 @@ func TestLayoutStopsAtFailedEnd(t *testing.T) {
 
 func TestGateTilesWhileRunning(t *testing.T) {
 	o := parse(t, `version: 0
+workdir: .
 start: g
 checks:
   a: {run: [a], soft: true}
@@ -250,6 +252,7 @@ func TestAgentAttemptsAndWaits(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "p.md"), []byte("Do it."), 0o644)
 	os.WriteFile(filepath.Join(dir, "s.json"), []byte(`{"type": "object", "properties": {"outcome": {"type": "string", "enum": ["ok"]}}, "required": ["outcome"]}`), 0o644)
 	o, err := orders.Parse(filepath.Join(dir, "orders.yaml"), []byte(`version: 0
+workdir: .
 start: a
 executors: {stub: {run: [x]}}
 nodes:

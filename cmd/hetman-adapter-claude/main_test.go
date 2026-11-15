@@ -22,7 +22,7 @@ import (
 // testdata. Files recorded from the real client and sanitized: normal,
 // resume, badmodel, noauth, offline and resume_missing (the .stderr files
 // too). Files written by hand after the client's own message schema: the two
-// limit files, garbage, textjson and ok.
+// limit files, garbage, textjson, ok and denied.
 const (
 	envSelf   = "HETMAN_TEST_ADAPTER_SELF" // the test binary runs the adapter
 	envFake   = "FAKE_CLIENT_SCENARIO"     // the test binary acts as the client
@@ -77,7 +77,7 @@ func fakeClient(scenario string) int {
 		}
 	}
 	switch scenario {
-	case "normal", "garbage", "textjson":
+	case "normal", "garbage", "textjson", "denied":
 		return replay(scenario, 0)
 	case "resume":
 		if resume == "" {

@@ -34,7 +34,7 @@ var opUsage = []struct{ op, form, example string }{
 	{edit.OpAdd, "add TYPE NODE (-after NODE [-via OUTCOME] | -before NODE) [node flags]", "hetman scribe add gate ready -after test -checks lint,tests"},
 	{edit.OpRemove, "remove NODE", "hetman scribe remove prepare"},
 	{edit.OpRename, "rename NODE NEW", "hetman scribe rename build compile"},
-	{edit.OpLink, "link NODE OUTCOME TARGET", "hetman scribe link ready blocked build"},
+	{edit.OpLink, "link NODE OUTCOME TARGET [-max N -then OUTCOME]", "hetman scribe link tests blocked fix -max 3 -then stuck"},
 	{edit.OpUnlink, "unlink NODE OUTCOME", "hetman scribe unlink release rework"},
 	{edit.OpSet, "set NODE FIELD VALUE", "hetman scribe set build timeout 5m"},
 	{edit.OpUnset, "unset NODE FIELD", "hetman scribe unset build timeout"},
@@ -49,6 +49,7 @@ var opUsage = []struct{ op, form, example string }{
 	{edit.OpAssistant, "assistant EXECUTOR MODEL [-effort E]", "hetman scribe assistant stub any-model"},
 	{edit.OpLanguage, "language CODE", "hetman scribe language pt"},
 	{edit.OpUnlanguage, "unlanguage", "hetman scribe unlanguage"},
+	{edit.OpWorkdir, "workdir FOLDER", "hetman scribe workdir .."},
 }
 
 func scribeUsage(p *i18n.Printer) string {
@@ -142,10 +143,6 @@ func (f onFlag) Set(s string) error {
 	return nil
 }
 
-func listOf(s string) []string {
-	return strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' })
-}
-
 // opCmd runs one operation given on the command line.
 func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 	p := personPrinter(nil)
@@ -170,7 +167,7 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 			run = fs.String("run", "", p.T("flag.run"))
 		case "checks", "tools", "outcomes", "options", "locks":
 			lists[f] = fs.String(f, "", p.T("flag.list"))
-		case "at", "attempts", "parallel":
+		case "at", "attempts", "parallel", "max":
 			ints[f] = fs.Int(f, 0, p.T("flag.number"))
 		case "starters":
 			starters = fs.Bool("starters", false, p.T("flag.starters"))
@@ -253,17 +250,30 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 			op.Input = value
 		case "items":
 			op.Items = value
-		case "locks":
-			op.Locks = listOf(value)
-		case "checks":
-			op.Checks = listOf(value)
-		case "tools":
-			op.Tools = listOf(value)
-		case "outcomes":
-			op.Outcomes = listOf(value)
-		case "options":
-			op.Options = listOf(value)
-		case "at", "attempts", "parallel":
+		case "workdir":
+			op.Workdir = value
+		case "then":
+			op.Then = value
+		case "locks", "checks", "tools", "outcomes", "options":
+			// An entry ends at a comma or space outside parentheses and
+			// quotes, so "Bash(go test *)" stays one entry.
+			list, err := edit.SplitList(value)
+			if err != nil {
+				return err
+			}
+			switch field {
+			case "locks":
+				op.Locks = list
+			case "checks":
+				op.Checks = list
+			case "tools":
+				op.Tools = list
+			case "outcomes":
+				op.Outcomes = list
+			default:
+				op.Options = list
+			}
+		case "at", "attempts", "parallel", "max":
 			n, err := strconv.Atoi(value)
 			if err != nil {
 				return fmt.Errorf("-%s must be a number", field) // i18n: keep (flag parsing has checked it already)
@@ -273,6 +283,8 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 				op.At = n
 			case "attempts":
 				op.Attempts = n
+			case "max":
+				op.Max = n
 			default:
 				op.Parallel = n
 			}
@@ -289,7 +301,10 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 	}
 	for f, p := range lists {
 		if *p != "" {
-			set(f, *p)
+			if err := set(f, *p); err != nil {
+				fmt.Fprintln(stderr, "hetman scribe:", err)
+				return exitUsage
+			}
 		}
 	}
 	for f, p := range ints {

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -37,15 +36,17 @@ func (s *Server) handleShow(w http.ResponseWriter, r *http.Request) {
 			rel = e.Show[i]
 		}
 	}
-	if rel == "" || !filepath.IsLocal(filepath.FromSlash(rel)) {
+	o := s.ordersFor(id)
+	no := o
+	if c, err := engine.OrdersOf(o, s.Chron, id); err == nil && c != nil {
+		no = c
+	}
+	path, ok := engine.ShowPath(o, no, id, rel)
+	if rel == "" || !ok {
 		http.Error(w, "no such file to show", http.StatusNotFound) // i18n: keep (API error)
 		return
 	}
-	o := s.ordersFor(id)
-	if no, err := engine.OrdersOf(o, s.Chron, id); err == nil && no != nil {
-		o = no
-	}
-	f, err := os.Open(filepath.Join(o.Dir, filepath.FromSlash(rel)))
+	f, err := os.Open(path)
 	if err != nil {
 		http.Error(w, "the file does not exist now", http.StatusNotFound) // i18n: keep (API error)
 		return

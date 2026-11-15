@@ -32,6 +32,7 @@ type nodeView struct {
 // agentAttempt is what status shows of one attempt of an agent node.
 type agentAttempt struct {
 	n                       int
+	denied                  []string // tool calls the client denied
 	executor, model, effort string
 	prompt, log, stderr     string
 	sessionIn, sessionOut   string
@@ -98,6 +99,7 @@ func (c *command) status(id int64, listEvents bool) int {
 			}
 			if a := v.lastAgent(e.Attempt); a != nil {
 				a.running, a.outcome, a.failure, a.err, a.output, a.retryAt = false, e.Outcome, e.Failure, e.Error, string(e.Output), e.RetryAt
+				a.denied = e.Denied
 				a.log, a.stderr = e.Log, e.Stderr
 			}
 		case chronicle.CheckFinished:
@@ -282,9 +284,12 @@ func (c *command) printChildren(tw io.Writer, events []chronicle.Event, node, in
 			fmt.Fprintf(tw, "%s%s\t\t%s\t%s\t\t\t\n", indent, name, p.T("status.st.not_run"), notRunWhy(p, ch))
 			continue
 		case ch.ID == 0:
-			needs := ""
-			if len(ch.Needs) > 0 {
-				needs = p.T("status.child.needs", "items", strings.Join(ch.Needs, ", "))
+			// An item waits for the items it needs that are not done yet;
+			// with all of them done it waits for a free place under parallel.
+			open := engine.OpenNeeds(list, ch)
+			needs := p.T("status.child.slot")
+			if len(open) > 0 {
+				needs = p.T("status.child.needs", "items", strings.Join(open, ", "))
 			}
 			fmt.Fprintf(tw, "%s%s\t\t%s\t%s\t\t\t\n", indent, name, p.T("status.st.pending"), needs)
 			continue
@@ -419,6 +424,9 @@ func printAgent(p *i18n.Printer, w io.Writer, node string, attempts []*agentAtte
 			if c.Reason == chronicle.ChoseQuota {
 				fmt.Fprintln(w, p.T("status.agent.compared", "usage", explain.UsageWords(p, c, time.Local)))
 			}
+		}
+		for _, d := range a.denied {
+			fmt.Fprintln(w, p.T("status.agent.denied", "call", d))
 		}
 		if a.prompt != "" {
 			fmt.Fprintln(w, p.T("status.agent.prompt", "file", a.prompt))

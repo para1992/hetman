@@ -20,6 +20,7 @@
 #   STUB_PLAN=plans/slow.json       a slow draft (a minute); stop hetman during it and resume
 version: 0
 flow: agent-demo
+workdir: .   # the folder agent steps work in, relative to this file
 start: draft
 
 executors:

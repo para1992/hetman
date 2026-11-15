@@ -70,7 +70,8 @@ type stream struct {
 	tokIn   int64
 	tokOut  int64
 	cost    float64
-	stopped bool // a step finished with reason "stop"
+	stopped bool     // a step finished with reason "stop"
+	denied  []string // the tool calls the client's permissions denied, with its reason
 }
 
 func newStream(st adapter.Step, out *sender) *stream {
@@ -112,8 +113,13 @@ func (s *stream) line(raw []byte) {
 		if p == nil || p.State == nil {
 			return
 		}
-		s.out.log("> " + s.describeTool(p.Tool, p.State.Title, p.State.Input))
-		if p.State.Status == "error" {
+		call := s.describeTool(p.Tool, p.State.Title, p.State.Input)
+		s.out.log("> " + call)
+		if reason, ok := denial(p.State.Error); p.State.Status == "error" && ok {
+			text := call + ": " + s.short(reason)
+			s.denied = append(s.denied, text)
+			s.out.log("denied: " + text)
+		} else if p.State.Status == "error" {
 			s.out.log("  < error: " + s.short(firstLine(p.State.Error, 300)))
 		} else {
 			s.out.log("  < " + s.short(firstLine(toolOutput(p.State.Output), 200)))
@@ -153,6 +159,21 @@ func (s *stream) found(id string) {
 	s.out.log(fmt.Sprintf("session %s, model %s, tools: %s", id, model, toolsText(s.st.Tools)))
 }
 
+// denial reads the error of a tool call that the client's permissions
+// refused: its reason, without the list of rules the client appends.
+func denial(errText string) (string, bool) {
+	t := oneLine(errText)
+	for _, mark := range []string{"prevents you from using this specific tool call", "rejected permission to use this specific tool call"} {
+		if strings.Contains(t, mark) {
+			if i := strings.Index(t, " Here are some of the relevant rules"); i > 0 {
+				t = t[:i]
+			}
+			return clip(t, 300), true
+		}
+	}
+	return "", false
+}
+
 func toolsText(tools []string) string {
 	if len(tools) == 0 {
 		return "none"
@@ -176,7 +197,12 @@ func (s *stream) finish(exit int, stderr string) attemptResult {
 		s.out.log(s.summary())
 		answer := strings.Join(s.texts, "\n")
 		if obj, ok := extractObject(answer); ok {
-			return attemptResult{final: adapter.Message{Type: adapter.TypeResult, Output: obj}}
+			return attemptResult{final: adapter.Message{Type: adapter.TypeResult, Output: obj, Denied: s.denied}}
+		}
+		if len(s.denied) > 0 {
+			// The same calls are denied again on a retry.
+			return attemptResult{final: failure(adapter.ErrPermanent, fmt.Sprintf("the client denied %d tool call(s) (%s) and the answer holds no JSON object: %s",
+				len(s.denied), clip(strings.Join(s.denied, "; "), 600), clip(oneLine(answer), 300)))}
 		}
 		if strings.TrimSpace(answer) == "" {
 			return attemptResult{final: failure(adapter.ErrTransient, "the client gave no answer")}

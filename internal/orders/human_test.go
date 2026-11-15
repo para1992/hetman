@@ -49,6 +49,7 @@ nodes:
     prompt: prompts/review.md
     schema: schemas/review.json
     on: {ok: done, needs_rework: write, fail: failed}
+workdir: .
 `
 
 func TestHumanNodesAndQuestions(t *testing.T) {
