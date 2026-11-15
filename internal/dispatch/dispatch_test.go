@@ -45,6 +45,9 @@ func TestMain(m *testing.M) {
 //
 //	span DIR LABEL TIME  write DIR/span.<campaign>.<label> holding the start
 //	                     time, sleep, then add the end time (Unix nanoseconds)
+//	meet DIR LABEL N TIME  as span, but once started wait until N steps
+//	                     have started (DIR/met.*) before sleeping, so that N
+//	                     steps overlap by construction; exit 1 after 30s
 //	hold DIR             write DIR/started.<campaign>.<node>.<attempt>, wait
 //	                     for DIR/release, then exit 0
 func step(args []string) int {
@@ -56,6 +59,29 @@ func step(args []string) int {
 		os.WriteFile(path+".tmp", []byte(start), 0o644)
 		os.Rename(path+".tmp", path)
 		d, _ := time.ParseDuration(args[3])
+		time.Sleep(d)
+		end := strconv.FormatInt(time.Now().UnixNano(), 10)
+		os.WriteFile(path+".tmp", []byte(start+" "+end), 0o644)
+		os.Rename(path+".tmp", path)
+		return 0
+	case "meet":
+		path := filepath.Join(args[1], "span."+run+"."+args[2])
+		start := strconv.FormatInt(time.Now().UnixNano(), 10)
+		os.WriteFile(path+".tmp", []byte(start), 0o644)
+		os.Rename(path+".tmp", path)
+		os.WriteFile(filepath.Join(args[1], "met."+run), nil, 0o644)
+		n, _ := strconv.Atoi(args[3])
+		for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+			met, _ := filepath.Glob(filepath.Join(args[1], "met.*"))
+			if len(met) >= n {
+				break
+			}
+			if time.Now().After(deadline) {
+				fmt.Fprintf(os.Stderr, "only %d of %d steps started together\n", len(met), n)
+				return 1
+			}
+		}
+		d, _ := time.ParseDuration(args[4])
 		time.Sleep(d)
 		end := strconv.FormatInt(time.Now().UnixNano(), 10)
 		os.WriteFile(path+".tmp", []byte(start+" "+end), 0o644)
@@ -423,8 +449,11 @@ func TestPriorityThenAge(t *testing.T) {
 
 func TestLimits(t *testing.T) {
 	w := newWorld(t)
-	w.flow("x.yaml", "a", quick("span", "SYNC", "x", "250ms"))
-	w.flow("y.yaml", "a", quick("span", "SYNC", "y", "250ms"))
+	// The first x and the first y wait for each other, so two campaigns
+	// overlap whatever the speed of the system; the spans prove that no
+	// more than the limits ever ran at once.
+	w.flow("x.yaml", "a", quick("meet", "SYNC", "x", "2", "100ms"))
+	w.flow("y.yaml", "a", quick("meet", "SYNC", "y", "2", "100ms"))
 	w.write(dispatch.DefaultRoutesFile, "version: 0\nlimit: 2\nroutes:\n  x: {orders: x.yaml, limit: 1}\n  y: {orders: y.yaml}\n")
 	e := w.open()
 	for i := 0; i < 4; i++ {
@@ -432,6 +461,11 @@ func TestLimits(t *testing.T) {
 		e.add("y", `{}`, "")
 	}
 	e.runOnce()
+	for id, v := range e.views() {
+		if v.State != dispatch.StateDone {
+			t.Fatalf("task %d: %s (a step waited in vain for the others to start)", id, v.State)
+		}
+	}
 	spans := readSpans(t, w.sync)
 	if len(spans) != 8 {
 		t.Fatalf("%d spans recorded, want 8", len(spans))
@@ -445,7 +479,7 @@ func TestLimits(t *testing.T) {
 
 	// The dispatcher's own limit overrides the routing file.
 	w2 := newWorld(t)
-	w2.flow("y.yaml", "a", quick("span", "SYNC", "y", "200ms"))
+	w2.flow("y.yaml", "a", quick("meet", "SYNC", "y", "3", "100ms"))
 	w2.write(dispatch.DefaultRoutesFile, "version: 0\nlimit: 1\nroutes:\n  y: {orders: y.yaml}\n")
 	e2 := w2.open()
 	for i := 0; i < 6; i++ {
@@ -456,6 +490,11 @@ func TestLimits(t *testing.T) {
 	d.Limit = 3
 	if err := d.Run(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	for id, v := range e2.views() {
+		if v.State != dispatch.StateDone {
+			t.Fatalf("task %d: %s (with -limit 3, three steps did not run at once)\n%s", id, v.State, out.String())
+		}
 	}
 	if n := most(readSpans(t, w2.sync), ""); n != 3 {
 		t.Fatalf("with -limit 3 at most %d ran at once\n%s", n, out.String())
