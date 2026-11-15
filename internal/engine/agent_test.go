@@ -23,20 +23,25 @@ const okSchema = `{"type": "object", "properties": {"outcome": {"type": "string"
 const reviewSchema = `{"type": "object", "properties": {"outcome": {"type": "string", "enum": ["ok", "needs_rework"]}, "notes": {"type": "string"}}, "required": ["outcome"], "additionalProperties": false}`
 
 // setupAgent writes files (relative path to text) next to the orders, then
-// the orders, in which PLAN stands for the stub adapter run with plan.json.
+// the orders, in which PLAN stands for the stub adapter run with plan.json,
+// as it does in a written segment (a .yaml file).
 func setupAgent(t *testing.T, config string, files map[string]string, input string) *fixture {
 	t.Helper()
 	dir := tempDir(t)
+	plan := teststep.Adapter(filepath.Join(dir, "plan.json"))
 	for rel, text := range files {
 		path := filepath.Join(dir, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
+		if strings.HasSuffix(rel, ".yaml") {
+			text = strings.ReplaceAll(text, "PLAN", plan)
+		}
 		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	config = strings.ReplaceAll(config, "PLAN", teststep.Adapter(filepath.Join(dir, "plan.json")))
+	config = strings.ReplaceAll(config, "PLAN", plan)
 	path := filepath.Join(dir, orders.DefaultFile)
 	if err := os.WriteFile(path, []byte(config), 0o644); err != nil {
 		t.Fatal(err)

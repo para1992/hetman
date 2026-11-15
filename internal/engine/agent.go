@@ -542,15 +542,13 @@ func (e *Engine) render(node *orders.Node, events []chronicle.Event, lang langua
 		}
 		switch ref.Kind {
 		case orders.RefInput:
-			var input any = map[string]any{}
-			if len(events) > 0 && len(events[0].Input) > 0 {
-				if err := json.Unmarshal(events[0].Input, &input); err != nil {
-					return "", fmt.Errorf("run input: %v", err)
-				}
+			input, err := e.runInput(events)
+			if err != nil {
+				return "", err
 			}
 			v, ok := field(input, ref.Path)
 			if !ok {
-				return "", fmt.Errorf("{{%s}}: the run input has no field %q", ph.Name, strings.Join(ref.Path, "."))
+				return "", e.missingInput(ph.Name, ref.Path)
 			}
 			return show(v), nil
 		case orders.RefOutput:

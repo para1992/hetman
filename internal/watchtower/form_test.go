@@ -25,7 +25,10 @@ input:
     fields:
       id: {kind: text, label: Task id, hint: {en: such as T-1, uk: наприклад T-1}, required: true}
       criteria: {kind: list, required: true}
+      needs: {kind: list}
+      description: {kind: longtext}
   size: {kind: choice, options: [small, large], default: small}
+  note: {kind: text}
 nodes:
   a: {type: script, run: `+arg("exit", "0")+`, on: {ok: done, fail: failed}}
 `)
@@ -37,7 +40,7 @@ nodes:
 		t.Fatalf("flows %+v", flows)
 	}
 	in := flows[0].Input
-	if len(in) != 2 || in[0].Name != "tasks" || in[0].Label != "Завдання" || !in[0].Required || len(in[0].Fields) != 2 ||
+	if len(in) != 3 || in[0].Name != "tasks" || in[0].Label != "Завдання" || !in[0].Required || len(in[0].Fields) != 4 ||
 		in[0].Fields[0].Hint != "наприклад T-1" || in[1].Default != "small" || strings.Join(in[1].Options, ",") != "small,large" {
 		t.Fatalf("form %+v", in)
 	}
@@ -78,7 +81,9 @@ nodes:
 	}
 	w.waitState(1, watchtower.StateDone)
 	events, _ := w.chron.Events(1)
-	if got := string(events[0].Input); got != `{"project":"demo","tasks":[{"id":"T-1","criteria":["works"]}],"size":"small"}` {
+	// The optional fields the form left empty are there with their empty
+	// values, so a prompt that names one does not fail.
+	if got := string(events[0].Input); got != `{"project":"demo","tasks":[{"id":"T-1","criteria":["works"],"needs":[],"description":""}],"size":"small","note":""}` {
 		t.Fatalf("input %s", got)
 	}
 	// The cross-site protection holds for this start as for every other.

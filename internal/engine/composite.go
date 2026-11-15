@@ -477,11 +477,9 @@ func (e *Engine) refValue(events []chronicle.Event, ref orders.Ref, written stri
 	var v any
 	switch ref.Kind {
 	case orders.RefInput:
-		v = map[string]any{}
-		if len(events) > 0 && len(events[0].Input) > 0 {
-			if err := json.Unmarshal(events[0].Input, &v); err != nil {
-				return nil, fmt.Errorf("run input: %v", err)
-			}
+		var err error
+		if v, err = e.runInput(events); err != nil {
+			return nil, err
 		}
 	case orders.RefOutput:
 		out := lastOutput(events, ref.Node)

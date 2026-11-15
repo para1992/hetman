@@ -184,10 +184,10 @@ func (c *checker) object(fields []*Field, m map[string]any, at string) Object {
 		}
 		v, ok := m[f.Name]
 		if !ok || v == nil {
-			if f.Default != nil {
-				out = append(out, Pair{f.Name, f.Default})
-			} else if f.Required {
+			if f.Default == nil && f.Required {
 				c.add("form.missing", "field", path)
+			} else {
+				out = append(out, Pair{f.Name, Empty(f)})
 			}
 			continue
 		}
@@ -249,6 +249,9 @@ func (c *checker) value(f *Field, v any, path string) (any, bool) {
 		return b, true
 	case Choice:
 		s, ok := v.(string)
+		if ok && s == "" && !f.Required {
+			return s, true
+		}
 		if !ok || !contains(f.Options, s) {
 			c.add("form.want_option", "field", path, "options", strings.Join(f.Options, ", "))
 			return nil, false
@@ -303,6 +306,62 @@ func (c *checker) value(f *Field, v any, path string) (any, bool) {
 		return out, true
 	}
 	return v, true
+}
+
+// Empty is the value a field gets when it is absent or left empty and is
+// not required, so that every declared field is in the run input and a
+// prompt naming it never fails: its default when it has one; otherwise ""
+// for a text, a long text or a choice, an empty list for a list or a list
+// of objects, false for yes/no, and null for a number (a prompt shows null
+// as nothing).
+func Empty(f *Field) any {
+	if f.Default != nil {
+		return f.Default
+	}
+	switch f.Kind {
+	case Text, LongText, Choice:
+		return ""
+	case List, Objects:
+		return []any{}
+	case YesNo:
+		return false
+	}
+	return nil
+}
+
+// Fill gives every declared field that is not required and is absent from
+// the object v the value Empty gives it, in v itself and in each object of
+// a list of objects. It checks nothing else and leaves the values v has.
+// It makes a run input stored before this rule, or one an item of a list
+// became, as complete as Check makes a new one. It reports whether it
+// added anything.
+func Fill(fields []*Field, v any) bool {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return false
+	}
+	added := false
+	for _, f := range fields {
+		x, has := m[f.Name]
+		if !has {
+			if f.Required && f.Default == nil {
+				continue
+			}
+			x = Empty(f)
+			m[f.Name] = x
+			added = true
+		}
+		if f.Kind != Objects {
+			continue
+		}
+		list, _ := x.([]any)
+		for _, item := range list {
+			if Fill(f.Fields, item) {
+				added = true
+			}
+		}
+	}
+	return added
 }
 
 // Pair is one field of an Object.
@@ -420,6 +479,10 @@ func writeObject(b *strings.Builder, p *i18n.Printer, fields []*Field, m map[str
 				writeObject(b, p, f.Fields, obj, indent+"    ")
 			}
 		default:
+			if v == nil || v == "" {
+				fmt.Fprintf(b, "%s%s: %s\n", indent, label, p.T("form.none"))
+				continue
+			}
 			fmt.Fprintf(b, "%s%s: %v\n", indent, label, v)
 		}
 	}

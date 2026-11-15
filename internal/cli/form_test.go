@@ -67,8 +67,10 @@ func TestTasksExampleForm(t *testing.T) {
 		"2", "1", "2", "", "", "Door", "", "",
 		"1", // use it
 	)
-	want := `{"project":"demo","tasks":[{"id":"TASK-5","title":"Shelf","description":"line one\nline two","criteria":["a","b"]},` +
-		`{"id":"TASK-6","needs":["TASK-5"],"title":"Door","criteria":["c"]}]}`
+	// The optional fields left empty, the needs of the first task and the
+	// description of the second, are there with their empty values.
+	want := `{"project":"demo","tasks":[{"id":"TASK-5","needs":[],"title":"Shelf","description":"line one\nline two","criteria":["a","b"]},` +
+		`{"id":"TASK-6","needs":["TASK-5"],"title":"Door","description":"","criteria":["c"]}]}`
 
 	code, out, errOut := formRun(t, typed, "run", "-f", tasks, "-ask", "-save-only")
 	if code != exitDone {
@@ -160,6 +162,44 @@ func TestRunAskArguments(t *testing.T) {
 	code, out, _ := formRun(t, answers("a goal", "3"), "run", "-f", w.orders, "-ask")
 	if code != exitFailed || !strings.Contains(out, "Cancelled; nothing was started") {
 		t.Fatalf("cancelled: %d %s", code, out)
+	}
+}
+
+// An input file that leaves optional fields out or empty, and a form left
+// empty there, start a campaign whose input holds every declared field.
+func TestOptionalFieldsLeftEmptyAreInTheInput(t *testing.T) {
+	w := newWorld(t, "  a: {type: script, run: "+teststep.Argv("exit", "0")+", on: {ok: done, fail: failed}}\n")
+	os.WriteFile(w.orders, []byte("version: 0\nstart: a\ninput:\n  goal: {kind: text, required: true}\n  note: {kind: text}\n"+
+		"  tags: {kind: list}\n  depth: {kind: number, default: 2}\nnodes:\n  a: {type: script, run: "+
+		teststep.Argv("exit", "0")+", on: {ok: done, fail: failed}}\n"), 0o644)
+	want := `{"goal":"g","note":"","tags":[],"depth":2}`
+	for i, in := range []string{`{"goal": "g"}`, `{"goal": "g", "note": "", "tags": []}`} {
+		path := filepath.Join(w.dir, "in.json")
+		os.WriteFile(path, []byte(in), 0o644)
+		if code, out, errOut := formRun(t, "", "run", "-f", w.orders, "-input", path); code != exitDone {
+			t.Fatalf("%s: %d %s%s", in, code, out, errOut)
+		}
+		ch, err := chronicle.Open(filepath.Join(w.dir, ".hetman", "chronicle.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		events, err := ch.Events(int64(i + 1))
+		ch.Close()
+		if err != nil || string(events[0].Input) != want {
+			t.Fatalf("%s: campaign input %s (%v)", in, events[0].Input, err)
+		}
+	}
+	// The terminal form: the goal given, the note and the tags left empty.
+	if code, out, errOut := formRun(t, answers("g", "", "", "", "1"), "run", "-f", w.orders, "-ask"); code != exitDone {
+		t.Fatalf("-ask: %d %s%s", code, out, errOut)
+	}
+	ch, err := chronicle.Open(filepath.Join(w.dir, ".hetman", "chronicle.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ch.Close()
+	if events, err := ch.Events(3); err != nil || string(events[0].Input) != want {
+		t.Fatalf("-ask: campaign input %s (%v)", events[0].Input, err)
 	}
 }
 

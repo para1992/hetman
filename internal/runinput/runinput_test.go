@@ -121,3 +121,57 @@ func TestParseDefault(t *testing.T) {
 		}
 	}
 }
+
+// Every declared field that is not required and is left out or left empty
+// is in the checked input: a declared default wins, else the empty value of
+// its kind; the same for the fields of each object of a list.
+func TestCheckGivesEveryOptionalFieldItsEmptyValue(t *testing.T) {
+	s := spec()
+	s.Fields = append(s.Fields,
+		&Field{Name: "note", Kind: Text, Ask: true},
+		&Field{Name: "story", Kind: LongText, Ask: true},
+		&Field{Name: "tone", Kind: Choice, Options: []string{"calm", "brisk"}, Ask: true},
+		&Field{Name: "tags", Kind: List, Ask: true},
+		&Field{Name: "people", Kind: Objects, Ask: true, Fields: []*Field{{Name: "name", Kind: Text, Ask: true}}},
+		&Field{Name: "labels", Kind: List, Default: []any{"x"}, Ask: true},
+	)
+	in := `{"tasks": [{"id": "TASK-1", "title": "Shelf", "criteria": ["a"]}], "note": "", "tags": []}`
+	out, err := Check(s, json.RawMessage(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"project":"demo","tasks":[{"id":"TASK-1","needs":[],"title":"Shelf","description":"","criteria":["a"]}],` +
+		`"size":"small","budget":null,"urgent":false,"note":"","story":"","tone":"","tags":[],"people":[],"labels":["x"]}`
+	if string(out) != want {
+		t.Fatalf("got  %s\nwant %s", out, want)
+	}
+	// The checked input passes the check again unchanged.
+	again, err := Check(s, out)
+	if err != nil || string(again) != want {
+		t.Fatalf("checked again: %s %v", again, err)
+	}
+	// A required field stays required.
+	if _, err := Check(s, json.RawMessage(`{"tasks": [{"id": "TASK-1", "title": "", "criteria": ["a"]}]}`)); err == nil ||
+		!strings.Contains(err.Error(), "tasks[1].title must not be empty") {
+		t.Fatalf("empty required title: %v", err)
+	}
+}
+
+// Fill completes a stored input that lacks optional fields, also inside
+// the objects of a list, and leaves a missing required field missing.
+func TestFillCompletesAStoredInput(t *testing.T) {
+	var v any
+	json.Unmarshal([]byte(`{"tasks": [{"id": "TASK-1", "title": "Shelf", "criteria": ["a"]}, {"id": "TASK-2", "needs": ["TASK-1"]}]}`), &v)
+	if !Fill(spec().Fields, v) {
+		t.Fatal("nothing added")
+	}
+	got, _ := json.Marshal(v)
+	want := `{"budget":null,"project":"demo","size":"small","tasks":[{"criteria":["a"],"description":"","id":"TASK-1","needs":[],"title":"Shelf"},` +
+		`{"description":"","id":"TASK-2","needs":["TASK-1"]}],"urgent":false}`
+	if string(got) != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+	if Fill(spec().Fields, v) {
+		t.Fatal("a complete input was filled again")
+	}
+}

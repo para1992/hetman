@@ -209,6 +209,9 @@ func (e *Engine) syncInput() (string, error) {
 		if len(events) > 0 && len(events[0].Input) > 0 {
 			raw = events[0].Input
 		}
+		// A declared field the recorded input lacks is written with its
+		// empty value, as a prompt sees it.
+		raw = e.filledInput(raw)
 		if len(events) > 0 {
 			e.lang = events[0].Language
 		}

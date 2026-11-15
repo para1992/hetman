@@ -253,7 +253,9 @@ project (fixed): demo
 Tasks:
   Tasks 1
     Task id: TASK-1
+    Ids of the tasks that must be done first: none
     Title: Storage layer
+    Description: none
     Acceptance criteria:
       - records survive a restart
 What now?
@@ -274,8 +276,14 @@ for a fixed value. The answers are written to a new file under `.hetman/inputs`,
 over an old one; `-save-only` writes it, prints its path and starts nothing. When the
 section is there, `hetman run -input`, `hetman task add` and the page check every input
 against it and refuse one that does not fit, naming the field
-(`tasks[2].criteria is required`); an absent field gets its default. Without the
-section nothing changes. The `input-*` operations of `hetman scribe` declare it
+(`tasks[2].criteria is required`). Every declared field is in the input the
+campaign gets, so a prompt may name any of them: a field left out or left empty that
+is not required gets its default, or else its empty value (`""` for a text or a
+choice, `[]` for a list or a list of objects, `false` for yes/no, `null` for a number,
+which a prompt shows as nothing); the same holds for the fields of each object of a
+list. A stored input that lacks such a field reads the same way when its campaign
+resumes or is retried, and a for-each child whose segment has no `input` section takes its item's
+fields from the list of objects it was given. Without the section nothing changes. The `input-*` operations of `hetman scribe` declare it
 without editing the file.
 
 ## Concepts

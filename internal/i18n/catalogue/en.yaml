@@ -232,6 +232,8 @@ engine.segment_retried: "{node} retries its campaign {child} at {at}"
 engine.limit_reached: "{node}: the transition on {outcome} was taken {n} time(s), its limit; taking {then} instead"
 engine.orders_reread: "{path} changed; the next steps use it as it is now"
 engine.orders_kept: "{path} changed but does not pass the check now, so the version read before stays in use: {error}"
+engine.input_undeclared: "{placeholder}: the run input has no field \"{field}\", and the input section of the orders does not declare it. Declare {field} in that section, so that it is always in the run input (empty when nobody fills it in), or take {placeholder} out of the prompt"
+engine.input_absent: "{placeholder}: the run input has no field \"{field}\", though the input section of the orders declares it as required. Start the campaign again with {field} filled in, or make {field} optional there"
 engine.unprotected: "the adapter of executor {executor} ({adapter}) does not protect hetman's own files and the orders from agent steps"
 
 # ---- the command line
