@@ -565,9 +565,9 @@ An adapter is the program between Hetman and one coding-agent client: it receive
 one step, runs the client on it, and reports what the client does and answers, in
 the protocol described under Writing an adapter. The `hetman` binary contains no
 adapter and never names a client; an orders file names the adapter program of each
-executor. This repository has two: `hetman-adapter-claude` for the Claude Code
-client, and `hetman-stub-adapter`, which runs no model (see Agent steps without a
-real client).
+executor. This repository has three: `hetman-adapter-claude` for the Claude Code
+client, `hetman-adapter-opencode` for the OpenCode client, and
+`hetman-stub-adapter`, which runs no model (see Agent steps without a real client).
 
 ### Claude Code
 
@@ -648,6 +648,97 @@ log and starts a new conversation with the prompt.
 into a file, a gate that checks the file, and a review step that may send the draft
 back once. Its comments say how to run it; a run makes two to four small requests
 with the `haiku` model.
+
+### OpenCode
+
+`hetman-adapter-opencode` runs a step through the `opencode` command-line client in
+non-interactive mode (`opencode run`). Download
+`hetman-adapter-opencode-VERSION-OS-ARCH` for your system from the Releases page (it
+is in the same checksum file), or build it:
+
+```sh
+go build -o hetman-adapter-opencode ./cmd/hetman-adapter-opencode
+```
+
+It needs `opencode` on the path with a provider it can use: one of its free models, or
+a provider you logged in to with `opencode providers login` (`opencode models` lists
+what it can use). Name it under `executors`:
+
+```yaml
+executors:
+  opencode: {run: [./bin/hetman-adapter-opencode]}   # options: --client PATH, --env NAME
+
+nodes:
+  implement:
+    type: agent
+    executor: opencode
+    model: opencode/big-pickle
+    effort: high
+    tools: [read, edit, glob, grep, "bash(go test *)"]
+    ...
+```
+
+For each attempt it runs the client in the orders folder, with the prompt on
+standard input:
+
+```
+opencode run --format json --pure --print-logs --log-level INFO --agent hetman-XXXXXXXX
+  --model PROVIDER/MODEL --variant EFFORT (--session SESSION | --title TITLE)
+```
+
+and gives it, in `OPENCODE_CONFIG_CONTENT`, an agent made for this run only whose
+permissions deny everything and then allow the node's tools.
+
+- `model` is a model in the client's `provider/model` notation, as `opencode models`
+  lists it; empty means the client's default. An unknown model, or a provider the
+  client has no login for, fails the step at once.
+- `effort` is passed as the model variant, the client's only reasoning setting.
+  Variant names differ per model (`opencode models PROVIDER --verbose` lists them).
+  The adapter looks the model up in the client's catalogue first and rejects a value
+  the model does not offer, and any value for a model without variants. Without a
+  model the value is passed unchecked.
+- `tools` lists client permission names (`read`, `edit`, which also covers writing
+  and patching files, `glob`, `grep`, `list`, `bash`, `webfetch`, `websearch`,
+  `todowrite`, `lsp`, `skill`, or a tool server's tool name) and rules such as
+  `bash(git status)` or `read(*.md)`, which allow a tool only for what matches the
+  pattern. Every other tool is denied and not offered to the model, and the client
+  never asks anybody in this mode. No tools means none. The adapter never uses an
+  option that skips permission checks (`--auto`), and its file tools stay inside the
+  orders folder. `task` is refused, because the subagents it starts run with the
+  client's default permissions. External plugins are not loaded (`--pure`). The
+  restriction has limits: tool servers (MCP) from your or the project's configuration
+  are still started, although their tools are denied unless named, and an
+  organisation's remote or managed configuration is applied after the adapter's and
+  can loosen it.
+- The answer: the client has no structured output in this mode, so the adapter appends
+  the node's schema to the prompt and asks for one JSON object at the end of the
+  answer. The last JSON object in the answer is taken and checked by Hetman; no object
+  at all is a transient error.
+- Errors: a provider's usage or plan limit is `limit`, with the reset time when the
+  provider gives one; the adapter stops the client as soon as its log reports a limit
+  instead of letting it retry. A failed connection is `offline`; an unknown model or
+  provider, missing credentials and bad arguments are `permanent`; anything else is
+  `transient`.
+- The log shows what the client does: its text, each tool call and what it was
+  called on, the first line of each tool result or error, and the model steps and
+  tokens at the end.
+- The client gets only the environment it needs: the system's basic variables, its
+  configuration and data folders (`XDG_*`), where it finds its stored logins, and
+  proxy and certificate settings. Provider API keys in the environment are not
+  passed. `--env NAME` adds one more.
+
+**Session resume.** The adapter declares `resume` and reports the client's session
+id as soon as the client creates the session. When Hetman gives it a session id, the
+client continues that session with `--session` and receives the whole prompt of the
+new attempt as the next message. The client keeps sessions in its data folder on the
+computer that ran them, so a session can be continued only by the same user on the
+same computer. When the client cannot find the session, the adapter says so in the
+log and starts a new conversation with the prompt.
+
+`examples/opencode` is the same small flow as `examples/claude` with this adapter.
+Its comments say how to run it; a run makes two to four small requests and needs a
+provider with quota left. A step that hits the provider's limit makes the campaign
+wait until `hetman resume`.
 
 ## Writing an adapter
 

@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "outcome": {"type": "string", "enum": ["ok"]},
+    "file": {"type": "string"},
+    "summary": {"type": "string"}
+  },
+  "required": ["outcome", "file", "summary"],
+  "additionalProperties": false
+}

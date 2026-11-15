@@ -11,6 +11,8 @@
 #   hetman-VERSION-OS-ARCH[.exe]                  the engine, one binary per target
 #   hetman-adapter-claude-VERSION-OS-ARCH[.exe]   the adapter for the Claude Code
 #                                                 client, one binary per target
+#   hetman-adapter-opencode-VERSION-OS-ARCH[.exe] the adapter for the OpenCode
+#                                                 client, one binary per target
 #   hetman-VERSION-SHA256SUMS                     checksums of all of them in
 #                                                 sha256sum format
 set -euo pipefail
@@ -42,7 +44,7 @@ else
 fi
 
 mkdir -p "$out"
-rm -f "$out/hetman-$version-"* "$out/hetman-adapter-claude-$version-"*
+rm -f "$out/hetman-$version-"* "$out/hetman-adapter-claude-$version-"* "$out/hetman-adapter-opencode-$version-"*
 
 files=()
 for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
@@ -61,6 +63,11 @@ for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 wi
   name="hetman-adapter-claude-$version-$os-$arch$ext"
   GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w -buildid=" \
     -o "$out/$name" ./cmd/hetman-adapter-claude
+  files+=("$name")
+  echo "built $name"
+  name="hetman-adapter-opencode-$version-$os-$arch$ext"
+  GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w -buildid=" \
+    -o "$out/$name" ./cmd/hetman-adapter-opencode
   files+=("$name")
   echo "built $name"
 done

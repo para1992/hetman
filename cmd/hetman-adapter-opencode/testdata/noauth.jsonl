@@ -1,0 +1,1 @@
+{"type":"error","timestamp":1794700040000,"sessionID":"ses_00000000000000000000000014","error":{"name":"ProviderAuthError","data":{"providerID":"example","message":"No API key found for provider example. Log in with: opencode providers login"}}}
