@@ -48,11 +48,11 @@ func (e *Engine) compositeStep(ctx context.Context, node *orders.Node, attempt i
 		if err := e.record(ev); err != nil {
 			return err
 		}
-		e.say("%s attempt %d started", node.ID, attempt)
+		e.say("engine.started", "node", node.ID, "attempt", attempt)
 		if problem != "" {
 			// The list cannot be run; the step fails with the reason, so the
 			// flow can lead back to the step that wrote it.
-			e.say("%s failed: %s", node.ID, problem)
+			e.say("engine.composite_failed", "node", node.ID, "error", problem)
 			return e.record(chronicle.Event{Kind: chronicle.StepFinished, Node: node.ID, Attempt: attempt, Outcome: orders.Failed,
 				Details: chronicle.Details{Error: problem}})
 		}
@@ -91,7 +91,7 @@ func (e *Engine) runSegment(ctx context.Context, node *orders.Node, attempt int,
 	if child == 0 {
 		input, err := e.segmentInput(node, events)
 		if err != nil {
-			e.say("%s failed: %v", node.ID, err)
+			e.say("engine.composite_failed", "node", node.ID, "error", err)
 			return e.record(chronicle.Event{Kind: chronicle.StepFinished, Node: node.ID, Attempt: attempt, Outcome: orders.Failed,
 				Details: chronicle.Details{Error: err.Error()}})
 		}
@@ -106,7 +106,7 @@ func (e *Engine) runSegment(ctx context.Context, node *orders.Node, attempt int,
 	switch res {
 	case Done, Failed:
 		ms := time.Since(began).Milliseconds()
-		e.say("%s finished: %s (campaign %d, %s)", node.ID, res, child, time.Duration(ms)*time.Millisecond)
+		e.say("engine.segment_finished", "node", node.ID, "outcome", res, "child", child, "took", time.Duration(ms)*time.Millisecond)
 		return e.record(chronicle.Event{Kind: chronicle.StepFinished, Node: node.ID, Attempt: attempt, Outcome: res.String(),
 			Details: chronicle.Details{Child: child, Millis: ms}})
 	case Errored:
@@ -116,6 +116,12 @@ func (e *Engine) runSegment(ctx context.Context, node *orders.Node, attempt int,
 	}
 	return nil // halted; the halt takes effect in this campaign next
 }
+
+// Why a for-each item is not run, as the outcome of its item_not_run event.
+const (
+	NotRunFailed  = "failed"  // an item it needs failed
+	NotRunSkipped = "not_run" // an item it needs was not run
+)
 
 // childDone is how the drive of one child of a for-each ended.
 type childDone struct {
@@ -210,7 +216,7 @@ func (e *Engine) runForEach(ctx context.Context, node *orders.Node, attempt int,
 			stop = true
 		case r.res == Done || r.res == Failed:
 			outcome[r.item] = r.res.String()
-			e.say("%s: item %s %s (campaign %d)", node.ID, r.item, r.res, r.child)
+			e.say("engine.item_finished", "node", node.ID, "item", r.item, "outcome", r.res, "child", r.child)
 			if err := e.record(chronicle.Event{Kind: chronicle.ItemFinished, Node: node.ID, Attempt: attempt, Outcome: r.res.String(),
 				Details: chronicle.Details{Item: r.item, Child: r.child}}); err != nil && fatal == nil {
 				fatal, stop = err, true
@@ -259,7 +265,7 @@ func (e *Engine) runForEach(ctx context.Context, node *orders.Node, attempt int,
 		out = orders.Failed
 	}
 	ms := time.Since(start.At).Milliseconds()
-	e.say("%s finished: %s (%d of %d item(s) done, %s)", node.ID, out, len(list)-failed, len(list), time.Duration(ms)*time.Millisecond)
+	e.say("engine.foreach_finished", "node", node.ID, "outcome", out, "done", len(list)-failed, "n", len(list), "took", time.Duration(ms)*time.Millisecond)
 	return e.record(chronicle.Event{Kind: chronicle.StepFinished, Node: node.ID, Attempt: attempt, Outcome: out,
 		Details: chronicle.Details{Millis: ms}})
 }
@@ -274,19 +280,19 @@ func (e *Engine) markNotRun(node *orders.Node, attempt int, list []Item, outcome
 				continue
 			}
 			for _, n := range it.Needs {
-				why := ""
+				why, kind := "", ""
 				switch {
 				case outcome[n] == orders.Failed:
-					why = fmt.Sprintf("needs %s, which failed", n)
+					why, kind = fmt.Sprintf("needs %s, which failed", n), NotRunFailed
 				case notRun[n]:
-					why = fmt.Sprintf("needs %s, which did not run", n)
+					why, kind = fmt.Sprintf("needs %s, which did not run", n), NotRunSkipped
 				default:
 					continue
 				}
 				notRun[it.ID], changed = true, true
-				e.say("%s: item %s will not run: %s", node.ID, it.ID, why)
-				if err := e.record(chronicle.Event{Kind: chronicle.ItemNotRun, Node: node.ID, Attempt: attempt,
-					Details: chronicle.Details{Item: it.ID, Error: why}}); err != nil {
+				e.say("engine.item_not_run_"+kind, "node", node.ID, "item", it.ID, "needs", n)
+				if err := e.record(chronicle.Event{Kind: chronicle.ItemNotRun, Node: node.ID, Attempt: attempt, Outcome: kind,
+					Details: chronicle.Details{Item: it.ID, Needs: n, Error: why}}); err != nil {
 					return err
 				}
 				break
@@ -313,9 +319,9 @@ func (e *Engine) startChild(node *orders.Node, attempt int, item string, input j
 		return 0, err
 	}
 	if item != "" {
-		e.say("%s: item %s runs as campaign %d", node.ID, item, id)
+		e.say("engine.item_started", "node", node.ID, "item", item, "child", id)
 	} else {
-		e.say("%s runs the segment %s as campaign %d", node.ID, seg.Flow, id)
+		e.say("engine.segment_started", "node", node.ID, "flow", seg.Flow, "child", id)
 	}
 	return id, nil
 }
@@ -330,7 +336,7 @@ func (e *Engine) driveChild(ctx context.Context, node *orders.Node, child int64,
 		return 0, chronicle.State{}, fmt.Errorf("campaign %d: %w", child, err)
 	}
 	defer release()
-	ce := &Engine{Orders: node.Segment, Chron: e.Chron, Campaign: child, Out: e.Out, Clock: e.Clock, parent: e, node: node.ID, item: item}
+	ce := &Engine{Orders: node.Segment, Chron: e.Chron, Campaign: child, Out: e.Out, Clock: e.Clock, Text: e.Text, parent: e, node: node.ID, item: item}
 	events, err := e.Chron.Events(child)
 	if err != nil {
 		return 0, chronicle.State{}, err
@@ -355,7 +361,7 @@ func (e *Engine) driveChild(ctx context.Context, node *orders.Node, child int64,
 // stopQuiet stops the campaign in the error state because a child did; the
 // child's own error already ran the notification hook.
 func (e *Engine) stopQuiet(node, msg string) error {
-	e.say("error: %s", msg)
+	e.say("engine.error", "error", msg)
 	_, err := e.Chron.Append(chronicle.Event{Campaign: e.Campaign, Kind: chronicle.Stopped, Node: node, Details: chronicle.Details{Error: msg}})
 	return err
 }

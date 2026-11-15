@@ -125,6 +125,7 @@ type Details struct {
 	Holder     string          `json:"holder,omitempty"`      // lock_waiting: who holds it
 	Child      int64           `json:"child,omitempty"`       // child_started, item_finished, step_finished of a segment: the child campaign
 	Item       string          `json:"item,omitempty"`        // for-each events and a child's campaign_started: the item id
+	Needs      string          `json:"needs,omitempty"`       // item_not_run: the item it needed that did not reach done
 	Items      json.RawMessage `json:"items,omitempty"`       // step_started of a for-each: the list, as read when the step started
 	Parent     int64           `json:"parent,omitempty"`      // campaign_started of a child: the campaign that started it
 	ParentNode string          `json:"parent_node,omitempty"` // campaign_started of a child: the node of the parent that started it

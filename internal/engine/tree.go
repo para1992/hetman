@@ -85,13 +85,15 @@ func childAsks(ch *chronicle.Chronicle, st chronicle.State, depth int) ([]*chron
 // Child is one child of the latest attempt of a segment or for-each node,
 // or an item of a for-each that has no child campaign.
 type Child struct {
-	Item    string            // for-each: the item id
-	Needs   []string          // for-each: the items it needs
-	ID      int64             // the child campaign; 0 while the item has not started
-	Outcome string            // done or failed once the child reached its end
-	NotRun  string            // why the item will not run
-	Events  []chronicle.Event // the child's events
-	State   chronicle.State   // the child's state
+	Item    string   // for-each: the item id
+	Needs   []string // for-each: the items it needs
+	ID      int64    // the child campaign; 0 while the item has not started
+	Outcome string   // done or failed once the child reached its end
+	NotRun  string   // why the item will not run, in English
+	// The item a not-run item needed, and why that one counts: NotRunFailed or NotRunSkipped.
+	NotRunNeeds, NotRunKind string
+	Events                  []chronicle.Event // the child's events
+	State                   chronicle.State   // the child's state
 }
 
 // ChildrenOf lists the children of the latest attempt of a segment or
@@ -137,7 +139,8 @@ func ChildrenOf(ch *chronicle.Chronicle, events []chronicle.Event, node string) 
 		case chronicle.ItemFinished:
 			get(ev.Item).Outcome = ev.Outcome
 		case chronicle.ItemNotRun:
-			get(ev.Item).NotRun = ev.Error
+			c := get(ev.Item)
+			c.NotRun, c.NotRunNeeds, c.NotRunKind = ev.Error, ev.Needs, ev.Outcome
 		}
 	}
 	for i := range out {

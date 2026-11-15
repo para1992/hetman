@@ -21,6 +21,7 @@ import (
 
 	"hetman/internal/adapter"
 	"hetman/internal/chronicle"
+	"hetman/internal/i18n"
 	"hetman/internal/language"
 	"hetman/internal/orders"
 )
@@ -126,8 +127,9 @@ type Engine struct {
 	Orders   *orders.Orders
 	Chron    *chronicle.Chronicle
 	Campaign int64
-	Out      io.Writer // progress lines; nil for none
-	Clock    Clock     // nil for the system clock
+	Out      io.Writer     // progress lines; nil for none
+	Text     *i18n.Printer // the language of the progress lines; nil for English
+	Clock    Clock         // nil for the system clock
 
 	described map[string]adapter.Description // per executor, asked once per drive
 	waitSaid  time.Time                      // the wait last announced
@@ -261,7 +263,8 @@ func syncFile(path string, data []byte) (string, error) {
 	return path, os.WriteFile(path, data, 0o644)
 }
 
-func (e *Engine) say(format string, args ...any) {
+// say writes a progress line: the message of key with its parameters.
+func (e *Engine) say(key string, args ...any) {
 	if e.Out != nil {
 		// Child campaigns may run at the same time; their lines go through
 		// the lock of the campaign a person started.
@@ -269,10 +272,10 @@ func (e *Engine) say(format string, args ...any) {
 		mu.Lock()
 		defer mu.Unlock()
 		if e.parent != nil {
-			fmt.Fprintf(e.Out, "[%d %s] %s\n", e.Campaign, e.path(), fmt.Sprintf(format, args...))
+			fmt.Fprintf(e.Out, "[%d %s] %s\n", e.Campaign, e.path(), e.Text.T(key, args...))
 			return
 		}
-		fmt.Fprintf(e.Out, "[%d] %s\n", e.Campaign, fmt.Sprintf(format, args...))
+		fmt.Fprintf(e.Out, "[%d] %s\n", e.Campaign, e.Text.T(key, args...))
 	}
 }
 
@@ -291,7 +294,7 @@ func (e *Engine) record(ev chronicle.Event) error {
 }
 
 func (e *Engine) stop(node, msg string) error {
-	e.say("error: %s", msg)
+	e.say("engine.error", "error", msg)
 	return e.record(chronicle.Event{Kind: chronicle.Stopped, Node: node, Details: chronicle.Details{Error: msg}})
 }
 
@@ -319,10 +322,10 @@ func (e *Engine) Drive(ctx context.Context) (Result, error) {
 		}
 		switch {
 		case st.End == orders.Done:
-			e.say("campaign done")
+			e.say("engine.done")
 			return Done, nil
 		case st.End == orders.Failed:
-			e.say("campaign failed")
+			e.say("engine.failed")
 			return Failed, nil
 		case st.Error != "":
 			return Errored, nil
@@ -346,7 +349,7 @@ func (e *Engine) Drive(ctx context.Context) (Result, error) {
 					return 0, err
 				}
 			}
-			e.say("halted before %s", node.ID)
+			e.say("engine.halted", "node", node.ID)
 			return Halted, nil
 		}
 		if st.Ask != nil {
@@ -365,11 +368,11 @@ func (e *Engine) Drive(ctx context.Context) (Result, error) {
 		}
 		if st.Waiting != "" {
 			if st.WaitUntil.IsZero() {
-				what := "the subscription limit was reached"
+				key := "engine.wait_limit"
 				if st.Waiting == chronicle.WaitOffline {
-					what = "connectivity was lost"
+					key = "engine.wait_offline"
 				}
-				e.say("%s waits for a person: %s; hetman resume runs it again", node.ID, what)
+				e.say(key, "node", node.ID)
 				return Waiting, nil
 			}
 			if e.clock().Now().Before(st.WaitUntil) {
@@ -383,7 +386,7 @@ func (e *Engine) Drive(ctx context.Context) (Result, error) {
 		// keep their own state.
 		resumed := st.Running && node.Composite()
 		if st.Running && !resumed {
-			e.say("%s attempt %d was interrupted; running it again", node.ID, st.Attempt)
+			e.say("engine.interrupted", "node", node.ID, "attempt", st.Attempt)
 			if err := e.cleanup(events, node.ID, st.Attempt); err != nil {
 				return 0, err
 			}
@@ -458,11 +461,11 @@ func (e *Engine) cleanup(events []chronicle.Event, node string, attempt int) err
 		// process_started event was committed, so there is no process id to
 		// check. On Linux the kernel and on Windows the job object have
 		// killed the step with the engine; elsewhere its tree is unknown.
-		e.say("no process of %s attempt %d was recorded; nothing to check", node, attempt)
+		e.say("engine.no_process", "node", node, "attempt", attempt)
 		return e.record(chronicle.Event{Kind: chronicle.ProcessCleanup, Node: node, Attempt: attempt, Outcome: cleanupUnrecorded})
 	}
 	result := cleanupStale(last.Pid, last.Ident)
-	e.say("process %d of %s attempt %d: %s", last.Pid, node, attempt, result)
+	e.say("engine.cleanup", "pid", last.Pid, "node", node, "attempt", attempt, "result", result)
 	return e.record(chronicle.Event{Kind: chronicle.ProcessCleanup, Node: node, Check: last.Check, Attempt: attempt,
 		Outcome: result, Details: chronicle.Details{Pid: last.Pid, Ident: last.Ident}})
 }
@@ -472,7 +475,7 @@ func (e *Engine) transition(node *orders.Node, outcome string) error {
 	if !ok {
 		return e.stop(node.ID, fmt.Sprintf("node %q produced outcome %q, which has no transition", node.ID, outcome))
 	}
-	e.say("%s -> %s", node.ID, target)
+	e.say("engine.transition", "node", node.ID, "target", target)
 	return e.record(chronicle.Event{Kind: chronicle.Transition, Node: node.ID, Outcome: outcome, Details: chronicle.Details{To: target}})
 }
 
@@ -486,7 +489,7 @@ func (e *Engine) step(ctx context.Context, node *orders.Node, attempt int) error
 	if err := e.record(chronicle.Event{Kind: chronicle.StepStarted, Node: node.ID, Attempt: attempt}); err != nil {
 		return err
 	}
-	e.say("%s attempt %d started", node.ID, attempt)
+	e.say("engine.started", "node", node.ID, "attempt", attempt)
 	began := time.Now()
 	fin := chronicle.Event{Kind: chronicle.StepFinished, Node: node.ID, Attempt: attempt}
 	if len(node.Checks) > 0 || len(node.Ask) > 0 {
@@ -519,7 +522,7 @@ func (e *Engine) step(ctx context.Context, node *orders.Node, attempt int) error
 	if fin.Error != "" {
 		return e.stop(node.ID, fmt.Sprintf("%s attempt %d: %s", node.ID, attempt, fin.Error))
 	}
-	e.say("%s finished: %s (%s)", node.ID, fin.Outcome, time.Duration(fin.Millis)*time.Millisecond)
+	e.say("engine.finished", "node", node.ID, "outcome", fin.Outcome, "took", time.Duration(fin.Millis)*time.Millisecond)
 	return nil
 }
 
@@ -544,11 +547,11 @@ func (e *Engine) gate(ctx context.Context, node *orders.Node, attempt int) (outc
 		}
 		switch {
 		case r.outcome == orders.OK:
-			e.say("  check %s: ok", name)
+			e.say("engine.check_ok", "check", name)
 		case c.Soft:
-			e.say("  check %s: %s (soft, warning)", name, r.outcome)
+			e.say("engine.check_soft", "check", name, "outcome", r.outcome)
 		default:
-			e.say("  check %s: %s (required, gate blocked)", name, r.outcome)
+			e.say("engine.check_required", "check", name, "outcome", r.outcome)
 			return orders.Blocked, "", nil
 		}
 	}
@@ -596,7 +599,7 @@ func (e *Engine) exec(ctx context.Context, nodeID, check string, argv []string, 
 		ev := chronicle.Event{Kind: chronicle.ProcessStarted, Node: nodeID, Check: check, Attempt: attempt,
 			Details: chronicle.Details{Pid: pid, Ident: ident}}
 		if err := e.record(ev); err != nil {
-			e.say("cannot record process %d of %s: %v", pid, nodeID, err)
+			e.say("engine.cannot_record_process", "pid", pid, "node", nodeID, "error", err)
 			fmt.Fprintln(log, "hetman: cannot record the process:", err)
 		}
 	}

@@ -43,47 +43,105 @@
 
   // ---- formatting --------------------------------------------------------
 
-  const STATUS_TEXT = {
-    passed: 'passed', running: 'running', waiting: 'waiting', failed: 'failed',
-    warning: 'soft check failed', notrun: 'not run', interrupted: 'interrupted',
-    limit: 'subscription limit reached', offline: 'connectivity lost', asking: 'waiting for a person',
-  };
+  // ---- texts ------------------------------------------------------------
+
+  // The texts come from the server's catalogue of the chosen language,
+  // with English for anything not translated.
+  const I = { lang: 'en', def: 'en', languages: [], texts: {} };
+  const LANG_KEY = 'hetman.lang';
+
+  // pick chooses the message of key, by plural form for a message that
+  // depends on the number n.
+  function pick(key, params) {
+    const m = I.texts[key];
+    if (m === undefined) return null;
+    if (typeof m === 'string') return m;
+    const n = params && params.n !== undefined ? Number(params.n) : 0;
+    let cat = 'other';
+    try { cat = new Intl.PluralRules(m.lang).select(n); } catch (e) { /* other */ }
+    if (m.forms[cat] !== undefined) return m.forms[cat];
+    if (m.forms.other !== undefined) return m.forms.other;
+    return Object.values(m.forms)[0] || '';
+  }
+
+  // t renders a message as text.
+  function t(key, params) {
+    const m = pick(key, params);
+    if (m === null) return key;
+    return m.replace(/\{([a-z][a-z0-9_]*)\}/g, (all, k) => params && params[k] !== undefined ? String(params[k]) : all);
+  }
+
+  // tt is t for code where t names a tile.
+  const tt = t;
+
+  // tn renders a message as parts for h(), so that a parameter can be an
+  // element such as a node name in bold.
+  function tn(key, params) {
+    const m = pick(key, params);
+    if (m === null) return [key];
+    return m.split(/(\{[a-z][a-z0-9_]*\})/).filter((x) => x !== '').map((x) => {
+      const k = /^\{([a-z][a-z0-9_]*)\}$/.exec(x);
+      return k && params && params[k[1]] !== undefined ? params[k[1]] : x;
+    });
+  }
+
+  // tk renders the text of a value, such as a status, or the value itself
+  // when there is none.
+  function tk(prefix, value) {
+    return I.texts[prefix + value] !== undefined ? t(prefix + value) : value;
+  }
+
+  function statusText(s) { return tk('page.status.', s); }
+  function stateText(s) { return I.texts['page.badge.' + s] !== undefined ? t('page.badge.' + s) : tk('page.state.', s); }
+
   const STATE_MARK = {
     running: 'running', halted: 'halted', done: 'passed', failed: 'failed',
     error: 'error', interrupted: 'interrupted', waiting: 'waiting', limit: 'limit', offline: 'offline', asking: 'asking',
   };
-  const STATE_TEXT = {
-    waiting: 'waiting for limit', limit: 'limit reached', offline: 'offline', asking: 'waiting for a person',
-  };
-  const REASON_TEXT = { gate: 'The gate asks', human: 'A person decides here', dialogue: 'The agent step asks' };
-  const FAILURE_TEXT = {
-    invalid_output: 'the output did not match the schema',
-    transient: 'the adapter reported a transient error',
-    permanent: 'the adapter reported a permanent error; no retry',
-    crash: 'the adapter ended without a proper result',
-    protocol: 'the adapter broke the protocol',
-    timeout: 'the attempt ran past its timeout',
-    idle_timeout: 'the adapter sent nothing for longer than the idle timeout',
-    limit: 'the subscription limit was reached; the attempt does not count',
-    offline: 'connectivity was lost; the attempt does not count',
-  };
-  const CLEANUP_TEXT = {
-    gone: 'nothing of the old process tree was alive',
-    killed: 'the old process tree was still alive and was killed',
-    reused: 'the process id now belongs to an unrelated process, which was left alone',
-    unverified: 'the start time of the old process could not be read, so it was left alone',
-    unrecorded: 'the attempt’s process was never recorded; there was nothing to check',
-  };
+
+  function savedLang() {
+    try { return localStorage.getItem(LANG_KEY) || ''; } catch (e) { return ''; }
+  }
+
+  async function loadTexts(lang) {
+    const res = await fetch('/api/texts' + (lang ? '?lang=' + encodeURIComponent(lang) : ''));
+    const d = await res.json();
+    I.lang = d.lang;
+    I.def = d.default;
+    I.languages = d.languages || [];
+    I.texts = d.texts || {};
+    document.documentElement.lang = I.lang;
+    document.getElementById('brand').textContent = t('page.brand');
+    const live = document.getElementById('live');
+    live.querySelector('.live-text').textContent = t('page.live.' + (live.dataset.state === 'lost' ? 'lost' : live.dataset.state));
+    langSwitch();
+  }
+
+  // The language switcher: every language of the list; one without a
+  // catalogue shows English texts. The choice is kept in this browser.
+  function langSwitch() {
+    const sel = document.getElementById('lang');
+    sel.setAttribute('aria-label', t('page.lang.label'));
+    sel.title = t('page.lang.label');
+    sel.replaceChildren(...I.languages.map((l) => h('option', { value: l.code, selected: l.code === I.lang },
+      l.native + (l.translated ? '' : ' · ' + t('page.lang.english_only')))));
+    sel.onchange = async () => {
+      try { localStorage.setItem(LANG_KEY, sel.value); } catch (e) { /* not kept */ }
+      await loadTexts(sel.value);
+      S.route = { view: '' };
+      onRoute();
+    };
+  }
 
   function ms(t) { return t ? Date.parse(t) : NaN; }
 
   function fmtDur(d) {
     if (!isFinite(d) || d < 0) return '';
-    if (d < 1000) return (d / 1000).toFixed(2) + 's';
-    if (d < 60000) return (d / 1000).toFixed(1) + 's';
+    if (d < 1000) return t('page.dur.sec', { v: (d / 1000).toFixed(2) });
+    if (d < 60000) return t('page.dur.sec', { v: (d / 1000).toFixed(1) });
     const s = Math.floor(d / 1000);
-    if (s < 3600) return Math.floor(s / 60) + 'm ' + String(s % 60).padStart(2, '0') + 's';
-    return Math.floor(s / 3600) + 'h ' + String(Math.floor(s / 60) % 60).padStart(2, '0') + 'm';
+    if (s < 3600) return t('page.dur.min', { m: Math.floor(s / 60), s: String(s % 60).padStart(2, '0') });
+    return t('page.dur.hour', { h: Math.floor(s / 3600), m: String(Math.floor(s / 60) % 60).padStart(2, '0') });
   }
 
   function pad(n, w) { return String(n).padStart(w || 2, '0'); }
@@ -111,7 +169,7 @@
 
   function mark(status, size) {
     const cls = 'mark ' + (size || '') + ' st-' + status;
-    const label = STATUS_TEXT[status] || status;
+    const label = statusText(status);
     const el = sv('svg', { class: cls, viewBox: '0 0 16 16', role: 'img', 'aria-label': label });
     el.append(sv('title', { text: label }));
     const ink = { fill: 'none', stroke: 'currentColor', 'stroke-width': 1.7, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' };
@@ -169,7 +227,7 @@
   }
 
   function stateBadge(state) {
-    return h('span', { class: 'badge st-' + state }, mark(STATE_MARK[state] || state), h('span', { class: 'txt', text: STATE_TEXT[state] || state }));
+    return h('span', { class: 'badge st-' + state }, mark(STATE_MARK[state] || state), h('span', { class: 'txt', text: stateText(state) }));
   }
 
   // ---- state and routing -------------------------------------------------
@@ -212,7 +270,7 @@
       S.open.clear();
       S.closed.clear();
       closeLogs();
-      app.replaceChildren(h('p', { class: 'empty', text: 'Loading…' }));
+      app.replaceChildren(h('p', { class: 'empty', text: t('page.loading') }));
       connect();
     } else {
       if (prev.node !== S.route.node) closeLogs();
@@ -220,24 +278,24 @@
     }
   }
 
-  function setLive(state, text) {
+  function setLive(state, key) {
     const el = document.getElementById('live');
     el.dataset.state = state;
-    el.querySelector('.live-text').textContent = text;
+    el.querySelector('.live-text').textContent = t('page.live.' + key);
   }
 
   function connect() {
     if (S.stream) S.stream.close();
-    const url = S.route.view === 'campaign' ? '/api/stream?campaign=' + S.route.id : '/api/stream';
+    const url = (S.route.view === 'campaign' ? '/api/stream?campaign=' + S.route.id + '&' : '/api/stream?') + 'lang=' + encodeURIComponent(I.lang);
     const es = new EventSource(url);
     S.stream = es;
     setLive('connecting', 'connecting');
     es.onopen = () => setLive('live', 'live');
     es.onerror = () => {
       if (es.readyState === EventSource.CLOSED) {
-        setLive('lost', 'not connected');
+        setLive('lost', 'lost');
         if (S.route.view === 'campaign' && !S.campaign) {
-          app.replaceChildren(h('p', { class: 'empty' }, 'Campaign ' + S.route.id + ' was not found. ', h('a', { href: '#/', text: 'All campaigns' })));
+          app.replaceChildren(h('p', { class: 'empty' }, t('page.not_found', { id: S.route.id }), ' ', h('a', { href: '#/', text: t('page.all_campaigns') })));
         }
       } else {
         setLive('connecting', 'reconnecting');
@@ -311,11 +369,11 @@
   }
 
   function renderList() {
-    document.title = 'Watchtower';
+    document.title = t('page.brand');
     if (!S.list) return;
     if (S.list.length === 0) {
-      app.replaceChildren(h('h1', { text: 'Campaigns' }),
-        h('p', { class: 'empty' }, 'No campaigns yet. Start one with ', h('code', { text: 'hetman run' }), '.'));
+      app.replaceChildren(h('h1', { text: t('page.list.title') }),
+        h('p', { class: 'empty' }, tn('page.list.empty', { command: h('code', { text: 'hetman run' }) }))); // i18n: keep (a command)
       return;
     }
     const rows = S.list.map((k) => {
@@ -323,20 +381,20 @@
       return h('tr', { onclick: go },
         h('td', { class: 'id' }, h('a', { href: href(k.id), 'data-fkey': 'row-' + k.id, onclick: (e) => e.stopPropagation(), text: '#' + k.id })),
         h('td', { class: 'flow', text: k.flow }),
-        h('td', { class: 'state' }, stateBadge(k.state), k.haltRequested ? [' ', h('span', { class: 'tag', text: 'halt requested' })] : null),
+        h('td', { class: 'state' }, stateBadge(k.state), k.haltRequested ? [' ', h('span', { class: 'tag', text: t('page.halt_requested') })] : null),
         h('td', { class: 'num started', text: fmtTime(k.started) }),
         h('td', { class: 'num dur' }, liveDur(k.started, k.ended)),
         h('td', { class: 'marks' }, miniPipe(k)));
     });
-    app.replaceChildren(h('h1', { text: 'Campaigns' }),
+    app.replaceChildren(h('h1', { text: t('page.list.title') }),
       h('table', { class: 'list' },
-        h('thead', null, h('tr', null, ['Campaign', 'Flow', 'State', 'Started', 'Duration', 'Steps'].map((t) => h('th', { text: t })))),
+        h('thead', null, h('tr', null, ['campaign', 'flow', 'state', 'started', 'duration', 'steps'].map((c) => h('th', { text: t('page.list.col.' + c) })))),
         h('tbody', null, rows)));
   }
 
   function miniPipe(k) {
-    return h('span', { class: 'minipipe', 'aria-label': 'steps' }, (k.marks || []).map((m) =>
-      h('span', { class: 'mp' + (m.current ? ' current' : '') + (m.side ? ' side' : ''), title: m.node + ': ' + (STATUS_TEXT[m.status] || m.status) + (m.attempts > 1 ? ' ×' + m.attempts : '') },
+    return h('span', { class: 'minipipe', 'aria-label': t('page.list.steps_label') }, (k.marks || []).map((m) =>
+      h('span', { class: 'mp' + (m.current ? ' current' : '') + (m.side ? ' side' : ''), title: m.node + ': ' + statusText(m.status) + (m.attempts > 1 ? ' ×' + m.attempts : '') },
         mark(m.status, 'small'))));
   }
 
@@ -344,59 +402,61 @@
     if (c.end) return null;
     const list = c.nodes[c.node] || [];
     const last = list[list.length - 1];
+    const node = h('b', { text: c.node });
     if (c.state === 'running' && last && last.status === 'running') {
-      return ['running ', h('b', { text: c.node }), ' (attempt ' + last.n + ')'];
+      return tn('page.pos.running', { node: node, attempt: last.n });
     }
-    if (c.state === 'halted') return ['halted before ', h('b', { text: c.node })];
-    if (c.state === 'asking') return ['waits at ', h('b', { text: c.node }), ' for a person to answer'];
+    if (c.state === 'halted') return tn('page.pos.halted', { node: node });
+    if (c.state === 'asking') return tn('page.pos.asking', { node: node });
     if (c.state === 'waiting') {
-      return ['waiting at ', h('b', { text: c.node }), ' for the subscription limit; runs again at ' + fmtTime(c.waitUntil) + ' (in ',
-        h('span', { 'data-until': c.waitUntil, text: fmtDur(ms(c.waitUntil) - Date.now()) }), ')'];
+      return tn('page.pos.waiting', { node: node, at: fmtTime(c.waitUntil),
+        left: h('span', { 'data-until': c.waitUntil, text: fmtDur(ms(c.waitUntil) - Date.now()) }) });
     }
-    if (c.state === 'limit') return ['stopped at ', h('b', { text: c.node }), ': subscription limit reached'];
-    if (c.state === 'offline') return ['stopped at ', h('b', { text: c.node }), ': connectivity lost'];
-    if (c.state === 'interrupted') return ['stopped at ', h('b', { text: c.node }), ', no process drives it'];
-    if (c.lockWait) return ['waits at ', h('b', { text: c.node }), ' for the lock ', h('code', { text: c.lockWait }), ', held by ' + c.lockHolder];
-    return ['at ', h('b', { text: c.node })];
+    if (c.state === 'limit') return tn('page.pos.limit', { node: node });
+    if (c.state === 'offline') return tn('page.pos.offline', { node: node });
+    if (c.state === 'interrupted') return tn('page.pos.interrupted', { node: node });
+    if (c.lockWait) return tn('page.pos.lock', { node: node, lock: h('code', { text: c.lockWait }), holder: c.lockHolder });
+    return tn('page.pos.at', { node: node });
   }
 
   function renderCampaign() {
     const c = S.campaign;
     const r = S.route;
-    document.title = '#' + c.id + ' ' + c.flow + ' · ' + c.state + ' · Watchtower';
+    document.title = '#' + c.id + ' ' + c.flow + ' · ' + tk('page.state.', c.state) + ' · ' + t('page.brand');
     // A child campaign is halted and resumed with the campaign a person started.
     const canHalt = !c.parent && (c.state === 'running' || c.state === 'interrupted' || c.state === 'asking') && !c.haltRequested;
     const canResume = !c.parent && (c.state === 'halted' || c.state === 'error' || c.state === 'interrupted' || c.state === 'limit' ||
       c.state === 'offline' || c.haltRequested || (c.state === 'asking' && !c.driven));
     const pos = position(c);
     const out = [
-      h('nav', { class: 'crumbs' }, h('a', { href: '#/', text: '← All campaigns' }),
-        c.parent ? [' · ', h('a', { href: href(c.parent), text: '↑ campaign #' + c.parent }),
-          ' runs this one at ', h('code', { text: c.path }),
-          c.top !== c.parent ? [' (part of ', h('a', { href: href(c.top), text: 'campaign #' + c.top }), ')'] : null] : null),
+      h('nav', { class: 'crumbs' }, h('a', { href: '#/', text: '← ' + t('page.all_campaigns') }),
+        c.parent ? [' · ', tn('page.child.runs_this', {
+          parent: h('a', { href: href(c.parent), text: t('page.child.parent', { id: c.parent }) }),
+          path: h('code', { text: c.path }) }),
+        c.top !== c.parent ? [' ', tn('page.child.part_of', { top: h('a', { href: href(c.top), text: t('page.child.campaign', { id: c.top }) }) })] : null] : null),
       h('div', { class: 'head' },
-        h('h1', null, 'Campaign #' + c.id + ' ', h('span', { class: 'flow', text: c.flow })),
+        h('h1', null, t('page.campaign.title', { id: c.id }) + ' ', h('span', { class: 'flow', text: c.flow })),
         stateBadge(c.state),
-        c.haltRequested ? h('span', { class: 'tag', text: 'halt requested: halts after the current step' }) : null,
+        c.haltRequested ? h('span', { class: 'tag', text: t('page.halt_requested_long') }) : null,
         h('div', { class: 'controls' },
-          h('button', { class: 'btn', 'data-fkey': 'halt', disabled: !canHalt, title: 'Halt after the current step', onclick: () => control('halt') },
+          h('button', { class: 'btn', 'data-fkey': 'halt', disabled: !canHalt, title: t('page.halt.title'), onclick: () => control('halt') },
             sv('svg', { viewBox: '0 0 16 16', 'aria-hidden': 'true' }, sv('rect', { x: 3.5, y: 3, width: 3.2, height: 10, rx: 0.8 }), sv('rect', { x: 9.3, y: 3, width: 3.2, height: 10, rx: 0.8 })),
-            'Halt'),
-          h('button', { class: 'btn primary', 'data-fkey': 'resume', disabled: !canResume, title: 'Continue from the recorded position', onclick: () => control('resume') },
+            t('page.halt')),
+          h('button', { class: 'btn primary', 'data-fkey': 'resume', disabled: !canResume, title: t('page.resume.title'), onclick: () => control('resume') },
             sv('svg', { viewBox: '0 0 16 16', 'aria-hidden': 'true' }, sv('path', { d: 'M4.5 2.8v10.4L13 8z' })),
-            'Resume'))),
+            t('page.resume')))),
       h('div', { class: 'facts' },
-        h('span', null, 'started ', h('b', { text: fmtTime(c.started) })),
-        h('span', null, 'duration ', h('b', null, liveDur(c.started, c.ended))),
-        c.language ? h('span', { title: 'Text for a person is written in this language' }, 'language ',
-          h('b', { text: c.language.english ? c.language.english + ' (' + c.language.native + ')' : c.language.code }),
-          c.language.english ? ' ' + c.language.code : '') : null,
+        h('span', null, tn('page.fact.started', { time: h('b', { text: fmtTime(c.started) }) })),
+        h('span', null, tn('page.fact.duration', { time: h('b', null, liveDur(c.started, c.ended)) })),
+        c.language ? h('span', { title: t('page.fact.language_title') }, tn('page.fact.language', {
+          language: h('b', { text: c.language.english ? c.language.english + ' (' + c.language.native + ')' : c.language.code }),
+          code: c.language.english ? ' ' + c.language.code : '' })) : null,
         pos ? h('span', null, pos) : null),
-      c.error ? h('div', { class: 'problem' }, h('b', { text: 'Stopped in the error state: ' }), c.error, '\nFix the cause, then resume.') : null,
+      c.error ? h('div', { class: 'problem' }, h('b', { text: t('page.error_state') + ' ' }), c.error, '\n' + t('page.error_fix')) : null,
       waitNote(c),
       c.ordersProblem ? h('div', { class: 'problem soft', text: c.ordersProblem }) : null,
-      h('nav', { class: 'tabs' }, ['pipeline', 'timeline', 'chronicle', 'words'].map((t) =>
-        h('a', { href: href(c.id, t), 'aria-current': r.tab === t ? 'page' : false, text: TAB_TEXT[t] }))),
+      h('nav', { class: 'tabs' }, ['pipeline', 'timeline', 'chronicle', 'words'].map((x) =>
+        h('a', { href: href(c.id, x), 'aria-current': r.tab === x ? 'page' : false, text: t('page.tab.' + x) }))),
     ];
     if (r.tab === 'timeline') out.push(timeline(c));
     else if (r.tab === 'words') out.push(words(c));
@@ -409,32 +469,35 @@
   // Explains a campaign that waits because of an agent step.
   function waitNote(c) {
     if (c.ask && !c.end && c.ask.campaign && c.ask.campaign !== c.id) {
-      return h('div', { class: 'problem ask' }, h('b', { text: 'Waiting for a person. ' }),
-        (REASON_TEXT[c.ask.reason] || 'The step asks') + ' at ', h('code', { text: c.ask.node }), ' in ', h('code', { text: c.ask.path }),
-        ' (campaign #' + c.ask.campaign + '). ', h('a', { href: href(c.ask.campaign, 'pipeline', c.ask.node), text: 'Answer on its step card' }),
-        ', or in a terminal with ', h('code', { text: c.ask.command }), '.');
+      // A child asks: the parent links to the card that answers it.
+      const where = tn('page.ask.child_node', { node: h('code', { text: c.ask.node }), path: h('code', { text: c.ask.path }), id: c.ask.campaign });
+      return h('div', { class: 'problem ask' }, h('b', { text: t('page.ask.waiting') + ' ' }),
+        tn('page.ask.reason.' + c.ask.reason, { node: where }), ' ',
+        tn('page.ask.answer_card', { link: h('a', { href: href(c.ask.campaign, 'pipeline', c.ask.node), text: t('page.ask.answer_card_link') }),
+          command: h('code', { text: c.ask.command }) }));
     }
     if (c.ask && !c.end) {
       const open = S.route.node === c.ask.node;
-      return h('div', { class: 'problem ask' }, h('b', { text: 'Waiting for a person. ' }),
-        (REASON_TEXT[c.ask.reason] || 'The step asks') + ' at ', h('code', { text: c.ask.node }), '. ',
-        open ? 'Answer below, or in a terminal with ' : h('a', { href: href(c.id, 'pipeline', c.ask.node), text: 'Answer on its step card' }),
-        open ? h('code', { text: c.ask.command }) : ', or in a terminal with ', open ? '.' : h('code', { text: c.ask.command }),
-        c.driven ? '' : ' No process drives the campaign now: an answer given here continues it from this server; after an answer in a terminal, resume it.');
+      const node = h('code', { text: c.ask.node });
+      const command = h('code', { text: c.ask.command });
+      return h('div', { class: 'problem ask' }, h('b', { text: t('page.ask.waiting') + ' ' }),
+        tn('page.ask.reason.' + c.ask.reason, { node: node }), ' ',
+        open ? tn('page.ask.answer_below', { command: command })
+          : tn('page.ask.answer_card', { link: h('a', { href: href(c.id, 'pipeline', c.ask.node), text: t('page.ask.answer_card_link') }), command: command }),
+        c.driven ? '' : ' ' + t('page.ask.undriven'));
     }
     if (!c.wait || c.end) return null;
+    const node = h('code', { text: c.node });
     if (c.state === 'limit') {
-      return h('div', { class: 'problem soft' }, h('b', { text: 'Subscription limit reached. ' }),
-        'The adapter gave no time to retry, so the campaign waits for a person. Resume runs ', h('code', { text: c.node }), ' again; the lost attempt does not count.');
+      return h('div', { class: 'problem soft' }, h('b', { text: t('page.wait.limit') + ' ' }), tn('page.wait.limit_text', { node: node }));
     }
     if (c.state === 'offline') {
-      return h('div', { class: 'problem soft' }, h('b', { text: 'Connectivity lost. ' }),
-        'The attempt of ', h('code', { text: c.node }), ' was lost and does not count. Resume runs the step again once the connection is back.');
+      return h('div', { class: 'problem soft' }, h('b', { text: t('page.wait.offline') + ' ' }), tn('page.wait.offline_text', { node: node }));
     }
     if (c.waitUntil) {
-      return h('div', { class: 'problem info' }, h('b', { text: 'Waiting for the subscription limit to reset. ' }),
-        h('code', { text: c.node }), ' runs again on its own at ' + fmtTime(c.waitUntil) + '.',
-        c.state === 'interrupted' ? ' No process drives the campaign now; resume it and it waits until then.' : '');
+      return h('div', { class: 'problem info' }, h('b', { text: t('page.wait.reset') + ' ' }),
+        tn('page.wait.reset_text', { node: node, at: fmtTime(c.waitUntil) }),
+        c.state === 'interrupted' ? ' ' + t('page.wait.undriven') : '');
     }
     return null;
   }
@@ -447,16 +510,9 @@
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || res.statusText);
-      const text = {
-        already: 'A halt is already in force.',
-        pending: 'The campaign halts after its current step.',
-        halted: 'Halted.',
-        driving: 'Resumed. This server now drives the campaign.',
-        elsewhere: 'Resumed. The process that drives it continues.',
-      }[body.result] || body.result;
-      toast(text);
+      toast(tk('page.toast.' + action + '.', body.result));
     } catch (e) {
-      toast(action + ' failed: ' + e.message, true);
+      toast(t('page.toast.' + action + '_failed', { error: e.message }), true);
     }
   }
 
@@ -478,7 +534,7 @@
 
   function pipeline(c) {
     const track = h('div', { class: 'track' });
-    track.append(h('div', { class: 'cap start', text: 'start' }), link(true, ''));
+    track.append(h('div', { class: 'cap start', text: t('page.pipeline.start') }), link(true, ''));
     c.columns.forEach((col, i) => {
       if (i > 0) {
         const prev = c.columns[i - 1];
@@ -494,7 +550,7 @@
     }
     const end = c.end || 'done';
     track.append(h('div', { class: 'cap st-' + end + (c.end ? ' lit' : '') }, c.end ? mark(end === 'done' ? 'done' : 'failed') : null, end));
-    return h('div', { class: 'lane', 'data-scroll': 'lane', role: 'region', 'aria-label': 'pipeline', tabindex: 0 }, track);
+    return h('div', { class: 'lane', 'data-scroll': 'lane', role: 'region', 'aria-label': t('page.tab.pipeline'), tabindex: 0 }, track);
   }
 
   function link(on, label) {
@@ -509,18 +565,18 @@
     const last = lastAttempt(c, col.node);
     const head = h('div', { class: 'col-head' },
       h('span', { class: 'name', title: col.node, text: col.node }),
-      h('span', { class: 'tag', text: col.known ? col.type : 'not in orders' }));
+      h('span', { class: 'tag', text: col.known ? col.type : t('page.not_in_orders') }));
     const tiles = h('div', { class: 'tiles' }, col.tiles.map((t, i) => tile(c, col, t, i, last)));
     const exits = (col.exits || []).filter((x) => !x.main).map((x) =>
-      h('div', { class: 'exit' + (x.taken ? ' taken' : ''), title: x.taken ? 'taken ' + x.taken + ' time(s)' : 'not taken' },
+      h('div', { class: 'exit' + (x.taken ? ' taken' : ''), title: x.taken ? t('page.exit.taken', { n: x.taken }) : t('page.exit.not_taken') },
         x.outcome, h('span', { class: 'arrow', text: '→' }), x.to, x.taken ? ' ×' + x.taken : ''));
-    const el = h('section', { class: cls.join(' '), 'aria-label': col.node + ': ' + (STATUS_TEXT[col.status] || col.status) },
-      col.current && !side ? h('span', { class: 'here', text: 'now' }) : null,
-      col.current && side ? h('span', { class: 'tag', text: 'now' }) : null,
+    const el = h('section', { class: cls.join(' '), 'aria-label': col.node + ': ' + statusText(col.status) },
+      col.current && !side ? h('span', { class: 'here', text: t('page.now') }) : null,
+      col.current && side ? h('span', { class: 'tag', text: t('page.now') }) : null,
       head, tiles,
       exits.length ? h('div', { class: 'exits' }, exits) : null);
     if (col.side && col.side.length) {
-      el.append(h('div', { class: 'sidebox' }, h('div', { class: 'hint', text: 'off the main line' }), col.side.map((s) => column(c, s, true))));
+      el.append(h('div', { class: 'sidebox' }, h('div', { class: 'hint', text: t('page.off_main_line') }), col.side.map((s) => column(c, s, true))));
     }
     return el;
   }
@@ -530,61 +586,62 @@
     const sub = [];
     if (t.item || t.child) {
       // A child campaign of a segment or for-each step; it opens the child.
-      label = t.item || 'campaign #' + t.child;
+      label = t.item || tt('page.child.campaign', { id: t.child });
       if (t.item && t.child) tag = h('span', { class: 'tag', text: '#' + t.child });
       if (t.outcome) sub.push(t.outcome);
       else if (t.node) sub.push(t.node);
-      if (t.note) sub.push(t.note);
-      else if (!t.child) sub.push(STATUS_TEXT[t.status] || t.status);
+      const note = t.note ? tt(t.note, t.args) : '';
+      if (note) sub.push(note);
+      else if (!t.child) sub.push(statusText(t.status));
       return h('button', {
         class: 'tile st-' + t.status, type: 'button', 'data-fkey': 'tile-' + col.node + '-' + i,
-        title: col.node + ' / ' + label + ': ' + (STATUS_TEXT[t.status] || t.status) + (t.note ? ' (' + t.note + ')' : ''),
+        title: col.node + ' / ' + label + ': ' + statusText(t.status) + (note ? ' (' + note + ')' : ''),
         onclick: () => { location.hash = t.child ? href(t.child) : href(c.id, 'pipeline', col.node); },
       },
       mark(t.status),
       h('span', { class: 'label', text: label }),
-      h('span', { class: 'right' }, t.attempts > 1 ? h('span', { class: 'count', title: t.attempts + ' attempts', text: '×' + t.attempts }) : null),
+      h('span', { class: 'right' }, t.attempts > 1 ? h('span', { class: 'count', title: tt('page.attempts', { n: t.attempts }), text: '×' + t.attempts }) : null),
       h('span', { class: 'sub' }, tag, sub.map((x) => h('span', { class: 'part' }, x))));
     }
     if (t.check) {
       label = t.check;
       const run = last && col.status !== 'waiting' && last.checks && last.checks.find((r) => r.check === t.check);
-      if (t.soft) tag = h('span', { class: 'tag', text: 'soft' });
+      if (t.soft) tag = h('span', { class: 'tag', text: tt('page.check.soft') });
       if (run && run.outcome && run.outcome !== 'ok') sub.push(run.outcome);
-      else sub.push(STATUS_TEXT[t.status] || t.status);
+      else sub.push(statusText(t.status));
       if (run && run.finished) sub.push(fmtDur(run.ms));
       else if (run && run.started && t.status === 'running') sub.push(liveDur(run.started));
     } else {
-      label = STATUS_TEXT[t.status] || t.status;
+      label = statusText(t.status);
       if (last && col.status !== 'waiting') {
         if (t.outcome && t.outcome !== 'ok' && t.outcome !== 'pass') sub.push(t.outcome);
         if (last.finished) sub.push(fmtDur(ms(last.finished) - ms(last.started)));
         else if (t.status === 'running') sub.push(liveDur(last.started));
       } else if (col.status === 'asking') {
-        sub.push('needs an answer');
+        sub.push(tt('page.tile.needs_answer'));
       } else if (col.status === 'waiting') {
-        if (col.current && c.lockWait) sub.push('waits for lock ' + c.lockWait + ' (held by ' + c.lockHolder + ')');
-        else if (col.current && c.wait === 'limit' && c.waitUntil) sub.push('limit, again at ' + fmtTime(c.waitUntil));
-        else if (col.current && c.wait) sub.push(c.wait === 'limit' ? 'limit reached' : 'offline');
-        else sub.push(c.state === 'halted' ? 'halted here' : 'next');
+        if (col.current && c.lockWait) sub.push(tt('page.tile.lock', { lock: c.lockWait, holder: c.lockHolder }));
+        else if (col.current && c.wait === 'limit' && c.waitUntil) sub.push(tt('page.tile.limit_again', { at: fmtTime(c.waitUntil) }));
+        else if (col.current && c.wait) sub.push(tt(c.wait === 'limit' ? 'page.tile.limit' : 'page.tile.offline'));
+        else sub.push(tt(c.state === 'halted' ? 'page.tile.halted_here' : 'page.tile.next'));
       }
     }
     const attempts = t.check ? t.attempts : col.attempts;
     return h('button', {
       class: 'tile st-' + t.status, type: 'button', 'data-fkey': 'tile-' + col.node + '-' + i,
-      title: col.node + (t.check ? ' / ' + t.check : '') + ': ' + (STATUS_TEXT[t.status] || t.status),
+      title: col.node + (t.check ? ' / ' + t.check : '') + ': ' + statusText(t.status),
       onclick: () => { location.hash = href(c.id, 'pipeline', col.node); },
     },
     mark(t.status),
     h('span', { class: 'label', text: label }),
-    h('span', { class: 'right' }, attempts > 1 ? h('span', { class: 'count', title: attempts + ' attempts', text: '×' + attempts }) : null),
+    h('span', { class: 'right' }, attempts > 1 ? h('span', { class: 'count', title: tt('page.attempts', { n: attempts }), text: '×' + attempts }) : null),
     sub.length || tag ? h('span', { class: 'sub' }, tag, sub.map((x) => h('span', { class: 'part' }, x))) : null);
   }
 
   function legend() {
-    return h('div', { class: 'legend', 'aria-label': 'legend' },
+    return h('div', { class: 'legend', 'aria-label': t('page.legend') },
       ['passed', 'running', 'waiting', 'asking', 'failed', 'warning', 'notrun', 'interrupted'].map((s) =>
-        h('span', null, mark(s, 'small'), STATUS_TEXT[s])));
+        h('span', null, mark(s, 'small'), statusText(s))));
   }
 
   // ---- step card ---------------------------------------------------------
@@ -605,21 +662,21 @@
     const status = col ? col.status : attempts.length ? attempts[0].status : 'notrun';
     const body = h('div', { class: 'card-body', 'data-scroll': 'card' });
     if (col && col.exits && col.exits.length) {
-      body.append(h('h3', { text: 'Transitions' }), h('div', { class: 'routes' }, col.exits.map((x) =>
-        h('span', { class: 'tag' }, x.outcome + ' → ' + x.to + (x.taken ? ' (taken ×' + x.taken + ')' : '')))));
+      body.append(h('h3', { text: t('page.card.transitions') }), h('div', { class: 'routes' }, col.exits.map((x) =>
+        h('span', { class: 'tag' }, x.outcome + ' → ' + x.to + (x.taken ? ' ' + t('page.card.taken', { n: x.taken }) : '')))));
     }
-    body.append(h('h3', { text: attempts.length > 1 ? attempts.length + ' attempts, newest first' : 'Attempt' }));
-    if (!attempts.length) body.append(h('p', { class: 'empty', text: 'This step has not run in this campaign.' }));
+    body.append(h('h3', { text: attempts.length > 1 ? t('page.card.attempts', { n: attempts.length }) : t('page.card.attempt') }));
+    if (!attempts.length) body.append(h('p', { class: 'empty', text: t('page.card.not_run') }));
     attempts.forEach((a, i) => body.append(attemptView(c, node, a, i === 0)));
-    const panel = h('aside', { class: 'card', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'step ' + node, tabindex: -1, onkeydown: (e) => { if (e.key === 'Escape') closeCard(); } },
+    const panel = h('aside', { class: 'card', role: 'dialog', 'aria-modal': 'true', 'aria-label': t('page.card.label', { node: node }), tabindex: -1, onkeydown: (e) => { if (e.key === 'Escape') closeCard(); } },
       h('div', { class: 'card-head' },
         mark(status, 'large'),
         h('h2', { text: node }),
-        col && col.known ? h('span', { class: 'tag', text: col.type }) : h('span', { class: 'tag', text: 'not in orders' }),
-        col && col.executor ? h('span', { class: 'tag', title: 'executor', text: col.executor }) : null,
-        col && col.model ? h('span', { class: 'tag', title: 'model', text: col.model }) : null,
-        col && col.effort ? h('span', { class: 'tag', title: 'effort', text: 'effort ' + col.effort }) : null,
-        h('button', { class: 'close', type: 'button', 'aria-label': 'Close', 'data-fkey': 'card-close', onclick: closeCard, text: '×' })),
+        col && col.known ? h('span', { class: 'tag', text: col.type }) : h('span', { class: 'tag', text: t('page.not_in_orders') }),
+        col && col.executor ? h('span', { class: 'tag', title: t('page.card.executor'), text: col.executor }) : null,
+        col && col.model ? h('span', { class: 'tag', title: t('page.card.model'), text: col.model }) : null,
+        col && col.effort ? h('span', { class: 'tag', title: t('page.card.effort'), text: t('page.card.effort_value', { effort: col.effort }) }) : null,
+        h('button', { class: 'close', type: 'button', 'aria-label': t('page.card.close'), 'data-fkey': 'card-close', onclick: closeCard, text: '×' })),
       body);
     setTimeout(() => { if (!panel.contains(document.activeElement)) panel.focus({ preventScroll: true }); }, 0);
     return [h('div', { class: 'scrim', onclick: closeCard }), panel];
@@ -628,67 +685,68 @@
   function attemptView(c, node, a, newest) {
     const key = node + '#' + a.n;
     const facts = h('dl', { class: 'kv' },
-      kv('Status', [mark(a.status, 'small'), ' ', STATUS_TEXT[a.status] || a.status]),
-      a.outcome ? kv('Outcome', h('code', { text: a.outcome })) : null,
-      kv('Started', fmtTime(a.started, true)),
-      a.finished ? kv('Finished', fmtTime(a.finished, true)) : null,
-      kv('Duration', a.finished ? fmtDur(a.ms || ms(a.finished) - ms(a.started)) : a.status === 'running' ? liveDur(a.started) : '—'),
-      a.exit !== undefined ? kv('Exit code', String(a.exit)) : null,
-      a.executor ? kv('Executor', h('code', { text: a.executor })) : null,
-      a.model ? kv('Model', h('code', { text: a.model })) : null,
-      a.effort ? kv('Effort', h('code', { text: a.effort })) : null,
-      a.sessionIn ? kv('Continued', ['session ', h('code', { text: a.sessionIn })]) : null,
-      a.session ? kv('Session', h('code', { text: a.session })) : null,
-      a.failure ? kv('Why it failed', [h('code', { text: a.failure }), ' — ', FAILURE_TEXT[a.failure] || '']) : null,
-      a.retryAt ? kv('Retry at', fmtTime(a.retryAt, true)) : null,
-      a.error ? kv(a.failure ? 'Details' : 'Error', h('span', { class: 'err', text: a.error })) : null,
-      a.transition ? kv('Went to', h('code', { text: a.transition })) : null);
+      kv(t('page.kv.status'), [mark(a.status, 'small'), ' ', statusText(a.status)]),
+      a.outcome ? kv(t('page.kv.outcome'), h('code', { text: a.outcome })) : null,
+      kv(t('page.kv.started'), fmtTime(a.started, true)),
+      a.finished ? kv(t('page.kv.finished'), fmtTime(a.finished, true)) : null,
+      kv(t('page.kv.duration'), a.finished ? fmtDur(a.ms || ms(a.finished) - ms(a.started)) : a.status === 'running' ? liveDur(a.started) : '—'),
+      a.exit !== undefined ? kv(t('page.kv.exit'), String(a.exit)) : null,
+      a.executor ? kv(t('page.kv.executor'), h('code', { text: a.executor })) : null,
+      a.model ? kv(t('page.kv.model'), h('code', { text: a.model })) : null,
+      a.effort ? kv(t('page.kv.effort'), h('code', { text: a.effort })) : null,
+      a.sessionIn ? kv(t('page.kv.continued'), tn('page.kv.continued_session', { session: h('code', { text: a.sessionIn }) })) : null,
+      a.session ? kv(t('page.kv.session'), h('code', { text: a.session })) : null,
+      a.failure ? kv(t('page.kv.why_failed'), [h('code', { text: a.failure }), ' — ', I.texts['page.failure.' + a.failure] !== undefined ? t('page.failure.' + a.failure) : '']) : null,
+      a.retryAt ? kv(t('page.kv.retry_at'), fmtTime(a.retryAt, true)) : null,
+      a.error ? kv(t(a.failure ? 'page.kv.details' : 'page.kv.error'), h('span', { class: 'err', text: a.error })) : null,
+      a.transition ? kv(t('page.kv.went_to'), h('code', { text: a.transition })) : null);
     const body = h('div', { class: 'attempt-body' }, facts);
     for (const cl of a.cleanup || []) {
       body.append(h('div', { class: 'cleanup' },
-        h('b', { text: 'Process cleanup ' }), '(' + fmtTime(cl.at, true) + '): ',
-        cl.pid ? 'process ' + cl.pid + (cl.check ? ' of check ' + cl.check : '') + (cl.ident ? ', started ' + cl.ident : '') + ': ' : '',
-        h('code', { text: cl.outcome }), ' — ', CLEANUP_TEXT[cl.outcome] || ''));
+        h('b', { text: t('page.cleanup.title') + ' ' }), '(' + fmtTime(cl.at, true) + '): ',
+        cl.pid ? t(cl.check ? 'page.cleanup.process_check' : 'page.cleanup.process', { pid: cl.pid, check: cl.check }) +
+          (cl.ident ? t('page.cleanup.started', { ident: cl.ident }) : '') + ': ' : '',
+        h('code', { text: cl.outcome }), ' — ', I.texts['page.cleanup.' + cl.outcome] !== undefined ? t('page.cleanup.' + cl.outcome) : ''));
     }
     if (a.checks && a.checks.length) {
-      body.append(h('h3', { text: 'Checks' }));
+      body.append(h('h3', { text: t('page.card.checks') }));
       const table = h('table', { class: 'checks' });
       for (const r of a.checks) {
         const ckey = key + '/' + r.check;
         table.append(h('tr', null,
           h('td', null, mark(r.status)),
-          h('td', null, h('b', { text: r.check }), ' ', r.soft ? h('span', { class: 'tag', text: 'soft' }) : h('span', { class: 'tag', text: 'required' }),
+          h('td', null, h('b', { text: r.check }), ' ', r.soft ? h('span', { class: 'tag', text: t('page.check.soft') }) : h('span', { class: 'tag', text: t('page.check.required') }),
             r.error ? h('div', { class: 'err', text: r.error }) : null,
             (r.log || r.result || (r.artifacts && r.artifacts.length)) ?
               details(ckey, r.status === 'running' || (newest && (r.status === 'failed' || r.status === 'warning')), { class: 'sub-details' },
-                h('summary', { text: 'log and files' }),
+                h('summary', { text: t('page.card.log_files') }),
                 h('div', null,
                   r.log ? logView(c.id, r.log, r.status === 'running') : null,
-                  r.result ? fileBlock(c.id, 'Result file', r.result) : null,
+                  r.result ? fileBlock(c.id, t('page.card.result_file'), r.result) : null,
                   artifacts(c.id, r.artifacts))) : null),
-          h('td', { class: 'n' }, STATUS_TEXT[r.status] || r.status, r.outcome && r.outcome !== 'ok' ? ' · ' + r.outcome : ''),
+          h('td', { class: 'n' }, statusText(r.status), r.outcome && r.outcome !== 'ok' ? ' · ' + r.outcome : ''),
           h('td', { class: 'n' }, r.finished ? fmtDur(r.ms) : r.status === 'running' && r.started ? liveDur(r.started) : ''),
-          h('td', { class: 'n' }, r.exit !== undefined ? 'exit ' + r.exit : '')));
+          h('td', { class: 'n' }, r.exit !== undefined ? t('page.card.exit', { code: r.exit }) : '')));
       }
       body.append(table);
     }
     if (a.ask) body.append(...askBlock(c, a.ask));
-    if (a.prompt) body.append(fileBlock(c.id, 'Prompt', a.prompt));
+    if (a.prompt) body.append(fileBlock(c.id, t('page.card.prompt'), a.prompt));
     if (a.log) {
-      body.append(h('h3', { text: a.status === 'running' ? 'Log (live)' : 'Log' }), logView(c.id, a.log, a.status === 'running'));
+      body.append(h('h3', { text: t(a.status === 'running' ? 'page.card.log_live' : 'page.card.log') }), logView(c.id, a.log, a.status === 'running'));
     }
     if (a.stderr) {
-      body.append(details(key + '/stderr', false, { class: 'sub-details' }, h('summary', { text: 'adapter diagnostics (standard error)' }),
+      body.append(details(key + '/stderr', false, { class: 'sub-details' }, h('summary', { text: t('page.card.stderr') }),
         logView(c.id, a.stderr, a.status === 'running')));
     }
     if (a.output) {
-      body.append(h('h3', { text: 'Output (validated)' }), h('pre', { class: 'log', text: JSON.stringify(a.output, null, 2) }));
+      body.append(h('h3', { text: t('page.card.output') }), h('pre', { class: 'log', text: JSON.stringify(a.output, null, 2) }));
     } else if (a.result) {
-      body.append(fileBlock(c.id, a.executor ? 'Rejected output' : 'Result file', a.result));
+      body.append(fileBlock(c.id, t(a.executor ? 'page.card.rejected_output' : 'page.card.result_file'), a.result));
     }
-    if (a.artifacts && a.artifacts.length) body.append(h('h3', { text: 'Artifacts' }), artifacts(c.id, a.artifacts));
+    if (a.artifacts && a.artifacts.length) body.append(h('h3', { text: t('page.card.artifacts') }), artifacts(c.id, a.artifacts));
     return details(key, newest, { class: 'attempt' },
-      h('summary', null, mark(a.status), h('b', { text: 'Attempt ' + a.n }), a.outcome ? h('code', { text: a.outcome }) : h('span', { text: STATUS_TEXT[a.status] || a.status }),
+      h('summary', null, mark(a.status), h('b', { text: t('page.card.attempt_n', { n: a.n }) }), a.outcome ? h('code', { text: a.outcome }) : h('span', { text: statusText(a.status) }),
         h('span', { class: 'when', text: fmtTime(a.started) })),
       body);
   }
@@ -710,11 +768,11 @@
     const key = 'file:' + id + ':' + url;
     let v = S.logs.get(key);
     if (!v) {
-      const pre = h('pre', { class: 'log', text: 'loading…' });
+      const pre = h('pre', { class: 'log', text: t('page.file.loading') });
       v = { el: h('div', null, h('h3', null, title + ' ', h('a', { href: url, target: '_blank', rel: 'noopener', text: path })), pre) };
       S.logs.set(key, v);
       fetch(url).then((r) => r.ok ? r.text() : r.text().then((t) => Promise.reject(new Error(t.trim() || r.statusText))))
-        .then((t) => { pre.textContent = t; }, (e) => { pre.textContent = 'cannot read: ' + e.message; });
+        .then((x) => { pre.textContent = x; }, (e) => { pre.textContent = t('page.file.cannot_read', { error: e.message }); });
     }
     return v.el;
   }
@@ -723,30 +781,29 @@
 
   function showURL(id, seq, i) { return '/api/campaigns/' + id + '/show?ask=' + seq + '&i=' + i; }
 
-  const KIND_TEXT = { yesno: 'yes or no', choice: 'one of the options', text: 'text' };
-
   // The questions of one round: the files to look at, then the form while
   // the question is open, or the answers once given.
   function askBlock(c, q) {
     const open = c.ask && c.ask.seq === q.seq;
-    const title = (q.reason === 'dialogue' ? 'Questions of the agent, round ' + q.round : q.reason === 'human' ? 'Decision of a person' : 'Questions for a person') +
-      ' (#' + q.seq + ', asked ' + fmtTime(q.at) + ')';
+    const title = t('page.askblock.' + (q.reason === 'dialogue' || q.reason === 'human' ? q.reason : 'gate'),
+      { round: q.round, seq: q.seq, at: fmtTime(q.at) });
     const out = [h('h3', { class: open ? 'ask-title' : '' }, mark(open ? 'asking' : 'passed', 'small'), ' ', title)];
-    (q.show || []).forEach((p, i) => out.push(fileBlock(c.id, 'Look at', p, showURL(c.id, q.seq, i))));
+    (q.show || []).forEach((p, i) => out.push(fileBlock(c.id, t('page.askblock.look_at'), p, showURL(c.id, q.seq, i))));
     out.push(open ? answerForm(c, q) : answered(q));
     return out;
   }
 
   function answered(q) {
-    if (!q.answeredAt) return h('p', { class: 'empty', text: 'Not answered.' });
+    if (!q.answeredAt) return h('p', { class: 'empty', text: t('page.answers.none') });
     const byID = {};
     for (const a of q.answers || []) byID[a.id] = a;
     const rows = (q.questions || []).map((x) => {
       const a = byID[x.id] || {};
       return kv(x.question, [h('b', { class: a.value === 'no' ? 'err' : '', text: a.value || '—' }), a.comment ? [' — ', a.comment] : null]);
     });
-    if (q.reason === 'human' && q.outcome) rows.push(kv('Outcome', h('code', { text: q.outcome })));
-    rows.push(kv('Answered', [q.by ? ['by ', h('b', { text: q.by }), ' '] : null, q.via ? '(' + (q.via === 'page' ? 'on this page' : 'on the command line') + ') ' : '', 'at ' + fmtTime(q.answeredAt, true)]));
+    if (q.reason === 'human' && q.outcome) rows.push(kv(t('page.kv.outcome'), h('code', { text: q.outcome })));
+    rows.push(kv(t('page.answers.answered'), [q.by ? [tn('page.answers.by', { by: h('b', { text: q.by }) }), ' '] : null,
+      q.via ? '(' + t(q.via === 'page' ? 'page.answers.via_page' : 'page.answers.via_command') + ') ' : '', t('page.answers.at', { at: fmtTime(q.answeredAt, true) })]));
     return h('dl', { class: 'kv answers' }, rows);
   }
 
@@ -771,35 +828,35 @@
         input.value = st.values[x.id] || '';
       } else {
         const opts = x.kind === 'choice' ? x.options : ['yes', 'no'];
-        input = h('div', { class: 'opts', role: 'radiogroup' }, opts.map((o) => radio(name(x.id), o, o, st.values[x.id] === o, set)));
+        input = h('div', { class: 'opts', role: 'radiogroup' }, opts.map((o) => radio(name(x.id), o, x.kind === 'choice' ? o : t('page.form.' + o), st.values[x.id] === o, set)));
       }
       let comment = null;
       if (x.kind !== 'text') {
-        comment = h('input', { type: 'text', class: 'comment', placeholder: 'comment (optional)', 'aria-label': 'comment on ' + x.id,
+        comment = h('input', { type: 'text', class: 'comment', placeholder: t('page.form.comment'), 'aria-label': t('page.form.comment_on', { id: x.id }),
           'data-fkey': name(x.id) + '/comment', oninput: (e) => { st.comments[x.id] = e.target.value; } });
         comment.value = st.comments[x.id] || '';
       }
-      return h('fieldset', { class: 'q' }, h('legend', null, (i + 1) + '. ' + x.question, ' ', h('span', { class: 'tag', title: 'question id', text: x.id })),
-        h('div', { class: 'hint', text: KIND_TEXT[x.kind] || x.kind }), input, comment);
+      return h('fieldset', { class: 'q' }, h('legend', null, (i + 1) + '. ' + x.question, ' ', h('span', { class: 'tag', title: t('page.form.question_id'), text: x.id })),
+        h('div', { class: 'hint', text: tk('page.form.kind.', x.kind) }), input, comment);
     });
     if ((q.outcomes || []).length > 1) {
-      items.push(h('fieldset', { class: 'q' }, h('legend', { text: 'Outcome: where the flow goes next' }),
+      items.push(h('fieldset', { class: 'q' }, h('legend', { text: t('page.form.outcome') }),
         h('div', { class: 'opts', role: 'radiogroup' }, q.outcomes.map((o) =>
           radio('o-' + q.seq, o.name, [h('code', { text: o.name }), o.to ? ' → ' + o.to : ''], st.outcome === o.name, (v) => { st.outcome = v; })))));
     } else if ((q.outcomes || []).length === 1) {
-      items.push(h('p', { class: 'hint' }, 'The flow goes on with ', h('code', { text: q.outcomes[0].name }), '.'));
+      items.push(h('p', { class: 'hint' }, tn('page.form.goes_on', { outcome: h('code', { text: q.outcomes[0].name }) })));
     }
-    const by = h('input', { type: 'text', class: 'by', placeholder: 'your name (optional)', 'aria-label': 'answered by', 'data-fkey': 'by-' + q.seq,
+    const by = h('input', { type: 'text', class: 'by', placeholder: t('page.form.your_name'), 'aria-label': t('page.form.answered_by_label'), 'data-fkey': 'by-' + q.seq,
       oninput: (e) => { st.by = e.target.value; } });
     by.value = st.by;
     return h('form', { class: 'answer', novalidate: true, onsubmit: (e) => { e.preventDefault(); submitAnswer(c, q, st); } },
       items,
       h('div', { class: 'send' },
-        h('label', null, 'Answered by ', by),
-        h('button', { class: 'btn primary', type: 'submit', 'data-fkey': 'send-' + q.seq, disabled: st.busy, text: st.busy ? 'Recording…' : 'Record answers' })),
+        h('label', null, t('page.form.answered_by') + ' ', by),
+        h('button', { class: 'btn primary', type: 'submit', 'data-fkey': 'send-' + q.seq, disabled: st.busy, text: t(st.busy ? 'page.form.recording' : 'page.form.record') })),
       st.error ? h('div', { class: 'err form-err', role: 'alert', text: st.error }) : null,
-      h('div', { class: 'cmd' }, 'The same from a terminal: ', h('code', { text: q.command }),
-        h('div', null, 'or, without questions: ', h('code', { text: q.example }))));
+      h('div', { class: 'cmd' }, tn('page.form.terminal', { command: h('code', { text: q.command }) }),
+        h('div', null, tn('page.form.terminal_flags', { command: h('code', { text: q.example }) }))));
   }
 
   async function submitAnswer(c, q, st) {
@@ -808,20 +865,16 @@
     render();
     try { localStorage.setItem('hetman.by', st.by); } catch (e) { /* not kept */ }
     try {
-      const res = await fetch('/api/campaigns/' + c.id + '/answer', {
+      const res = await fetch('/api/campaigns/' + c.id + '/answer?lang=' + encodeURIComponent(I.lang), {
         method: 'POST', headers: { 'X-Hetman-Control': '1', 'Content-Type': 'application/json' },
         body: JSON.stringify({ ask: q.seq, values: st.values, comments: st.comments, outcome: st.outcome, by: st.by }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error || res.statusText);
+      if (!res.ok) throw new Error(body.problem ? t('page.form.nothing_recorded', { problem: body.problem }) : body.error || res.statusText);
       S.forms.delete(q.seq);
-      toast({
-        driving: 'Answers recorded. This server now drives the campaign.',
-        elsewhere: 'Answers recorded. The process that drives the campaign continues.',
-        recorded: 'Answers recorded. The campaign is halted or stopped; resume it to continue.',
-      }[body.result] || 'Answers recorded.');
+      toast(I.texts['page.toast.answer.' + body.result] !== undefined ? t('page.toast.answer.' + body.result) : t('page.toast.answer.other'));
     } catch (e) {
-      st.error = e.message.replace(/^invalid answers: /, 'Nothing was recorded: ');
+      st.error = e.message;
     }
     st.busy = false;
     render();
@@ -843,7 +896,7 @@
       const es = new EventSource('/api/campaigns/' + id + '/log?path=' + encodeURIComponent(path));
       v.es = es;
       es.addEventListener('skipped', (ev) => {
-        v.pre.append(h('span', { class: 'note', text: '… ' + JSON.parse(ev.data).bytes + ' earlier bytes not shown\n' }));
+        v.pre.append(h('span', { class: 'note', text: '… ' + t('page.log.skipped', { n: JSON.parse(ev.data).bytes }) + '\n' }));
       });
       es.addEventListener('reset', () => { v.pre.textContent = ''; });
       es.addEventListener('chunk', (ev) => {
@@ -856,10 +909,10 @@
       v.pre.classList.remove('live');
       v.loaded = true;
       fetch(fileURL(id, path)).then((r) => r.ok ? r.text() : r.status === 404 ? '' : Promise.reject(new Error(r.statusText)))
-        .then((t) => {
-          v.pre.textContent = t;
-          if (!t) v.pre.append(h('span', { class: 'note', text: '(empty)' }));
-        }, (e) => { v.pre.textContent = 'cannot read the log: ' + e.message; });
+        .then((x) => {
+          v.pre.textContent = x;
+          if (!x) v.pre.append(h('span', { class: 'note', text: t('page.log.empty') }));
+        }, (e) => { v.pre.textContent = t('page.log.cannot_read', { error: e.message }); });
     }
     return v.pre;
   }
@@ -878,7 +931,7 @@
       for (const a of list) runs.push({ node: node, a: a });
     }
     runs.sort((x, y) => ms(x.a.started) - ms(y.a.started));
-    if (!runs.length) return h('div', { class: 'timeline' }, h('p', { class: 'empty', text: 'Nothing has run yet.' }));
+    if (!runs.length) return h('div', { class: 'timeline' }, h('p', { class: 'empty', text: t('page.timeline.empty') }));
     const t0 = ms(c.started);
     const campaignEnd = c.ended ? ms(c.ended) : now;
     const rows = [];
@@ -907,7 +960,7 @@
         return el;
       })));
     const body = rows.map((r) => {
-      const bar = h('span', { class: 'tl-bar st-' + r.status, title: r.label + ': ' + (STATUS_TEXT[r.status] || r.status) + ', ' + fmtDur(r.to - r.from) });
+      const bar = h('span', { class: 'tl-bar st-' + r.status, title: r.label + ': ' + statusText(r.status) + ', ' + fmtDur(r.to - r.from) });
       bar.style.left = pct(r.from);
       bar.style.width = 'calc(' + (100 * Math.max(0, r.to - r.from) / span).toFixed(3) + '% + 0px)';
       const grid = ticks.map((t) => { const g = h('span', { class: 'tl-grid' }); g.style.left = pct(t0 + t); return g; });
@@ -919,7 +972,7 @@
     const out = h('div', { class: 'tl' }, axis, body);
     if (!c.ended) {
       const line = h('div', { class: 'tl-row' }, h('div', { class: 'tl-label', text: '' }), h('div', { class: 'tl-track' }));
-      const nowMark = h('span', { class: 'tl-now', title: 'now' });
+      const nowMark = h('span', { class: 'tl-now', title: t('page.now') });
       nowMark.style.left = pct(now);
       line.lastChild.append(nowMark);
       out.append(line);
@@ -942,17 +995,16 @@
     return steps[steps.length - 1];
   }
 
-  function fmtTick(t) {
-    if (t === 0) return '0';
-    const s = Math.round(t / 1000);
-    if (s < 60) return s + 's';
-    if (s < 3600) return Math.floor(s / 60) + 'm' + (s % 60 ? ' ' + (s % 60) + 's' : '');
-    return Math.floor(s / 3600) + 'h' + (Math.floor(s / 60) % 60 ? ' ' + (Math.floor(s / 60) % 60) + 'm' : '');
+  function fmtTick(d) {
+    if (d === 0) return '0';
+    const s = Math.round(d / 1000);
+    if (s < 60) return t('page.tick.sec', { s: s });
+    if (s < 3600) return s % 60 ? t('page.tick.min_sec', { m: Math.floor(s / 60), s: s % 60 }) : t('page.tick.min', { m: Math.floor(s / 60) });
+    const m = Math.floor(s / 60) % 60;
+    return m ? t('page.tick.hour_min', { h: Math.floor(s / 3600), m: m }) : t('page.tick.hour', { h: Math.floor(s / 3600) });
   }
 
   // ---- in words ----------------------------------------------------------
-
-  const TAB_TEXT = { pipeline: 'Pipeline', timeline: 'Timeline', chronicle: 'Chronicle', words: 'In words' };
 
   // The campaign told in sentences built by the server from the chronicle.
   function words(c) {
@@ -1006,7 +1058,7 @@
     S.freshFrom = Infinity;
     return h('div', { class: 'chron', 'data-scroll': 'chronicle', 'data-stick': 'bottom' },
       h('table', null,
-        h('thead', null, h('tr', null, ['#', 'Time', 'Event', 'Node', 'Check', 'Attempt', 'Outcome', 'Details'].map((t) => h('th', { text: t })))),
+        h('thead', null, h('tr', null, ['seq', 'time', 'event', 'node', 'check', 'attempt', 'outcome', 'details'].map((x) => h('th', { text: t('page.chronicle.col.' + x) })))),
         h('tbody', null, rows)));
   }
 
@@ -1025,5 +1077,5 @@
   }, 1000);
 
   window.addEventListener('hashchange', onRoute);
-  onRoute();
+  loadTexts(savedLang()).catch(() => { /* English keys are shown */ }).then(onRoute);
 })();

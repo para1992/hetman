@@ -1,7 +1,6 @@
 package watchtower
 
 import (
-	"fmt"
 	"strings"
 
 	"hetman/internal/chronicle"
@@ -87,15 +86,15 @@ func (s *Server) childTiles(col *Column, o *orders.Orders, events []chronicle.Ev
 	for _, ch := range list {
 		t := Tile{Item: ch.Item, Child: ch.ID, Outcome: ch.Outcome, Status: StatusNotRun}
 		switch {
-		case ch.NotRun != "":
-			t.Note = ch.NotRun
+		case ch.NotRunNeeds != "":
+			t.Note, t.Args = "page.tile.child.why"+"_"+ch.NotRunKind, map[string]string{"item": ch.NotRunNeeds}
 		case ch.ID == 0:
 			if len(ch.Needs) > 0 {
-				t.Note = "needs " + strings.Join(ch.Needs, ", ")
+				t.Note, t.Args = "page.tile.child.needs", map[string]string{"items": strings.Join(ch.Needs, ", ")}
 			}
 		default:
 			driven, _ := engine.Driven(o, ch.ID)
-			t.Status, t.Node, t.Note = childTileStatus(ch.State, driven)
+			t.Status, t.Node, t.Note, t.Args = childTileStatus(ch.State, driven)
 			t.Attempts = ch.State.Attempts[ch.State.Node]
 		}
 		tiles = append(tiles, t)
@@ -104,30 +103,30 @@ func (s *Server) childTiles(col *Column, o *orders.Orders, events []chronicle.Ev
 }
 
 // childTileStatus is the status of a child's tile, where the child is, and
-// what it waits for.
-func childTileStatus(st chronicle.State, driven bool) (status, node, note string) {
+// what it waits for as a message key of the page with its parameters.
+func childTileStatus(st chronicle.State, driven bool) (status, node, note string, args map[string]string) {
 	node = st.Node
 	switch {
 	case st.End == orders.Done:
-		return StatusPassed, "", ""
+		return StatusPassed, "", "", nil
 	case st.End == orders.Failed:
-		return StatusFailed, "", ""
+		return StatusFailed, "", "", nil
 	case st.Error != "":
-		return StatusFailed, node, "error: " + st.Error
+		return StatusFailed, node, "page.tile.child.error", map[string]string{"error": st.Error}
 	case st.Asking():
-		return StatusAsking, node, "needs an answer"
+		return StatusAsking, node, "page.tile.needs_answer", nil
 	case st.Halted:
-		return StatusWaiting, node, "halted"
+		return StatusWaiting, node, "page.tile.child.halted", nil
 	case st.LockWait != "" && !st.Running:
-		return StatusWaiting, node, fmt.Sprintf("waits for lock %s (held by %s)", st.LockWait, st.LockHolder)
+		return StatusWaiting, node, "page.tile.lock", map[string]string{"lock": st.LockWait, "holder": st.LockHolder}
 	case st.Waiting == chronicle.WaitOffline:
-		return StatusWaiting, node, "offline"
+		return StatusWaiting, node, "page.tile.offline", nil
 	case st.Waiting == chronicle.WaitLimit:
-		return StatusWaiting, node, "limit reached"
+		return StatusWaiting, node, "page.tile.limit", nil
 	case st.Running && driven:
-		return StatusRunning, node, ""
+		return StatusRunning, node, "", nil
 	case st.Running:
-		return StatusInterrupted, node, ""
+		return StatusInterrupted, node, "", nil
 	}
-	return StatusWaiting, node, ""
+	return StatusWaiting, node, "", nil
 }

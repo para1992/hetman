@@ -38,7 +38,7 @@ func (s *Server) handleShow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if rel == "" || !filepath.IsLocal(filepath.FromSlash(rel)) {
-		http.Error(w, "no such file to show", http.StatusNotFound)
+		http.Error(w, "no such file to show", http.StatusNotFound) // i18n: keep (API error)
 		return
 	}
 	o, _ := s.currentOrders()
@@ -47,7 +47,7 @@ func (s *Server) handleShow(w http.ResponseWriter, r *http.Request) {
 	}
 	f, err := os.Open(filepath.Join(o.Dir, filepath.FromSlash(rel)))
 	if err != nil {
-		http.Error(w, "the file does not exist now", http.StatusNotFound)
+		http.Error(w, "the file does not exist now", http.StatusNotFound) // i18n: keep (API error)
 		return
 	}
 	defer f.Close()
@@ -100,6 +100,12 @@ func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	reply := engine.Reply{Ask: req.Ask, By: strings.TrimSpace(req.By), Via: engine.ViaPage,
 		Given: ask.Given{Values: req.Values, Comments: req.Comments, Outcome: req.Outcome}}
 	if _, err := engine.Answer(s.Chron, id, reply); err != nil {
+		var inv *ask.Invalid
+		if errors.As(err, &inv) {
+			p := s.printer(r)
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": p.Error(err), "problem": inv.Problem(p)})
+			return
+		}
 		writeError(w, err)
 		return
 	}

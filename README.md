@@ -453,8 +453,8 @@ A person can choose another language for themselves without editing the shared f
 variable is no override, an unknown code is an error and starts nothing). The language
 in effect is recorded in the chronicle when the campaign starts and stays the same on
 `hetman resume`, whatever the file or the variable say by then. `hetman status` and
-the campaign page show it. Hetman's own messages, its page and the wizard stay
-English.
+the campaign page show it. The language Hetman's own messages are written in is a
+separate matter; see Interface language.
 
 **Attempts.** Each node visit has `max_attempts` attempts. An attempt fails when the
 answer does not match the schema, the adapter reports a transient error, the adapter
@@ -696,9 +696,9 @@ An adapter is the program between Hetman and one coding-agent client: it receive
 one step, runs the client on it, and reports what the client does and answers, in
 the protocol described under Writing an adapter. The `hetman` binary contains no
 adapter and never names a client; an orders file names the adapter program of each
-executor. This repository has two: `hetman-adapter-claude` for the Claude Code
-client, and `hetman-stub-adapter`, which runs no model (see Agent steps without a
-real client).
+executor. This repository has three: `hetman-adapter-claude` for the Claude Code
+client, `hetman-adapter-opencode` for the OpenCode client, and
+`hetman-stub-adapter`, which runs no model (see Agent steps without a real client).
 
 ### Claude Code
 
@@ -779,6 +779,97 @@ log and starts a new conversation with the prompt.
 into a file, a gate that checks the file, and a review step that may send the draft
 back once. Its comments say how to run it; a run makes two to four small requests
 with the `haiku` model.
+
+### OpenCode
+
+`hetman-adapter-opencode` runs a step through the `opencode` command-line client in
+non-interactive mode (`opencode run`). Download
+`hetman-adapter-opencode-VERSION-OS-ARCH` for your system from the Releases page (it
+is in the same checksum file), or build it:
+
+```sh
+go build -o hetman-adapter-opencode ./cmd/hetman-adapter-opencode
+```
+
+It needs `opencode` on the path with a provider it can use: one of its free models, or
+a provider you logged in to with `opencode providers login` (`opencode models` lists
+what it can use). Name it under `executors`:
+
+```yaml
+executors:
+  opencode: {run: [./bin/hetman-adapter-opencode]}   # options: --client PATH, --env NAME
+
+nodes:
+  implement:
+    type: agent
+    executor: opencode
+    model: opencode/big-pickle
+    effort: high
+    tools: [read, edit, glob, grep, "bash(go test *)"]
+    ...
+```
+
+For each attempt it runs the client in the orders folder, with the prompt on
+standard input:
+
+```
+opencode run --format json --pure --print-logs --log-level INFO --agent hetman-XXXXXXXX
+  --model PROVIDER/MODEL --variant EFFORT (--session SESSION | --title TITLE)
+```
+
+and gives it, in `OPENCODE_CONFIG_CONTENT`, an agent made for this run only whose
+permissions deny everything and then allow the node's tools.
+
+- `model` is a model in the client's `provider/model` notation, as `opencode models`
+  lists it; empty means the client's default. An unknown model, or a provider the
+  client has no login for, fails the step at once.
+- `effort` is passed as the model variant, the client's only reasoning setting.
+  Variant names differ per model (`opencode models PROVIDER --verbose` lists them).
+  The adapter looks the model up in the client's catalogue first and rejects a value
+  the model does not offer, and any value for a model without variants. Without a
+  model the value is passed unchecked.
+- `tools` lists client permission names (`read`, `edit`, which also covers writing
+  and patching files, `glob`, `grep`, `list`, `bash`, `webfetch`, `websearch`,
+  `todowrite`, `lsp`, `skill`, or a tool server's tool name) and rules such as
+  `bash(git status)` or `read(*.md)`, which allow a tool only for what matches the
+  pattern. Every other tool is denied and not offered to the model, and the client
+  never asks anybody in this mode. No tools means none. The adapter never uses an
+  option that skips permission checks (`--auto`), and its file tools stay inside the
+  orders folder. `task` is refused, because the subagents it starts run with the
+  client's default permissions. External plugins are not loaded (`--pure`). The
+  restriction has limits: tool servers (MCP) from your or the project's configuration
+  are still started, although their tools are denied unless named, and an
+  organisation's remote or managed configuration is applied after the adapter's and
+  can loosen it.
+- The answer: the client has no structured output in this mode, so the adapter appends
+  the node's schema to the prompt and asks for one JSON object at the end of the
+  answer. The last JSON object in the answer is taken and checked by Hetman; no object
+  at all is a transient error.
+- Errors: a provider's usage or plan limit is `limit`, with the reset time when the
+  provider gives one; the adapter stops the client as soon as its log reports a limit
+  instead of letting it retry. A failed connection is `offline`; an unknown model or
+  provider, missing credentials and bad arguments are `permanent`; anything else is
+  `transient`.
+- The log shows what the client does: its text, each tool call and what it was
+  called on, the first line of each tool result or error, and the model steps and
+  tokens at the end.
+- The client gets only the environment it needs: the system's basic variables, its
+  configuration and data folders (`XDG_*`), where it finds its stored logins, and
+  proxy and certificate settings. Provider API keys in the environment are not
+  passed. `--env NAME` adds one more.
+
+**Session resume.** The adapter declares `resume` and reports the client's session
+id as soon as the client creates the session. When Hetman gives it a session id, the
+client continues that session with `--session` and receives the whole prompt of the
+new attempt as the next message. The client keeps sessions in its data folder on the
+computer that ran them, so a session can be continued only by the same user on the
+same computer. When the client cannot find the session, the adapter says so in the
+log and starts a new conversation with the prompt.
+
+`examples/opencode` is the same small flow as `examples/claude` with this adapter.
+Its comments say how to run it; a run makes two to four small requests and needs a
+provider with quota left. A step that hits the provider's limit makes the campaign
+wait until `hetman resume`.
 
 ## Writing an adapter
 
@@ -882,7 +973,8 @@ hetman version                          print the version of hetman
 - `-events` makes `status` also list every chronicle event.
 - `-addr ADDRESS` is where `serve` listens, `127.0.0.1:8740` by default.
 - `HETMAN_LANGUAGE=CODE` in the environment of `check` and `run` overrides the
-  `language` key of the orders (see Language for the person).
+  `language` key of the orders (see Language for the person). For every command it
+  is also the language of Hetman's own messages (see Interface language).
 - `-dir DIR` is the folder `scribe skill` writes `SKILL.md` into,
   `.agents/skills/hetman-scribe` in the current folder by default. `-force` replaces
   a different `SKILL.md` that is already there.
@@ -1002,6 +1094,58 @@ Submitting the form goes through the same checks as `hetman answer`: answers tha
 not fit are shown in the form and change nothing. Recorded answers are continued by
 the process that drives the campaign, or by `hetman serve` when none does. Once
 answered, the card shows the answers, who gave them and when.
+
+## Interface language
+
+Hetman's own messages (the command line, the wizard, campaigns in plain words and the
+Watchtower page) come in the language of the person reading them: the one in
+`HETMAN_LANGUAGE`, else the orders' `language` key, else English. For a command about
+a campaign the person's language still wins over the language the campaign recorded:
+the interface speaks to whoever is looking, while the campaign's language is for what
+the flow produces. Any of the six codes can be chosen; a language without a translation
+shows English. English and Ukrainian are translated now.
+
+```sh
+$ HETMAN_LANGUAGE=uk hetman halt
+похід 3 стане на привал після поточного кроку
+```
+
+Watchtower starts in the language of the `hetman serve` process, chosen by the same
+rule. A switcher in the page header offers all six languages and remembers the choice
+in that browser; the plain-words tab follows it too.
+
+What stays English in every language, because tools, agents and models read it: the
+keys and values of the orders file; node, check and outcome names; the
+`FILE:LINE:COL: message` problems of the orders check (and the `warning:` lines made
+of them); chronicle event kinds and the `status -events` dump; log files; the adapter
+protocol; everything sent to a model (prompts, the Scribe request, the language
+instruction); environment variable names; the payload of the notification hook;
+error messages that come from the operating system, a library, the orders editor or
+the engine; and the error bodies of the page's API. Durations printed by the command
+line keep Go's form, such as `1.2s`.
+
+**Translations.** The texts live in one file per language,
+`internal/i18n/catalogue/CODE.yaml`, embedded in the binary. Each entry maps a key to a
+message; names in braces, such as `{node}`, are filled in by the program. A message
+that depends on a number has a form per plural category of the language, and the
+number is always `{n}`:
+
+```yaml
+page.attempts:
+  one: "{n} спроба"
+  few: "{n} спроби"
+  many: "{n} спроб"
+```
+
+The forms each language needs: Chinese `other`; English, Spanish and Hindi `one` and
+`other`; Ukrainian `one`, `few` and `many`; Arabic `zero`, `one`, `two`, `few`, `many`
+and `other`. `en.yaml` is the source and has every key. To fix a text, edit its
+entry; to add a language, create its file with the keys translated so far: a missing
+key shows the English text. The test of `scripts/verify.sh` fails on a key or a
+`{name}` that English does not have and on a missing plural form, and lists the keys
+each language has not translated yet; the Ukrainian file must be complete. Another
+test reads the code that prints for a person and fails on English text written there
+instead of in the catalogue.
 
 ## Setup assistant
 

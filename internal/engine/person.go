@@ -45,14 +45,14 @@ func ShellQuote(s string) string {
 func (e *Engine) awaitAnswer(ctx context.Context, asked *chronicle.Event) error {
 	if e.saidAsk != asked.Seq {
 		e.saidAsk = asked.Seq
-		what := fmt.Sprintf("%d question(s)", len(asked.Questions))
+		key := "engine.asks"
 		if asked.Reason == chronicle.ReasonHuman {
-			what = "a decision"
+			key = "engine.asks_decision"
 			if len(asked.Questions) > 0 {
-				what += fmt.Sprintf(" and %d question(s)", len(asked.Questions))
+				key = "engine.asks_decision_questions"
 			}
 		}
-		e.say("%s waits for a person (%s); answer with: %s", asked.Node, what, AnswerCommand(e.top().Orders, e.top().Campaign))
+		e.say(key, "node", asked.Node, "n", len(asked.Questions), "command", AnswerCommand(e.top().Orders, e.top().Campaign))
 	}
 	select {
 	case <-ctx.Done():
@@ -91,13 +91,13 @@ func (e *Engine) finishAsked(events []chronicle.Event, st chronicle.State) error
 		}
 	}
 	if err := e.writeAnswers(asked, answer); err != nil {
-		e.say("cannot write the answers of %s to the work folder: %v", asked.Node, err)
+		e.say("engine.cannot_write_answers", "node", asked.Node, "error", err)
 	}
-	by := ""
 	if answer.By != "" {
-		by = " by " + answer.By
+		e.say("engine.answered_by", "node", asked.Node, "by", answer.By, "outcome", outcome)
+	} else {
+		e.say("engine.answered", "node", asked.Node, "outcome", outcome)
 	}
-	e.say("%s answered%s: %s", asked.Node, by, outcome)
 	return e.record(fin)
 }
 
@@ -348,10 +348,10 @@ func (e *Engine) notify(ev chronicle.Event) {
 		res.Outcome, res.Exit, res.Error = e.runHook(h, ev, n.Reason, payload, res.Log)
 		res.Millis = time.Since(began).Milliseconds()
 		if res.Outcome != orders.OK {
-			e.say("notification hook for %s: %s %s (log %s)", ev.Node, res.Outcome, res.Error, res.Log)
+			e.say("engine.hook", "node", ev.Node, "outcome", res.Outcome, "error", res.Error, "log", res.Log)
 		}
 		if _, err := e.Chron.Append(res); err != nil {
-			e.say("cannot record the notification hook: %v", err)
+			e.say("engine.cannot_record_hook", "error", err)
 		}
 	}()
 }

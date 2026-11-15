@@ -9,11 +9,13 @@ package explain
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"hetman/internal/ask"
 	"hetman/internal/chronicle"
+	"hetman/internal/i18n"
 )
 
 // Query kinds: the questions an explanation answers.
@@ -36,19 +38,16 @@ type Section struct {
 	Lines []string `json:"lines"`
 }
 
-var titles = map[string]string{
-	Where:    "Where it is",
-	History:  "What ran",
-	Rework:   "Rework",
-	Failures: "What failed",
-	Warnings: "Warnings",
+// Campaign explains a campaign in English. kind is one of Kinds ("" for
+// the summary); node, when given, limits history, rework, failures and
+// warnings to that node. Times are shown in loc.
+func Campaign(k chronicle.Campaign, events []chronicle.Event, kind, node string, loc *time.Location) []Section {
+	return In(nil, k, events, kind, node, loc)
 }
 
-// Campaign explains a campaign. kind is one of Kinds ("" for the summary);
-// node, when given, limits history, rework, failures and warnings to that
-// node. Times are shown in loc.
-func Campaign(k chronicle.Campaign, events []chronicle.Event, kind, node string, loc *time.Location) []Section {
-	x := &explainer{k: k, events: events, node: node, loc: loc}
+// In explains a campaign as Campaign does, in the language of p.
+func In(p *i18n.Printer, k chronicle.Campaign, events []chronicle.Event, kind, node string, loc *time.Location) []Section {
+	x := &explainer{p: p, k: k, events: events, node: node, loc: loc}
 	if loc == nil {
 		x.loc = time.Local
 	}
@@ -75,7 +74,7 @@ func Campaign(k chronicle.Campaign, events []chronicle.Event, kind, node string,
 		default:
 			continue
 		}
-		out = append(out, Section{Kind: kd, Title: titles[kd], Lines: lines})
+		out = append(out, Section{Kind: kd, Title: p.T("explain.title." + kd), Lines: lines})
 	}
 	return out
 }
@@ -101,6 +100,7 @@ func Text(sections []Section) string {
 }
 
 type explainer struct {
+	p      *i18n.Printer
 	k      chronicle.Campaign
 	events []chronicle.Event
 	node   string
@@ -132,19 +132,19 @@ func (x *explainer) last(kind, node string) *chronicle.Event {
 	return nil
 }
 
-func who(e *chronicle.Event) string {
+func (x *explainer) who(e *chronicle.Event) string {
 	if e.By != "" {
 		return e.By
 	}
-	return "A person"
+	return x.p.T("explain.who")
 }
 
-func via(e *chronicle.Event) string {
+func (x *explainer) via(e *chronicle.Event) string {
 	switch e.Via {
 	case "page":
-		return " on the page"
+		return x.p.T("explain.via.page")
 	case "command":
-		return " from the command line"
+		return x.p.T("explain.via.command")
 	}
 	return ""
 }
@@ -157,85 +157,112 @@ func questions(qs []ask.Question) string {
 	return strings.Join(parts, "; ")
 }
 
-func either(list []string) string {
+func (x *explainer) either(list []string) string {
 	switch len(list) {
 	case 0:
 		return ""
 	case 1:
 		return list[0]
 	}
-	return strings.Join(list[:len(list)-1], ", ") + " or " + list[len(list)-1]
+	return x.p.T("explain.either", "list", strings.Join(list[:len(list)-1], ", "), "last", list[len(list)-1])
 }
 
+func trim(s string) string { return strings.TrimSuffix(s, ".") }
+
 func (x *explainer) where() []string {
+	p := x.p
 	if len(x.events) == 0 {
-		return []string{fmt.Sprintf("Campaign %d has no events.", x.k.ID)}
+		return []string{p.T("explain.where.no_events", "id", x.k.ID)}
 	}
 	st := chronicle.Replay(x.events)
 	first := x.events[0]
-	lines := []string{fmt.Sprintf("Campaign %d of flow %s started at %s at %s.", x.k.ID, x.k.Flow, x.at(first.At), first.Node)}
+	lines := []string{p.T("explain.where.started", "id", x.k.ID, "flow", x.k.Flow, "at", x.at(first.At), "node", first.Node)}
 	var s string
 	switch {
 	case st.End != "":
 		t := x.last(chronicle.Transition, "")
-		s = fmt.Sprintf("It is done: %s finished with %s at %s, which leads to done.", t.Node, t.Outcome, x.at(t.At))
+		key := "explain.where.done"
 		if st.End == "failed" {
-			s = fmt.Sprintf("It failed: %s finished with %s at %s, which leads to failed.", t.Node, t.Outcome, x.at(t.At))
+			key = "explain.where.failed"
 		}
+		s = p.T(key, "node", t.Node, "outcome", t.Outcome, "at", x.at(t.At))
 	case st.Error != "":
 		e := x.last(chronicle.Stopped, "")
-		s = fmt.Sprintf("It stopped in the error state at %s at %s: %s", e.Node, x.at(e.At), strings.TrimSuffix(e.Error, "."))
-		s += "."
+		s = p.T("explain.where.error", "node", e.Node, "at", x.at(e.At), "error", trim(e.Error))
 	case st.Halted:
 		e := x.last(chronicle.Halted, "")
-		s = fmt.Sprintf("It is halted before %s since %s.", e.Node, x.at(e.At))
+		s = p.T("explain.where.halted", "node", e.Node, "at", x.at(e.At))
 	case st.Asking():
 		q := st.Ask
 		switch q.Reason {
 		case chronicle.ReasonHuman:
-			s = fmt.Sprintf("It has been waiting for a person since %s: %s asks for a decision between %s", x.at(q.At), q.Node, either(q.Outcomes))
 			if len(q.Questions) > 0 {
-				s += fmt.Sprintf(" and %d question(s): %s", len(q.Questions), questions(q.Questions))
+				s = p.T("explain.where.human_questions", "at", x.at(q.At), "node", q.Node, "outcomes", x.either(q.Outcomes),
+					"n", len(q.Questions), "questions", questions(q.Questions))
+			} else {
+				s = p.T("explain.where.human", "at", x.at(q.At), "node", q.Node, "outcomes", x.either(q.Outcomes))
 			}
-			s += "."
 		case chronicle.ReasonDialogue:
-			s = fmt.Sprintf("It has been waiting for a person since %s: the agent step %s asks %d question(s) in round %d: %s.", x.at(q.At), q.Node, len(q.Questions), q.Round, questions(q.Questions))
+			s = p.T("explain.where.dialogue", "at", x.at(q.At), "node", q.Node, "n", len(q.Questions), "round", q.Round, "questions", questions(q.Questions))
 		default:
-			s = fmt.Sprintf("It has been waiting for a person since %s: the gate %s asks %d question(s): %s.", x.at(q.At), q.Node, len(q.Questions), questions(q.Questions))
+			s = p.T("explain.where.gate", "at", x.at(q.At), "node", q.Node, "n", len(q.Questions), "questions", questions(q.Questions))
 		}
 	case st.Ask != nil && st.Answer != nil:
-		s = fmt.Sprintf("%s answered the questions of %s at %s; %s has not finished since.", who(st.Answer), st.Ask.Node, x.at(st.Answer.At), st.Ask.Node)
+		s = p.T("explain.where.answered", "who", x.who(st.Answer), "node", st.Ask.Node, "at", x.at(st.Answer.At))
 	case st.Waiting != "":
 		f := x.last(chronicle.StepFinished, st.Node)
 		switch {
 		case st.Waiting == chronicle.WaitLimit && !st.WaitUntil.IsZero():
-			s = fmt.Sprintf("It is waiting at %s: attempt %d hit the subscription limit at %s (%s); the step is due to run again at %s. The attempt does not count.",
-				st.Node, f.Attempt, x.at(f.At), f.Error, x.at(st.WaitUntil))
+			s = p.T("explain.where.limit_until", "node", st.Node, "attempt", f.Attempt, "at", x.at(f.At), "error", f.Error, "until", x.at(st.WaitUntil))
 		case st.Waiting == chronicle.WaitLimit:
-			s = fmt.Sprintf("It has been stopped at %s since %s: attempt %d hit the subscription limit (%s) and no time to retry was given. The attempt does not count; the step runs again when the campaign is resumed.",
-				st.Node, x.at(f.At), f.Attempt, f.Error)
+			s = p.T("explain.where.limit", "node", st.Node, "at", x.at(f.At), "attempt", f.Attempt, "error", f.Error)
 		default:
-			s = fmt.Sprintf("It has been stopped at %s since %s: attempt %d lost connectivity (%s). The attempt does not count; the step runs again when the campaign is resumed.",
-				st.Node, x.at(f.At), f.Attempt, f.Error)
+			s = p.T("explain.where.offline", "node", st.Node, "at", x.at(f.At), "attempt", f.Attempt, "error", f.Error)
 		}
+	case st.LockWait != "" && !st.Running:
+		e := x.last(chronicle.LockWaiting, st.Node)
+		s = p.T("explain.where.lock", "at", x.at(e.At), "node", st.Node, "lock", st.LockWait, "holder", st.LockHolder)
 	case st.Running:
 		e := x.last(chronicle.StepStarted, st.Node)
-		s = fmt.Sprintf("%s attempt %d started at %s and has not finished.", st.Node, e.Attempt, x.at(e.At))
+		s = p.T("explain.where.running", "node", st.Node, "attempt", e.Attempt, "at", x.at(e.At))
 	default:
 		if e := x.lastStep(st.Node); e != nil && e.Kind == chronicle.StepInterrupted {
-			s = fmt.Sprintf("%s attempt %d was interrupted at %s; the step runs again when the campaign is resumed.", st.Node, e.Attempt, x.at(e.At))
+			s = p.T("explain.where.interrupted", "node", st.Node, "attempt", e.Attempt, "at", x.at(e.At))
 		} else if t := x.last(chronicle.Transition, ""); t != nil {
-			s = fmt.Sprintf("It moved to %s at %s; %s has not started since.", st.Node, x.at(t.At), st.Node)
+			s = p.T("explain.where.moved", "node", st.Node, "at", x.at(t.At))
 		} else {
-			s = fmt.Sprintf("%s has not started yet.", st.Node)
+			s = p.T("explain.where.not_started", "node", st.Node)
 		}
 	}
 	lines = append(lines, s)
+	if st.Running && len(st.Children) > 0 && st.End == "" {
+		lines = append(lines, p.T("explain.where.children", "n", len(st.Children), "children", x.children(st)))
+	}
 	if st.HaltRequested && !st.Halted && st.End == "" {
 		e := x.last(chronicle.HaltRequested, "")
-		lines = append(lines, fmt.Sprintf("A halt was requested at %s; it takes effect after the current step.", x.at(e.At)))
+		lines = append(lines, p.T("explain.where.halt_requested", "at", x.at(e.At)))
 	}
 	return lines
+}
+
+// children names the unfinished children of the running step, such as
+// "campaign 4 (item b)".
+func (x *explainer) children(st chronicle.State) string {
+	item := map[int64]string{}
+	for _, e := range x.events {
+		if e.Kind == chronicle.ChildStarted {
+			item[e.Child] = e.Item
+		}
+	}
+	var parts []string
+	for _, id := range st.Children {
+		if item[id] != "" {
+			parts = append(parts, x.p.T("explain.child_item", "child", id, "item", item[id]))
+		} else {
+			parts = append(parts, x.p.T("explain.child", "child", id))
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 // lastStep is the newest step event at a node.
@@ -270,33 +297,46 @@ func (x *explainer) checks(node string, attempt int) []string {
 		if e.Kind != chronicle.CheckFinished || e.Node != node || e.Attempt != attempt {
 			continue
 		}
-		s := e.Check + " "
 		switch {
 		case e.Error != "":
-			s += "could not run: " + e.Error
+			out = append(out, x.p.T("explain.check.error", "check", e.Check, "error", e.Error))
 		case e.Soft && e.Outcome != "ok":
-			s += e.Outcome + " (soft, a warning)"
+			out = append(out, x.p.T("explain.check.soft", "check", e.Check, "outcome", e.Outcome))
 		default:
-			s += e.Outcome
+			out = append(out, x.p.T("explain.check.ok", "check", e.Check, "outcome", e.Outcome))
 		}
-		out = append(out, s)
 	}
 	return out
 }
 
-func answers(e *chronicle.Event) string {
+func (x *explainer) answers(e *chronicle.Event) string {
 	var parts []string
 	for _, a := range e.Answers {
 		s := a.ID + ": " + a.Value
 		if a.Comment != "" {
-			s += fmt.Sprintf(" (comment %q)", a.Comment)
+			s += x.p.T("explain.answer_comment", "comment", strconv.Quote(a.Comment))
 		}
 		parts = append(parts, s)
 	}
 	return strings.Join(parts, ", ")
 }
 
+// cutOff, failed and unfinished say how an attempt ended without an
+// outcome of its own.
+func (x *explainer) cutOff(e *chronicle.Event) string {
+	return x.p.T("explain.cut_off", "node", e.Node, "attempt", e.Attempt, "failure", e.Failure, "error", e.Error)
+}
+
+func (x *explainer) failed(e *chronicle.Event) string {
+	return x.p.T("explain.attempt_failed", "node", e.Node, "attempt", e.Attempt, "failure", e.Failure, "error", trim(e.Error))
+}
+
+func (x *explainer) unfinished(e *chronicle.Event) string {
+	return x.p.T("explain.could_not_finish", "node", e.Node, "attempt", e.Attempt, "error", trim(e.Error))
+}
+
 func (x *explainer) history() []string {
+	p := x.p
 	var lines []string
 	asks := map[int64]bool{}
 	for i := range x.events {
@@ -309,60 +349,73 @@ func (x *explainer) history() []string {
 		case chronicle.StepFinished:
 			switch {
 			case e.Failure == chronicle.FailLimit || e.Failure == chronicle.FailOffline:
-				s = fmt.Sprintf("%s attempt %d was cut off (%s): %s; it does not count.", e.Node, e.Attempt, e.Failure, e.Error)
+				s = x.cutOff(e)
 			case e.Failure != "":
-				s = fmt.Sprintf("%s attempt %d failed (%s): %s.", e.Node, e.Attempt, e.Failure, strings.TrimSuffix(e.Error, "."))
+				s = x.failed(e)
 				if e.Outcome != "" {
-					s += fmt.Sprintf(" Its outcome is %s.", e.Outcome)
+					s += p.T("explain.its_outcome", "outcome", e.Outcome)
 				}
 			case e.Error != "":
-				s = fmt.Sprintf("%s attempt %d could not finish: %s.", e.Node, e.Attempt, strings.TrimSuffix(e.Error, "."))
+				s = x.unfinished(e)
 			case e.Outcome == "":
 				continue // the step asked a person; the asked event says so
 			default:
-				s = fmt.Sprintf("%s attempt %d finished with %s after %s.", e.Node, e.Attempt, e.Outcome, dur(e.Millis))
 				if cs := x.checks(e.Node, e.Attempt); len(cs) > 0 {
-					s = strings.TrimSuffix(s, ".") + "; checks: " + strings.Join(cs, ", ") + "."
+					s = p.T("explain.finished_checks", "node", e.Node, "attempt", e.Attempt, "outcome", e.Outcome, "took", dur(e.Millis),
+						"checks", strings.Join(cs, ", "))
+				} else {
+					s = p.T("explain.finished", "node", e.Node, "attempt", e.Attempt, "outcome", e.Outcome, "took", dur(e.Millis))
 				}
 			}
 			if t := x.transitionAfter(i, e.Node); t != nil && e.Outcome != "" {
-				s += fmt.Sprintf(" The flow went to %s.", t.To)
+				s += p.T("explain.went_to", "to", t.To)
 			}
 		case chronicle.Asked:
 			asks[e.Seq] = true
-			switch e.Reason {
-			case chronicle.ReasonHuman:
-				s = fmt.Sprintf("%s asked a person to choose %s", e.Node, either(e.Outcomes))
-				if len(e.Questions) > 0 {
-					s += " and to answer " + questions(e.Questions)
-				}
-				s += "."
+			switch {
+			case e.Reason == chronicle.ReasonHuman && len(e.Questions) > 0:
+				s = p.T("explain.asked_choose_answer", "node", e.Node, "outcomes", x.either(e.Outcomes), "questions", questions(e.Questions))
+			case e.Reason == chronicle.ReasonHuman:
+				s = p.T("explain.asked_choose", "node", e.Node, "outcomes", x.either(e.Outcomes))
 			default:
-				s = fmt.Sprintf("%s asked a person: %s.", e.Node, questions(e.Questions))
+				s = p.T("explain.asked", "node", e.Node, "questions", questions(e.Questions))
 			}
 		case chronicle.Answered:
 			if !asks[e.Ask] {
 				continue // only the first answer to a question counts
 			}
 			delete(asks, e.Ask)
-			s = fmt.Sprintf("%s answered %s%s", who(e), e.Node, via(e))
-			if a := answers(e); a != "" {
-				s += ": " + a
+			key := "explain.answered"
+			a := x.answers(e)
+			if a != "" {
+				key += "_answers"
 			}
 			if e.Outcome != "" {
-				s += "; chose " + e.Outcome
+				key += "_chose"
 			}
-			s += "."
+			s = p.T(key, "who", x.who(e), "node", e.Node, "via", x.via(e), "answers", a, "outcome", e.Outcome)
 		case chronicle.StepInterrupted:
-			s = fmt.Sprintf("%s attempt %d was interrupted.", e.Node, e.Attempt)
+			s = p.T("explain.interrupted", "node", e.Node, "attempt", e.Attempt)
 		case chronicle.Stopped:
-			s = fmt.Sprintf("The campaign stopped in the error state at %s: %s.", e.Node, strings.TrimSuffix(e.Error, "."))
+			s = p.T("explain.stopped", "node", e.Node, "error", trim(e.Error))
 		case chronicle.HaltRequested:
-			s = "A halt was requested."
+			s = p.T("explain.halt_requested")
 		case chronicle.Halted:
-			s = fmt.Sprintf("The campaign halted before %s.", e.Node)
+			s = p.T("explain.halted", "node", e.Node)
 		case chronicle.Resumed:
-			s = "The campaign was resumed."
+			s = p.T("explain.resumed")
+		case chronicle.ChildStarted:
+			if e.Item != "" {
+				s = p.T("explain.child_started_item", "node", e.Node, "item", e.Item, "child", e.Child)
+			} else {
+				s = p.T("explain.child_started", "node", e.Node, "child", e.Child)
+			}
+		case chronicle.ItemFinished:
+			s = p.T("explain.item_finished", "node", e.Node, "item", e.Item, "child", e.Child, "outcome", e.Outcome)
+		case chronicle.ItemNotRun:
+			s = p.T("explain.item_not_run"+"_"+e.Outcome, "node", e.Node, "item", e.Item, "needs", e.Needs)
+		case chronicle.LockWaiting:
+			s = p.T("explain.lock_waited", "node", e.Node, "lock", e.Lock, "holder", e.Holder)
 		default:
 			continue
 		}
@@ -370,9 +423,9 @@ func (x *explainer) history() []string {
 	}
 	if len(lines) == 0 {
 		if x.node != "" {
-			return []string{fmt.Sprintf("Nothing ran at %s.", x.node)}
+			return []string{p.T("explain.nothing_ran_at", "node", x.node)}
 		}
-		return []string{"Nothing has run yet."}
+		return []string{p.T("explain.nothing_ran")}
 	}
 	return lines
 }
@@ -396,6 +449,7 @@ func clip(raw json.RawMessage) string {
 }
 
 func (x *explainer) rework() []string {
+	p := x.p
 	// A move goes back when its target first ran no later than the node
 	// it leaves: the order nodes first ran in is the order of the flow as
 	// this campaign took it.
@@ -429,38 +483,40 @@ func (x *explainer) rework() []string {
 	}
 	if len(backs) == 0 {
 		if x.node != "" {
-			return []string{fmt.Sprintf("The flow never went back to %s.", x.node)}
+			return []string{p.T("explain.never_back_to", "node", x.node)}
 		}
-		return []string{"The flow never went back to an earlier step."}
+		return []string{p.T("explain.never_back")}
 	}
 	var lines []string
 	for _, to := range order {
-		lines = append(lines, fmt.Sprintf("The flow went back to %s %s.", to, times(count[to])))
+		lines = append(lines, p.T("explain.back_count", "node", to, "times", x.times(count[to])))
 	}
 	for _, b := range backs {
-		s := fmt.Sprintf("%s  %s finished with %s and sent the flow back to %s", x.at(b.e.At), b.e.Node, b.e.Outcome, b.into)
+		args := []any{"node", b.e.Node, "outcome", b.e.Outcome, "to", b.into, "why", b.why}
 		if b.why != "" {
-			s += " (" + b.why + ")"
+			lines = append(lines, x.at(b.e.At)+"  "+p.T("explain.back_why", args...))
+		} else {
+			lines = append(lines, x.at(b.e.At)+"  "+p.T("explain.back", args...))
 		}
-		lines = append(lines, s+".")
 	}
 	return lines
 }
 
-func times(n int) string {
+func (x *explainer) times(n int) string {
 	switch n {
 	case 1:
-		return "once"
+		return x.p.T("explain.once")
 	case 2:
-		return "twice"
+		return x.p.T("explain.twice")
 	}
-	return fmt.Sprintf("%d times", n)
+	return x.p.T("explain.times", "n", n)
 }
 
 // why gives what the chronicle records about the step that sent the flow
 // back: the checks that did not pass, the answers of a person, or the
 // output of an agent step.
 func (x *explainer) why(i int, t *chronicle.Event) string {
+	p := x.p
 	var fin *chronicle.Event
 	for j := i - 1; j >= 0; j-- {
 		if e := &x.events[j]; e.Kind == chronicle.StepFinished && e.Node == t.Node && e.Outcome != "" {
@@ -474,7 +530,7 @@ func (x *explainer) why(i int, t *chronicle.Event) string {
 	var parts []string
 	for _, e := range x.events[:i] {
 		if e.Kind == chronicle.CheckFinished && e.Node == t.Node && e.Attempt == fin.Attempt && e.Outcome != "ok" && !e.Soft {
-			parts = append(parts, fmt.Sprintf("required check %s reported %s", e.Check, e.Outcome))
+			parts = append(parts, p.T("explain.required_check", "check", e.Check, "outcome", e.Outcome))
 		}
 	}
 	for j := i - 1; j >= 0; j-- {
@@ -488,9 +544,9 @@ func (x *explainer) why(i int, t *chronicle.Event) string {
 			}
 			switch {
 			case len(no) > 0:
-				parts = append(parts, fmt.Sprintf("%s answered no to %s", who(e), strings.Join(no, ", ")))
+				parts = append(parts, p.T("explain.why.no", "who", x.who(e), "ids", strings.Join(no, ", ")))
 			case e.Outcome != "":
-				parts = append(parts, fmt.Sprintf("%s chose %s", who(e), e.Outcome))
+				parts = append(parts, p.T("explain.why.chose", "who", x.who(e), "outcome", e.Outcome))
 			}
 			break
 		}
@@ -499,44 +555,47 @@ func (x *explainer) why(i int, t *chronicle.Event) string {
 		}
 	}
 	if out := clip(fin.Output); out != "" {
-		parts = append(parts, "its output: "+out)
+		parts = append(parts, p.T("explain.why.output", "output", out))
 	}
 	return strings.Join(parts, "; ")
 }
 
 func (x *explainer) failures() []string {
+	p := x.p
 	var lines []string
-	for _, e := range x.events {
+	for i := range x.events {
+		e := &x.events[i]
 		if !x.wanted(e.Node) {
 			continue
 		}
 		var s string
 		switch {
 		case e.Kind == chronicle.StepFinished && (e.Failure == chronicle.FailLimit || e.Failure == chronicle.FailOffline):
-			s = fmt.Sprintf("%s attempt %d was cut off (%s): %s; it does not count.", e.Node, e.Attempt, e.Failure, e.Error)
+			s = x.cutOff(e)
 		case e.Kind == chronicle.StepFinished && e.Failure != "":
-			s = fmt.Sprintf("%s attempt %d failed (%s): %s.", e.Node, e.Attempt, e.Failure, strings.TrimSuffix(e.Error, "."))
+			s = x.failed(e)
 		case e.Kind == chronicle.StepFinished && e.Error != "":
-			s = fmt.Sprintf("%s attempt %d could not finish: %s.", e.Node, e.Attempt, strings.TrimSuffix(e.Error, "."))
+			s = x.unfinished(e)
 		case e.Kind == chronicle.StepFinished && (e.Outcome == "fail" || e.Outcome == "timeout" || e.Outcome == "blocked"):
-			s = fmt.Sprintf("%s attempt %d finished with %s", e.Node, e.Attempt, e.Outcome)
+			exit := ""
 			if e.Exit != nil {
-				s += fmt.Sprintf(" (exit code %d)", *e.Exit)
+				exit = p.T("explain.exit_code", "code", *e.Exit)
 			}
 			var req []string
 			for _, c := range x.events {
 				if c.Kind == chronicle.CheckFinished && c.Node == e.Node && c.Attempt == e.Attempt && !c.Soft && c.Outcome != "ok" && c.Error == "" {
-					req = append(req, fmt.Sprintf("%s reported %s", c.Check, c.Outcome))
+					req = append(req, p.T("explain.required_check", "check", c.Check, "outcome", c.Outcome))
 				}
 			}
+			checks := ""
 			if len(req) > 0 {
-				s += ": required check " + strings.Join(req, ", required check ")
+				checks = ": " + strings.Join(req, ", ")
 			}
-			s += "."
+			s = p.T("explain.finished_failing", "node", e.Node, "attempt", e.Attempt, "outcome", e.Outcome, "exit", exit, "checks", checks)
 		case e.Kind == chronicle.CheckFinished && e.Error != "":
-			s = fmt.Sprintf("Check %s of %s attempt %d could not run: %s.", e.Check, e.Node, e.Attempt, strings.TrimSuffix(e.Error, "."))
+			s = p.T("explain.check_error", "check", e.Check, "node", e.Node, "attempt", e.Attempt, "error", trim(e.Error))
 		case e.Kind == chronicle.Stopped:
-			s = fmt.Sprintf("The campaign stopped in the error state at %s: %s.", e.Node, strings.TrimSuffix(e.Error, "."))
+			s = p.T("explain.stopped", "node", e.Node, "error", trim(e.Error))
 		default:
 			continue
 		}
@@ -544,9 +603,9 @@ func (x *explainer) failures() []string {
 	}
 	if len(lines) == 0 {
 		if x.node != "" {
-			return []string{fmt.Sprintf("Nothing failed at %s.", x.node)}
+			return []string{p.T("explain.nothing_failed_at", "node", x.node)}
 		}
-		return []string{"Nothing failed."}
+		return []string{p.T("explain.nothing_failed")}
 	}
 	return lines
 }
@@ -555,11 +614,11 @@ func (x *explainer) warnings() []string {
 	var lines []string
 	for _, e := range x.events {
 		if e.Kind == chronicle.CheckFinished && e.Soft && e.Outcome != "ok" && e.Error == "" && x.wanted(e.Node) {
-			lines = append(lines, fmt.Sprintf("%s  The soft check %s of %s reported %s in attempt %d; it only warned.", x.at(e.At), e.Check, e.Node, e.Outcome, e.Attempt))
+			lines = append(lines, x.at(e.At)+"  "+x.p.T("explain.soft_warned", "check", e.Check, "node", e.Node, "outcome", e.Outcome, "attempt", e.Attempt))
 		}
 	}
 	if len(lines) == 0 {
-		return []string{"No soft check warned."}
+		return []string{x.p.T("explain.no_warnings")}
 	}
 	return lines
 }

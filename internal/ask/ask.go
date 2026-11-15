@@ -13,7 +13,10 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+
+	"hetman/internal/i18n"
 )
 
 // Question kinds.
@@ -74,6 +77,34 @@ func (q Question) Expect() string {
 // ErrInvalid wraps every problem with a set of answers.
 var ErrInvalid = errors.New("invalid answers")
 
+// Invalid is the error of answers that do not fit their questions. It is
+// ErrInvalid for errors.Is.
+type Invalid struct {
+	Problems []i18n.Message // sorted by their English text
+}
+
+func (e *Invalid) Error() string { return e.Localize(nil) }
+
+// Localize says the problems in the language of p.
+func (e *Invalid) Localize(p *i18n.Printer) string {
+	parts := make([]string, len(e.Problems))
+	for i, m := range e.Problems {
+		parts[i] = m.In(p)
+	}
+	return p.T("ask.invalid", "problems", strings.Join(parts, "; "))
+}
+
+// Problem says the problems alone, without the "invalid answers" lead.
+func (e *Invalid) Problem(p *i18n.Printer) string {
+	parts := make([]string, len(e.Problems))
+	for i, m := range e.Problems {
+		parts[i] = m.In(p)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func (e *Invalid) Is(target error) bool { return target == ErrInvalid }
+
 // Given is what a person answered, before it is checked.
 type Given struct {
 	Values   map[string]string // question id to answer
@@ -87,7 +118,7 @@ type Given struct {
 // case; a choice must be one of its options. A single outcome is chosen
 // without asking. It returns the answers in question order and the outcome.
 func Check(qs []Question, outcomes []string, g Given) ([]Answer, string, error) {
-	var problems []string
+	var problems []i18n.Message
 	known := map[string]bool{}
 	var out []Answer
 	for _, q := range qs {
@@ -96,7 +127,7 @@ func Check(qs []Question, outcomes []string, g Given) ([]Answer, string, error) 
 		v = strings.TrimSpace(v)
 		switch {
 		case !ok:
-			problems = append(problems, fmt.Sprintf("question %s has no answer", q.ID))
+			problems = append(problems, i18n.M("ask.no_answer", "id", q.ID))
 			continue
 		case q.Kind == YesNo:
 			switch strings.ToLower(v) {
@@ -105,7 +136,7 @@ func Check(qs []Question, outcomes []string, g Given) ([]Answer, string, error) 
 			case "no", "n":
 				v = No
 			default:
-				problems = append(problems, fmt.Sprintf("question %s: answer yes or no, not %q", q.ID, v))
+				problems = append(problems, i18n.M("ask.yes_or_no", "id", q.ID, "value", strconv.Quote(v)))
 				continue
 			}
 		case q.Kind == Choice:
@@ -114,7 +145,7 @@ func Check(qs []Question, outcomes []string, g Given) ([]Answer, string, error) 
 				found = found || o == v
 			}
 			if !found {
-				problems = append(problems, fmt.Sprintf("question %s: choose one of %s, not %q", q.ID, strings.Join(q.Options, ", "), v))
+				problems = append(problems, i18n.M("ask.choose_option", "id", q.ID, "options", strings.Join(q.Options, ", "), "value", strconv.Quote(v)))
 				continue
 			}
 		}
@@ -122,34 +153,34 @@ func Check(qs []Question, outcomes []string, g Given) ([]Answer, string, error) 
 	}
 	for id := range g.Values {
 		if !known[id] {
-			problems = append(problems, fmt.Sprintf("there is no question %s", id))
+			problems = append(problems, i18n.M("ask.no_question", "id", id))
 		}
 	}
 	for id := range g.Comments {
 		if !known[id] {
-			problems = append(problems, fmt.Sprintf("comment for %s: there is no question %s", id, id))
+			problems = append(problems, i18n.M("ask.no_question_comment", "id", id))
 		}
 	}
 	outcome := strings.TrimSpace(g.Outcome)
 	switch {
 	case len(outcomes) == 0 && outcome != "":
-		problems = append(problems, "this step takes no outcome; it follows from the answers")
+		problems = append(problems, i18n.M("ask.no_outcome_taken"))
 	case len(outcomes) == 1 && outcome == "":
 		outcome = outcomes[0]
 	case len(outcomes) > 0 && outcome == "":
-		problems = append(problems, "choose an outcome: "+strings.Join(outcomes, ", "))
+		problems = append(problems, i18n.M("ask.choose_outcome", "outcomes", strings.Join(outcomes, ", ")))
 	case len(outcomes) > 0:
 		found := false
 		for _, o := range outcomes {
 			found = found || o == outcome
 		}
 		if !found {
-			problems = append(problems, fmt.Sprintf("outcome %q is not one of %s", outcome, strings.Join(outcomes, ", ")))
+			problems = append(problems, i18n.M("ask.unknown_outcome", "outcome", strconv.Quote(outcome), "outcomes", strings.Join(outcomes, ", ")))
 		}
 	}
 	if len(problems) > 0 {
-		sort.Strings(problems)
-		return nil, "", fmt.Errorf("%w: %s", ErrInvalid, strings.Join(problems, "; "))
+		sort.Slice(problems, func(i, j int) bool { return problems[i].String() < problems[j].String() })
+		return nil, "", &Invalid{Problems: problems}
 	}
 	return out, outcome, nil
 }

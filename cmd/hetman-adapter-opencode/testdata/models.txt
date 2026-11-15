@@ -1,0 +1,19 @@
+example/fast
+{
+  "id": "fast",
+  "providerID": "example",
+  "name": "Fast",
+  "cost": {"input": 0, "output": 0},
+  "variants": {
+    "low": {},
+    "high": {}
+  }
+}
+example/plain
+{
+  "id": "plain",
+  "providerID": "example",
+  "name": "Plain",
+  "cost": {"input": 0, "output": 0},
+  "variants": {}
+}

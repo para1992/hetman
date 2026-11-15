@@ -70,7 +70,7 @@ func (e *Engine) takeLocks(ctx context.Context, node *orders.Node, attempt int) 
 					release()
 					return nil, err
 				}
-				e.say("%s waits for the lock %s, held by %s", node.ID, name, holder)
+				e.say("engine.lock_wait", "node", node.ID, "lock", name, "holder", holder)
 			}
 			if time.Since(lastLook) >= time.Second {
 				lastLook = time.Now()

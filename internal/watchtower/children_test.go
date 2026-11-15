@@ -61,16 +61,16 @@ nodes:
 	var each *watchtower.Column
 	for i := 0; i < 1500; i++ {
 		c = w.campaign(1)
-		if each = find(c.Columns, "each"); each != nil && len(each.Tiles) == 3 && strings.Contains(each.Tiles[2].Note, "failed") {
+		if each = find(c.Columns, "each"); each != nil && len(each.Tiles) == 3 && strings.Contains(each.Tiles[2].Note, "why_failed") {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	got := []string{}
 	for _, t := range each.Tiles {
-		got = append(got, fmt.Sprintf("%s:%s:%d:%s", t.Item, t.Status, t.Child, t.Note))
+		got = append(got, fmt.Sprintf("%s:%s:%d:%s%v", t.Item, t.Status, t.Child, t.Note, t.Args))
 	}
-	want := []string{"a:running:2:", "b:failed:3:", "c:notrun:0:needs b, which failed"}
+	want := []string{"a:running:2:map[]", "b:failed:3:map[]", "c:notrun:0:page.tile.child.why_failedmap[item:b]"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("tiles %v, want %v\n%s", got, want, w.dump())
 	}

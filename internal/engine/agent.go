@@ -61,7 +61,7 @@ var waitPoll = time.Second
 func (e *Engine) wait(ctx context.Context, node string, until time.Time) error {
 	if !e.waitSaid.Equal(until) {
 		e.waitSaid = until
-		e.say("%s waits for the subscription limit to reset; runs again at %s", node, until.Local().Format("2006-01-02 15:04:05"))
+		e.say("engine.limit_wait", "node", node, "until", until.Local().Format("2006-01-02 15:04:05"))
 	}
 	d := until.Sub(e.clock().Now())
 	if d > waitPoll {
@@ -239,9 +239,9 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 		return err
 	}
 	if c.session != "" {
-		e.say("%s attempt %d started (executor %s, continuing session %s)", node.ID, attempt, x.Name, c.session)
+		e.say("engine.agent_started_session", "node", node.ID, "attempt", attempt, "executor", x.Name, "session", c.session)
 	} else {
-		e.say("%s attempt %d started (executor %s)", node.ID, attempt, x.Name)
+		e.say("engine.agent_started", "node", node.ID, "attempt", attempt, "executor", x.Name)
 	}
 	began := time.Now()
 	fin := chronicle.Event{Kind: chronicle.StepFinished, Node: node.ID, Attempt: attempt,
@@ -281,7 +281,7 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 			ident, _ := processIdent(pid)
 			if err := e.record(chronicle.Event{Kind: chronicle.ProcessStarted, Node: node.ID, Attempt: attempt,
 				Details: chronicle.Details{Pid: pid, Ident: ident}}); err != nil {
-				e.say("cannot record process %d of %s: %v", pid, node.ID, err)
+				e.say("engine.cannot_record_process", "pid", pid, "node", node.ID, "error", err)
 			}
 		},
 		session: func(id string) {
@@ -290,7 +290,7 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 				Details: chronicle.Details{Session: id}}); err != nil && recordErr == nil {
 				recordErr = err
 			}
-			e.say("  %s session %s", node.ID, id)
+			e.say("engine.session", "node", node.ID, "session", id)
 		},
 	})
 	if recordErr != nil {
@@ -332,24 +332,24 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 	took := time.Duration(fin.Millis) * time.Millisecond
 	switch {
 	case questions != nil:
-		e.say("%s asks the person %d question(s), round %d of at most %d (%s)", node.ID, len(questions), c.rounds+1, node.Dialogue, took)
+		e.say("engine.dialogue", "node", node.ID, "n", len(questions), "round", c.rounds+1, "rounds", node.Dialogue, "took", took)
 		return e.record(chronicle.Event{Kind: chronicle.Asked, Node: node.ID, Attempt: attempt, Details: chronicle.Details{
 			Reason: chronicle.ReasonDialogue, Questions: questions, Round: c.rounds + 1, Session: reported}})
 	case fin.Failure == "":
-		e.say("%s finished: %s (%s)", node.ID, fin.Outcome, took)
+		e.say("engine.finished", "node", node.ID, "outcome", fin.Outcome, "took", took)
 	case fin.Failure == chronicle.FailPermanent:
-		e.say("%s attempt %d failed (permanent): %s; no retry", node.ID, attempt, fin.Error)
+		e.say("engine.failed_permanent", "node", node.ID, "attempt", attempt, "error", fin.Error)
 	case fin.Failure == chronicle.FailLimit && fin.RetryAt != nil:
-		e.say("%s attempt %d hit the subscription limit (%s); it does not count", node.ID, attempt, fin.Error)
+		e.say("engine.limit_hit", "node", node.ID, "attempt", attempt, "error", fin.Error)
 	case fin.Failure == chronicle.FailLimit:
-		e.say("%s attempt %d hit the subscription limit (%s) with no time to retry; waiting for a person", node.ID, attempt, fin.Error)
+		e.say("engine.limit_hit_no_retry", "node", node.ID, "attempt", attempt, "error", fin.Error)
 	case fin.Failure == chronicle.FailOffline:
-		e.say("%s attempt %d lost: no connectivity (%s); waiting for a person", node.ID, attempt, fin.Error)
+		e.say("engine.offline", "node", node.ID, "attempt", attempt, "error", fin.Error)
 	case fin.Outcome == orders.Fail:
-		e.say("%s attempt %d failed (%s): %s; all %d attempts used", node.ID, attempt, fin.Failure, fin.Error, node.MaxAttempts)
+		e.say("engine.failed_all", "node", node.ID, "attempt", attempt, "failure", fin.Failure, "error", fin.Error, "n", node.MaxAttempts)
 	default:
-		e.say("%s attempt %d failed (%s): %s; %d of %d attempts left", node.ID, attempt, fin.Failure, fin.Error,
-			node.MaxAttempts-st.Failures-1, node.MaxAttempts)
+		e.say("engine.failed_left", "node", node.ID, "attempt", attempt, "failure", fin.Failure, "error", fin.Error,
+			"n", node.MaxAttempts-st.Failures-1, "max", node.MaxAttempts)
 	}
 	return nil
 }

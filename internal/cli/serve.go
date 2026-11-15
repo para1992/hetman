@@ -26,7 +26,7 @@ func (c *command) serve(addr string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := engine.ContainChildren(); err != nil {
-		fmt.Fprintf(c.stderr, "hetman: step processes are not tied to this process (%v); they are cleaned up on resume instead\n", err)
+		fmt.Fprintln(c.stderr, c.p.T("cli.not_contained", "error", err))
 	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -34,12 +34,13 @@ func (c *command) serve(addr string) int {
 	}
 	srv := watchtower.New(ctx, c.o, c.chron)
 	srv.Log = c.stdout
+	srv.Lang = c.p.Lang()
 	if host, _, err := net.SplitHostPort(addr); err == nil && host != "" {
 		srv.Hosts = []string{host}
 	}
 	hs := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second,
 		BaseContext: func(net.Listener) context.Context { return ctx }}
-	fmt.Fprintf(c.stdout, "watchtower for %s on http://%s/ (Ctrl+C to stop)\n", c.o.Path, ln.Addr())
+	fmt.Fprintln(c.stdout, c.p.T("cli.serving", "path", c.o.Path, "url", fmt.Sprintf("http://%s/", ln.Addr())))
 	served := make(chan error, 1)
 	go func() { served <- hs.Serve(ln) }()
 	select {
@@ -54,6 +55,6 @@ func (c *command) serve(addr string) int {
 		fmt.Fprintln(c.stderr, "hetman:", err)
 	}
 	srv.Wait()
-	fmt.Fprintln(c.stdout, "watchtower stopped")
+	fmt.Fprintln(c.stdout, c.p.T("cli.serve_stopped"))
 	return exitInterrupted
 }

@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
+	"hetman/internal/i18n"
 	"hetman/internal/language"
 )
 
@@ -122,6 +124,18 @@ var Specs = []Spec{
 		"remove the language for the person: the flow uses English and adds no language instruction"},
 }
 
+// SummaryIn is the summary in the language of p; in English it is Summary.
+func (s Spec) SummaryIn(p *i18n.Printer) string {
+	fields := ""
+	switch s.Op {
+	case OpSet:
+		fields = strings.Join(setFields, ", ")
+	case OpUnset:
+		fields = strings.Join(unsetFields, ", ")
+	}
+	return p.T("op.summary."+s.Op, "fields", fields)
+}
+
 // SpecOf returns the spec of an operation.
 func SpecOf(op string) (Spec, bool) {
 	for _, s := range Specs {
@@ -201,89 +215,88 @@ func (op Op) Validate() error {
 	return nil
 }
 
-// Words describes the operation in plain words.
-func (op Op) Words() string {
+// Words describes the operation in plain words, in English.
+func (op Op) Words() string { return op.WordsIn(nil) }
+
+// WordsIn describes the operation in plain words in the language of p.
+func (op Op) WordsIn(p *i18n.Printer) string {
 	switch op.Op {
 	case OpNew:
-		return fmt.Sprintf("create a new flow%s whose first step is the %s node %s%s", optName(" named ", op.Flow), op.Type, op.Node, nodeWords(op))
-	case OpAdd:
-		where := "before " + op.Before
-		if op.After != "" {
-			where = "after " + op.After
-			if op.Via != "" {
-				where += " (on its outcome " + op.Via + ")"
-			}
+		key := "op.words.new"
+		if op.Flow != "" {
+			key = "op.words.new_named"
 		}
-		return fmt.Sprintf("add the %s node %s %s%s", op.Type, op.Node, where, nodeWords(op))
+		return p.T(key, "flow", op.Flow, "type", op.Type, "node", op.Node, "more", nodeWords(p, op))
+	case OpAdd:
+		args := []any{"type", op.Type, "node", op.Node, "before", op.Before, "after", op.After, "via", op.Via, "more", nodeWords(p, op)}
+		switch {
+		case op.After != "" && op.Via != "":
+			return p.T("op.words.add_after_via", args...)
+		case op.After != "":
+			return p.T("op.words.add_after", args...)
+		}
+		return p.T("op.words.add_before", args...)
 	case OpRemove:
-		return fmt.Sprintf("remove the node %s and lead whatever led to it where its main outcome led", op.Node)
+		return p.T("op.words.remove", "node", op.Node)
 	case OpRename:
-		return fmt.Sprintf("rename the node %s to %s everywhere it is referenced", op.Node, op.Name)
+		return p.T("op.words.rename", "node", op.Node, "name", op.Name)
 	case OpLink:
-		return fmt.Sprintf("make the outcome %s of %s lead to %s", op.Outcome, op.Node, op.Target)
+		return p.T("op.words.link", "outcome", op.Outcome, "node", op.Node, "target", op.Target)
 	case OpUnlink:
-		return fmt.Sprintf("remove the transition of %s on the outcome %s", op.Node, op.Outcome)
+		return p.T("op.words.unlink", "node", op.Node, "outcome", op.Outcome)
 	case OpSet:
-		return fmt.Sprintf("set %s of %s to %s", op.Field, op.Node, op.Value)
+		return p.T("op.words.set", "field", op.Field, "node", op.Node, "value", op.Value)
 	case OpUnset:
-		return fmt.Sprintf("remove %s from %s", op.Field, op.Node)
+		return p.T("op.words.unset", "field", op.Field, "node", op.Node)
 	case OpCheck:
 		var parts []string
 		if len(op.Run) > 0 {
-			parts = append(parts, "running "+strings.Join(op.Run, " "))
+			parts = append(parts, p.T("op.words.running", "run", strings.Join(op.Run, " ")))
 		}
 		if op.Timeout != "" {
-			parts = append(parts, "with the timeout "+op.Timeout)
+			parts = append(parts, p.T("op.words.with_timeout", "timeout", op.Timeout))
 		}
 		if op.Soft != nil {
-			parts = append(parts, map[bool]string{true: "soft (it only warns)", false: "required (it blocks the gate)"}[*op.Soft])
+			parts = append(parts, p.T(map[bool]string{true: "op.words.soft", false: "op.words.required"}[*op.Soft]))
 		}
 		if len(op.Locks) > 0 {
-			parts = append(parts, "holding the locks "+strings.Join(op.Locks, ", "))
+			parts = append(parts, p.T("op.words.holding_locks", "locks", strings.Join(op.Locks, ", ")))
 		}
-		return fmt.Sprintf("declare or change the check %s%s", op.Name, optList(", ", parts))
+		return p.T("op.words.check", "name", op.Name, "more", optList(", ", parts))
 	case OpExecutor:
-		return fmt.Sprintf("declare or change the executor %s, running %s", op.Name, strings.Join(op.Run, " "))
+		return p.T("op.words.executor", "name", op.Name, "run", strings.Join(op.Run, " "))
 	case OpGateAdd:
-		at := "at the end"
 		if op.At > 0 {
-			at = fmt.Sprintf("at position %d", op.At)
+			return p.T("op.words.gate_add_at", "check", op.Check, "node", op.Node, "at", op.At)
 		}
-		return fmt.Sprintf("add the check %s to the gate %s %s", op.Check, op.Node, at)
+		return p.T("op.words.gate_add", "check", op.Check, "node", op.Node)
 	case OpGateRemove:
-		return fmt.Sprintf("remove the check %s from the gate %s", op.Check, op.Node)
+		return p.T("op.words.gate_remove", "check", op.Check, "node", op.Node)
 	case OpAsk:
 		kind := op.Kind
 		if kind == "" {
 			kind = "yesno"
 		}
-		s := fmt.Sprintf("add the %s question %s to %s: %q", kind, op.ID, op.Node, op.Question)
+		args := []any{"kind", kind, "id", op.ID, "node", op.Node, "question", strconv.Quote(op.Question), "options", strings.Join(op.Options, ", ")}
 		if len(op.Options) > 0 {
-			s += " (options " + strings.Join(op.Options, ", ") + ")"
+			return p.T("op.words.ask_options", args...)
 		}
-		return s
+		return p.T("op.words.ask", args...)
 	case OpLanguage:
 		if l, ok := language.Lookup(op.Language); ok {
-			return fmt.Sprintf("write what the flow addresses to a person in %s, code %s", l.Label(), l.Code)
+			return p.T("op.words.language", "language", l.Label(), "code", l.Code)
 		}
-		return "write what the flow addresses to a person in the language " + op.Language
+		return p.T("op.words.language_code", "code", op.Language)
 	case OpUnlanguage:
-		return "remove the language for the person, so that the flow uses English and adds no language instruction"
+		return p.T("op.words.unlanguage")
 	case OpAssistant:
-		s := fmt.Sprintf("let Scribe ask the model %s through the executor %s", op.Model, op.Executor)
+		key := "op.words.assistant"
 		if op.Effort != "" {
-			s += " with the effort " + op.Effort
+			key = "op.words.assistant_effort"
 		}
-		return s
+		return p.T(key, "model", op.Model, "executor", op.Executor, "effort", op.Effort)
 	}
 	return op.Op
-}
-
-func optName(prefix, s string) string {
-	if s == "" {
-		return ""
-	}
-	return prefix + s
 }
 
 func optList(prefix string, parts []string) string {
@@ -293,43 +306,43 @@ func optList(prefix string, parts []string) string {
 	return prefix + strings.Join(parts, ", ")
 }
 
-func nodeWords(op Op) string {
+func nodeWords(p *i18n.Printer, op Op) string {
 	var parts []string
 	if len(op.Run) > 0 {
-		parts = append(parts, "running "+strings.Join(op.Run, " "))
+		parts = append(parts, p.T("op.words.running", "run", strings.Join(op.Run, " ")))
 	}
 	if len(op.Checks) > 0 {
-		parts = append(parts, "with the checks "+strings.Join(op.Checks, ", "))
+		parts = append(parts, p.T("op.words.with_checks", "checks", strings.Join(op.Checks, ", ")))
 	}
 	if op.Executor != "" {
-		parts = append(parts, "through the executor "+op.Executor)
+		parts = append(parts, p.T("op.words.through_executor", "executor", op.Executor))
 	}
 	if op.Segment != "" {
-		parts = append(parts, "running the segment "+op.Segment)
+		parts = append(parts, p.T("op.words.segment", "segment", op.Segment))
 	}
 	if op.Items != "" {
-		parts = append(parts, "once for every item of "+op.Items)
+		parts = append(parts, p.T("op.words.items", "items", op.Items))
 	}
 	if op.Parallel > 0 {
-		parts = append(parts, fmt.Sprintf("at most %d at a time", op.Parallel))
+		parts = append(parts, p.T("op.words.parallel", "n", op.Parallel))
 	}
 	if op.Input != "" {
-		parts = append(parts, "with the input "+op.Input)
+		parts = append(parts, p.T("op.words.input", "input", op.Input))
 	}
 	if len(op.Locks) > 0 {
-		parts = append(parts, "holding the locks "+strings.Join(op.Locks, ", "))
+		parts = append(parts, p.T("op.words.holding_locks", "locks", strings.Join(op.Locks, ", ")))
 	}
 	if op.Model != "" {
-		parts = append(parts, "model "+op.Model)
+		parts = append(parts, p.T("op.words.model", "model", op.Model))
 	}
 	if op.Effort != "" {
-		parts = append(parts, "effort "+op.Effort)
+		parts = append(parts, p.T("op.words.effort", "effort", op.Effort))
 	}
 	if len(op.Outcomes) > 0 {
-		parts = append(parts, "outcomes "+strings.Join(op.Outcomes, ", "))
+		parts = append(parts, p.T("op.words.outcomes", "outcomes", strings.Join(op.Outcomes, ", ")))
 	}
 	if op.Timeout != "" {
-		parts = append(parts, "timeout "+op.Timeout)
+		parts = append(parts, p.T("op.words.timeout", "timeout", op.Timeout))
 	}
 	var on []string
 	for k, v := range op.On {
@@ -337,7 +350,7 @@ func nodeWords(op Op) string {
 	}
 	sort.Strings(on)
 	if len(on) > 0 {
-		parts = append(parts, "on "+strings.Join(on, ", "))
+		parts = append(parts, p.T("op.words.on", "on", strings.Join(on, ", ")))
 	}
 	return optList(", ", parts)
 }

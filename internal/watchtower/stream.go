@@ -162,6 +162,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		}
 		id = n
 	}
+	p := s.printer(r)
 	wake := s.subscribe()
 	defer s.unsubscribe(wake)
 	out := startSSE(w)
@@ -180,7 +181,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 			}
 			return nil
 		}
-		c, events, err := s.campaign(id)
+		c, events, err := s.campaign(p, id)
 		if err != nil {
 			return err
 		}

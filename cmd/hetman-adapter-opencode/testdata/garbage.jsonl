@@ -1,0 +1,4 @@
+this line is not JSON
+{"type":"step_start","timestamp":1794700030000,"sessionID":"ses_00000000000000000000000013","part":{"id":"prt_0000000000000000000041","sessionID":"ses_00000000000000000000000013","messageID":"msg_0000000000000000000041","type":"step-start"}}
+{"type":"text","timestamp":1794700031000,"sessionID":"ses_00000000000000000000000013","part":{"id":"prt_0000000000000000000042","sessionID":"ses_00000000000000000000000013","messageID":"msg_0000000000000000000041","type":"text","text":"I am done, but I forgot the object.","time":{"start":1794700030500,"end":1794700031000}}}
+{"type":"step_finish","timestamp":1794700031200,"sessionID":"ses_00000000000000000000000013","part":{"id":"prt_0000000000000000000043","sessionID":"ses_00000000000000000000000013","messageID":"msg_0000000000000000000041","type":"step-finish","reason":"stop","cost":0,"tokens":{"input":100,"output":10,"reasoning":0,"cache":{"read":0,"write":0}}}}

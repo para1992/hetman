@@ -143,15 +143,16 @@ type Column struct {
 // Tile is one check of a gate, the single command of a step, or one child
 // campaign of a segment or for-each step.
 type Tile struct {
-	Check    string `json:"check,omitempty"`
-	Soft     bool   `json:"soft,omitempty"`
-	Status   string `json:"status"`
-	Outcome  string `json:"outcome,omitempty"`
-	Attempts int    `json:"attempts"`
-	Item     string `json:"item,omitempty"`  // for-each: the item id
-	Child    int64  `json:"child,omitempty"` // the child campaign; 0 for an item not started
-	Node     string `json:"node,omitempty"`  // where the child is
-	Note     string `json:"note,omitempty"`  // what the child waits for, or why an item does not run
+	Check    string            `json:"check,omitempty"`
+	Soft     bool              `json:"soft,omitempty"`
+	Status   string            `json:"status"`
+	Outcome  string            `json:"outcome,omitempty"`
+	Attempts int               `json:"attempts"`
+	Item     string            `json:"item,omitempty"`  // for-each: the item id
+	Child    int64             `json:"child,omitempty"` // the child campaign; 0 for an item not started
+	Node     string            `json:"node,omitempty"`  // where the child is
+	Note     string            `json:"note,omitempty"`  // what the child waits for, or why an item does not run: a message key of the page
+	Args     map[string]string `json:"args,omitempty"`  // the parameters of Note
 }
 
 // Exit is one transition out of a node.
