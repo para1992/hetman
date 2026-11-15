@@ -86,6 +86,7 @@ type Campaign struct {
 	Words         []explain.Section    `json:"words,omitempty"`    // the campaign in plain words
 	Language      *Language            `json:"language,omitempty"` // the language for the person recorded at the start
 	Retry         string               `json:"retry,omitempty"`    // the node a retry runs again; empty when nothing failed
+	Hint          string               `json:"hint,omitempty"`     // stopped in the error state: retry or resume, how to continue
 	Rewind        []string             `json:"rewind,omitempty"`   // the nodes a rewind may send the campaign back to
 	Returns       []Return             `json:"returns,omitempty"`  // every retry and rewind, oldest first
 	NoClient      string               `json:"noClient,omitempty"` // in words: no client of the role of the step at Node can run, and what is known of each
@@ -346,6 +347,7 @@ func build(k chronicle.Campaign, events []chronicle.Event, o *orders.Orders, cam
 		c.State = StateFailed
 	case st.Error != "":
 		c.State = StateError
+		c.Hint = chronicle.StopHint(events)
 	case st.Halted:
 		c.State = StateHalted
 	case st.Asking():

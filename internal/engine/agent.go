@@ -263,8 +263,8 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 	}
 	protect, writable := e.fence()
 	if c.feedback != "" && c.why == chronicle.FailDenied {
-		text += fmt.Sprintf("\n\n---\nYour previous answer (attempt %d) was not accepted because the client denied tool calls you made:\n- %s\nDo the step with the tools you are allowed. If it cannot be done without them, answer with the outcome %q and say what you need.\n",
-			c.rejected, strings.Join(deniedOf(c.feedback), "\n- "), orders.Unable)
+		text += fmt.Sprintf("\n\n---\nYour previous answer (attempt %d) was not accepted because the client denied tool calls you made:\n- %s\nThe tools entries this step allows: %s. A denied call does not mean its tool is unavailable; use a call that matches an entry. If the step cannot be done with them, answer with the outcome %q and say what you need.\n",
+			c.rejected, strings.Join(deniedOf(c.feedback), "\n- "), strings.Join(node.Tools, ", "), orders.Unable)
 	} else if c.feedback != "" {
 		text += fmt.Sprintf("\n\n---\nYour previous answer (attempt %d) was rejected because it does not match the required output schema:\n- %s\nAnswer again with a single JSON object that matches the schema.\n",
 			c.rejected, strings.ReplaceAll(c.feedback, "; ", "\n- "))
@@ -388,7 +388,7 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 	case fin.Failure == "":
 		e.say("engine.finished", "node", node.ID, "outcome", fin.Outcome, "took", took)
 	case fin.Failure == chronicle.FailUnable:
-		return e.stop(node.ID, fmt.Sprintf("%s attempt %d cannot proceed: %s", node.ID, attempt, fin.Error))
+		return e.stop(node.ID, fmt.Sprintf("%s attempt %d cannot proceed: %s%s", node.ID, attempt, fin.Error, allowedAfterAll(node, fin.Denied)))
 	case fin.Failure == chronicle.FailPermanent:
 		e.say("engine.failed_permanent", "node", node.ID, "attempt", attempt, "error", fin.Error)
 	case fin.Failure == chronicle.FailLimit && run.choice != nil:
@@ -469,7 +469,7 @@ func (e *Engine) judge(node *orders.Node, attempt int, r adapterRun, fin *chroni
 		fin.Failure, fin.Error = chronicle.FailInvalidOutput, "output is not valid JSON: "+err.Error()
 		return nil
 	}
-	if len(m.Denied) > 0 && node.FailOnDenied {
+	if deniedFails(node, m.Denied) {
 		if reason, ok, _ := unableReason(v); !ok || reason == "" {
 			fin.Failure, fin.Error = chronicle.FailDenied, deniedError(m.Denied)
 			return nil

@@ -132,6 +132,58 @@ func TestPromptNamingANodeAddedLater(t *testing.T) {
 	}
 }
 
+// show-add and show-remove change what a gate or human node shows.
+func TestShowOperations(t *testing.T) {
+	d := fixture(t)
+	for _, f := range []string{"notes.md", "{{work}}/plan.md"} {
+		if err := d.Apply(Op{Op: OpShowAdd, Node: "ready", File: f}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	o, err := d.Check()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(o.Nodes["ready"].Show, " "); got != "notes.md {{work}}/plan.md" {
+		t.Fatalf("show %q\n%s", got, d.Text())
+	}
+	if err := d.Apply(Op{Op: OpShowAdd, Node: "ready", File: "notes.md"}); err == nil {
+		t.Error("a file shown twice")
+	}
+	if err := d.Apply(Op{Op: OpShowAdd, Node: "build", File: "x.md"}); err == nil {
+		t.Error("show on a script")
+	}
+	for _, f := range []string{"notes.md", "{{work}}/plan.md"} {
+		if err := d.Apply(Op{Op: OpShowRemove, Node: "ready", File: f}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if strings.Contains(string(d.Text()), "show:") {
+		t.Fatalf("the empty list stayed:\n%s", d.Text())
+	}
+	if w := (Op{Op: OpShowAdd, Node: "ready", File: "{{work}}/plan.md"}).Words(); w != "show {{work}}/plan.md to the person at ready" {
+		t.Errorf("words %q", w)
+	}
+}
+
+// fail_on_denied takes true, false or the tools whose denials count.
+func TestSetFailOnDenied(t *testing.T) {
+	d := fixture(t)
+	if err := d.Apply(Op{Op: OpSet, Node: "review", Field: "fail_on_denied", Value: "Bash"}); err != nil {
+		t.Fatal(err)
+	}
+	o, err := d.Check()
+	if err != nil || strings.Join(o.Nodes["review"].FailOnDeniedTools, ",") != "Bash" || o.Nodes["review"].FailOnDenied {
+		t.Fatalf("%v %+v", err, o.Nodes["review"])
+	}
+	if err := d.Apply(Op{Op: OpSet, Node: "review", Field: "fail_on_denied", Value: "true"}); err != nil {
+		t.Fatal(err)
+	}
+	if o, err = d.Check(); err != nil || !o.Nodes["review"].FailOnDenied {
+		t.Fatalf("%v", err)
+	}
+}
+
 // workdir sets the default folder of agent steps; set and unset change the
 // folder of one agent node.
 func TestWorkdirOperations(t *testing.T) {

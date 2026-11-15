@@ -366,7 +366,15 @@ a campaign stopped in the error state. A campaign stops in the error state, and
 waits for a person, when a program cannot be started, a result file is not valid
 JSON, an outcome has no transition, the current node is no longer in the orders, an
 adapter does not describe itself properly, or a prompt template reads a run input
-field that does not exist. Fix the cause and resume.
+field that does not exist. How to go on depends on why it stopped, and `hetman status`,
+the explanation and the page say which: when the step itself failed (an agent attempt
+that ended with a failure, such as `cannot_proceed`), fix the cause and run `hetman
+retry`, which runs the step again with a fresh attempt budget; when the step's result
+stands and the cause lies outside it (a program that could not start, an outcome
+without a transition, a node no longer in the orders, a missing workdir, an adapter
+that does not describe itself, a child that stopped), fix the cause and run `hetman
+resume`, which continues from where the campaign stopped and runs the step again only
+if it had not finished (a stopped child is continued where it stopped).
 
 **Changing the orders while a campaign runs.** Before every step a campaign looks at
 the files of its orders (the orders file, its prompt templates, schemas and programs,
@@ -437,7 +445,7 @@ nodes:
     timeout: 30m                     # optional: limit for one attempt
     idle_timeout: 5m                 # optional: limit for silence from the adapter
     max_attempts: 3                  # optional, 1 to 100, default 3
-    fail_on_denied: true             # optional: an answer after a denied tool call fails the attempt
+    fail_on_denied: [Bash]           # optional: an answer after a denied Bash call fails the attempt (true: any tool)
     on: {ok: review, fail: failed}
 ```
 
@@ -574,12 +582,24 @@ at once. A node the flow comes back to starts with all its attempts again.
 **Denied tool calls.** An adapter reports the tool calls its client denied in a step
 with the answer; they are recorded with the attempt and shown in `hetman status`
 (`denied` lines under the attempt), `hetman scribe explain` and the step card. By
-default the answer is still accepted. With `fail_on_denied: true` on the node, an
-answer after any denied call fails the attempt (failure `denied`, which uses an
-attempt) unless the answer is `cannot_proceed`, and the next attempt's prompt quotes
-the denied calls and asks the agent to work with the tools it has or to say it cannot
-proceed. Set it on a step that must run tests or other commands, so that an agent
-whose only test command was denied cannot answer `ok` without having run it.
+default the answer is still accepted. `fail_on_denied` on the node makes such an
+answer fail the attempt (failure `denied`, which uses an attempt) unless the answer
+is `cannot_proceed`: `true` counts a denied call of any tool, a list such as `[Bash]`
+only denied calls of the tools it names, so that a harmless denial (a curious read
+outside the working folder) does not fail the attempt. The next attempt's prompt
+quotes the denied calls, lists the tools entries the step allows and asks the agent
+to work with them or to say it cannot proceed. Set `fail_on_denied: [Bash]` (the
+client's shell tool) on a step that must run tests or other commands, so that an
+agent whose only test command was denied cannot answer `ok` without having run it.
+
+A client's message for a denied call says only that it was denied, and a model may
+take it for the whole tool being unavailable. So each adapter adds to the prompt
+which entries of each tool the step allows, in the form to use, and that a denied
+call does not mean its tool is gone (for a shell tool also that commands joined with
+`&&`, `;` or `|` must match an entry as a whole). When an agent nevertheless answers
+`cannot_proceed` and every call the client denied it was of a tool the step allows
+otherwise, the stop message says so and lists those entries, since a `hetman retry`
+is then likely to succeed.
 
 **Cannot proceed.** An agent that cannot do its step at all, for example because a
 tool or file it needs is denied, answers with the reserved outcome `cannot_proceed`
@@ -986,6 +1006,13 @@ claude -p --output-format stream-json --verbose --restricted --strict-mcp-config
 
 - `model` is a model alias of the client (`haiku`, `sonnet`, `opus`) or a full model
   name; empty means the client's default. An unknown model fails the step at once.
+  The client offers no way to check a model name without a model request, so
+  `hetman check` (and an edit operation) says that a name other than an alias was not
+  verified, as a warning.
+- While the model thinks or writes, the client streams pieces of its message
+  (`--include-partial-messages`); the adapter turns them into `progress` messages, at
+  most one every ten seconds, so `idle_timeout` does not take a thinking model for a
+  silent step.
 - `effort` is `low`, `medium`, `high`, `xhigh` or `max`; empty means the client's
   default. The adapter rejects any other value, which the client would ignore.
 - `tools` lists client tool names (`Read`, `Write`, `Edit`, `Glob`, `Grep`, `Bash`,
@@ -1110,7 +1137,14 @@ protected paths.
 
 - `model` is a model in the client's `provider/model` notation, as `opencode models`
   lists it; empty means the client's default. An unknown model, or a provider the
-  client has no login for, fails the step at once.
+  client has no login for, fails the step at once. `hetman check` looks the model up
+  in the client's catalogue (`opencode models PROVIDER`, no model request) and
+  rejects one not listed; when the catalogue cannot be read, or the model names no
+  provider, it says the model was not verified.
+- In this mode the client prints a piece of its answer only once it is finished: a
+  model that thinks for long prints nothing meanwhile, and the adapter cannot tell it
+  from a silent step. Give a node with an `effort` an `idle_timeout` of at least 15
+  minutes; `hetman check` warns about a shorter one.
 - `effort` is passed as the model variant, the client's only reasoning setting.
   Variant names differ per model (`opencode models PROVIDER --verbose` lists them).
   The adapter looks the model up in the client's catalogue first and rejects a value
@@ -1203,8 +1237,9 @@ the extra argument `--describe`. It must print one line and exit with code 0:
 `protocol` lists the versions it speaks and must include 0. The features are
 `resume`, which dialogue steps need; `usage`, which the `quota` mode of a role
 reads; `protect`, which says the adapter keeps the client's file tools off the paths
-in `protect` (below); and `check`, which says it can check steps without running
-them.
+in `protect` (below); `check`, which says it can check steps without running them;
+and `progress`, which says it sends progress messages while its client works
+silently.
 
 **Usage.** An adapter that declares `usage` answers the extra arguments `--usage
 five_hour weekly` with one line and exit code 0, without making a model request: its
@@ -1253,7 +1288,10 @@ Without contacting a model it prints one line and exits with code 0:
 ```
 
 `field` is `model`, `effort` or `tools`, `item` the index of a tools entry from 0.
-Hetman reports each problem at its line of the orders file and rejects the file.
+Hetman reports each problem at its line of the orders file and rejects the file; a
+problem with `"warning": true` (something the adapter could not verify, such as a
+model name) is shown as a warning and rejects nothing. The edit operations run the
+same check on the changed orders and show what it finds as warnings.
 
 **Messages from the adapter.**
 
@@ -1265,6 +1303,11 @@ Hetman reports each problem at its line of the orders file and rejects the file.
 ```
 
 - `log` lines are shown live as the step's log.
+- `progress` (`{"v":0,"type":"progress"}`) says the client still works, for example
+  while a model thinks, without anything worth logging: it resets `idle_timeout` and
+  is not shown. Send it only with the `progress` feature, at most every few seconds.
+  `hetman check` warns when a node with an `effort` has an `idle_timeout` under 15
+  minutes and its adapter does not declare `progress`.
 - `session` reports the id of the conversation; send it only with the `resume`
   feature.
 - `result` and `error` may carry `"denied"`: the tool calls the client denied during the step,
@@ -1734,6 +1777,8 @@ hetman scribe assistant EXECUTOR MODEL [-effort E]   name the model Scribe may a
 hetman scribe language CODE                  set the language for the person
 hetman scribe unlanguage                     remove it: English, and nothing added to prompts
 hetman scribe workdir FOLDER                 set the folder agent steps work in by default
+hetman scribe show-add NODE FILE             show a file to the person at a gate or human node
+hetman scribe show-remove NODE FILE          stop showing it
 ```
 
 `TYPE` is `script`, `gate`, `agent`, `human`, `segment` or `foreach`. The node flags

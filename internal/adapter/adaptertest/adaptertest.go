@@ -380,6 +380,10 @@ func run(t *testing.T, cfg Config, desc adapter.Description, st adapter.Step, ca
 func check(t *testing.T, desc adapter.Description, m adapter.Message, r *stepRun) {
 	t.Helper()
 	switch m.Type {
+	case adapter.TypeProgress:
+		if !desc.Has(adapter.FeatureProgress) {
+			t.Errorf("the adapter sent a progress message without declaring the progress feature")
+		}
 	case adapter.TypeSession:
 		if !desc.Has(adapter.FeatureResume) {
 			t.Errorf("the adapter sent a session id without declaring the resume feature")

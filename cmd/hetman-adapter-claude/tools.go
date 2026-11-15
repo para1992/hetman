@@ -35,6 +35,16 @@ import (
 // turns that off.
 const readOnlyNote = "note: with Bash available the client also runs commands it judges read-only (ls, cat, head, tail, grep, find, wc, diff and the like) without a matching entry; the adapter cannot turn this off"
 
+// scopeNote tells the model which entries of each tool the step allows.
+func scopeNote(tools []string) string {
+	var entries []adapter.ScopeEntry
+	for _, t := range tools {
+		name, content, _, _ := splitTool(t)
+		entries = append(entries, adapter.ScopeEntry{Tool: name, Pattern: content})
+	}
+	return adapter.ScopeNote(entries, "Bash")
+}
+
 // pathOnlyIn maps a tool whose path rules never match to the tool whose
 // rules do.
 var pathOnlyIn = map[string]string{"Write": "Edit", "MultiEdit": "Edit", "NotebookEdit": "Edit", "Glob": "Read"}
@@ -119,8 +129,16 @@ func stepProblems(_ options, st adapter.Step, _ io.Writer) []adapter.CheckProble
 			out = append(out, adapter.ToolProblem(i, msg))
 		}
 	}
+	if st.Model != "" && !modelAliases[st.Model] {
+		out = append(out, adapter.CheckProblem{Field: adapter.FieldModel, Warning: true, Message: fmt.Sprintf(
+			"model %q was not verified: the client cannot check a model name without a model request; an unknown one fails the step at once", st.Model)})
+	}
 	return out
 }
+
+// modelAliases are the model aliases the client's help names; any other
+// model name cannot be checked without a model request.
+var modelAliases = map[string]bool{"haiku": true, "sonnet": true, "opus": true, "fable": true}
 
 // rulePath writes an absolute path the way the client's permission rules
 // name one: "//" and the path with forward slashes, a Windows drive letter

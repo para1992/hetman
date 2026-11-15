@@ -268,6 +268,8 @@ func (e *editing) apply() error {
 	case OpUnlanguage:
 		e.unset(e.root(), "language")
 		return nil
+	case OpShowAdd, OpShowRemove:
+		return e.show()
 	case OpWorkdir:
 		if strings.TrimSpace(e.op.Workdir) == "" {
 			return fmt.Errorf("workdir needs a folder, such as . or ..")
@@ -943,10 +945,19 @@ func (e *editing) setField() error {
 		}
 		v = num(k)
 	case "fail_on_denied":
-		if op.Value != "true" && op.Value != "false" {
-			return fmt.Errorf("fail_on_denied is true or false, not %q", op.Value)
+		// true, false, or the tools whose denied calls fail the attempt.
+		if op.Value == "true" || op.Value == "false" {
+			v = &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: op.Value}
+			break
 		}
-		v = &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: op.Value}
+		list, err := SplitList(op.Value)
+		if err != nil {
+			return err
+		}
+		if len(list) == 0 {
+			return fmt.Errorf("fail_on_denied is true, false or a list of tool names such as Bash")
+		}
+		v = flowSeq(list)
 	case "tools":
 		list, err := SplitList(op.Value)
 		if err != nil {
@@ -1317,6 +1328,49 @@ func (e *editing) gateRemove() error {
 		}
 	}
 	return fmt.Errorf("%s does not run the check %s", op.Node, op.Check)
+}
+
+// show adds a file to the show list of a gate or human node, or removes
+// one; the list goes when its last file does.
+func (e *editing) show() error {
+	op := e.op
+	n, err := e.node(op.Node)
+	if err != nil {
+		return err
+	}
+	if typ := scalarOf(n, "type"); typ != orders.Gate && typ != orders.Human {
+		return fmt.Errorf("%s is a %s node; show is set only on a gate or a human node", op.Node, typ)
+	}
+	_, list := lookup(n, "show")
+	if list != nil && list.Kind != yaml.SequenceNode {
+		return fmt.Errorf("the show of %s is not a list", op.Node)
+	}
+	if op.Op == OpShowRemove {
+		if list != nil {
+			for i, f := range list.Content {
+				if f.Value == op.File {
+					if len(list.Content) == 1 {
+						e.unset(n, "show")
+					} else {
+						e.t.remove(list, i)
+					}
+					return nil
+				}
+			}
+		}
+		return fmt.Errorf("%s does not show %s", op.Node, op.File)
+	}
+	if list == nil {
+		e.set(n, "show", flowSeq([]string{op.File}), nodeOrder)
+		return nil
+	}
+	for _, f := range list.Content {
+		if f.Value == op.File {
+			return fmt.Errorf("%s already shows %s", op.Node, op.File)
+		}
+	}
+	e.t.insert(list, len(list.Content), nil, str(op.File))
+	return nil
 }
 
 func (e *editing) addQuestion() error {

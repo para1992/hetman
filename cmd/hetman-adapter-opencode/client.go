@@ -162,6 +162,16 @@ func title(st adapter.Step) string {
 func fullPrompt(st adapter.Step) string {
 	var b strings.Builder
 	b.WriteString(strings.TrimRight(st.Prompt, "\n"))
+	var entries []adapter.ScopeEntry
+	for _, t := range st.Tools {
+		t = strings.TrimSpace(t)
+		e := adapter.ScopeEntry{Tool: t}
+		if g := toolRule.FindStringSubmatch(t); g != nil {
+			e = adapter.ScopeEntry{Tool: strings.TrimSpace(g[1]), Pattern: strings.TrimSpace(g[2])}
+		}
+		entries = append(entries, e)
+	}
+	b.WriteString(strings.TrimRight(adapter.ScopeNote(entries, "bash"), "\n"))
 	b.WriteString("\n\n---\nAnswer format: when you are done, end your reply with exactly one JSON object")
 	if s := schemaArg(st.Schema); s != "" {
 		b.WriteString(" that matches this JSON Schema:\n\n")

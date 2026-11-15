@@ -70,6 +70,18 @@ func TestUnableStopsForAPerson(t *testing.T) {
 	want(t, f.finished(), []string{"a#1 /invalid_output", "a#2 ok/"})
 }
 
+// An agent that says it cannot proceed after denials only of a tool the
+// step allows otherwise: the stop message lists the entries it did not use.
+func TestUnableAfterADenialOfAnAllowedTool(t *testing.T) {
+	f := setupAgent(t, strings.Replace(unableAgent(""), "schema: s.json,", `schema: s.json, tools: [Read, "Bash(sh ../checks/try.sh *)"],`, 1), map[string]string{"p.md": "Do it.", "s.json": okSchema,
+		"plan.json": `{"trace": "trace.jsonl", "nodes": {"a": [[{"result": {"outcome": "cannot_proceed", "cannot_proceed_reason": "Bash is denied"}, "denied": ["Bash ls; cat x: matched none of the step's entries Bash(sh ../checks/try.sh *)"]}]]}}`}, "")
+	f.drive(Errored)
+	stops := f.events(chronicle.Stopped)
+	if len(stops) != 1 || !strings.Contains(stops[0].Error, "cannot proceed: Bash is denied (every call the client denied was of a tool the step allows otherwise, as Bash(sh ../checks/try.sh *); the agent may have taken the denial for the whole tool, so hetman retry is likely to succeed)") {
+		t.Fatalf("stop %+v", stops)
+	}
+}
+
 // With a transition for it, the reserved outcome is followed like any other.
 func TestUnableFollowsItsTransition(t *testing.T) {
 	f := setupAgent(t, unableAgent(", cannot_proceed: escalate"), map[string]string{"p.md": "Do it.", "s.json": okSchema,
@@ -96,6 +108,15 @@ func TestDeniedCallsAndFailOnDenied(t *testing.T) {
 	if p := f.steps()[1].Prompt; !strings.Contains(p, "was not accepted because the client denied tool calls you made:\n- Bash go test ./...: matched none") {
 		t.Fatalf("second prompt:\n%s", p)
 	}
+	// With a scope, only denied calls of the tools it names fail an attempt.
+	scoped := strings.Replace(unableAgent(""), "schema: s.json,", "schema: s.json, fail_on_denied: [Bash],", 1)
+	f = setupAgent(t, scoped, map[string]string{"p.md": "Do it.", "s.json": okSchema,
+		"plan.json": `{"trace": "trace.jsonl", "nodes": {"a": [[{"result": {"outcome": "ok"}, "denied": ["Read /etc/hosts: not among the step's tools"]}]]}}`}, "")
+	f.drive(Done)
+	want(t, f.finished(), []string{"a#1 ok/"})
+	f = setupAgent(t, scoped, map[string]string{"p.md": "Do it.", "s.json": okSchema, "plan.json": plan}, "")
+	f.drive(Done)
+	want(t, f.finished(), []string{"a#1 /denied", "a#2 ok/"})
 }
 
 // An edit to a segment reaches its running child at the next step: here
@@ -130,6 +151,16 @@ nodes:
 	if !strings.Contains(out.String(), "seg.yaml changed; the next steps use it") {
 		t.Fatalf("progress:\n%s", out.String())
 	}
+}
+
+// Progress messages keep a step that says nothing else alive past its
+// idle_timeout.
+func TestProgressResetsTheIdleTimer(t *testing.T) {
+	p := `{"progress": true}, {"sleep": "600ms"}, `
+	f := setupAgent(t, strings.Replace(unableAgent(""), "schema: s.json,", "schema: s.json, idle_timeout: 1s,", 1), map[string]string{"p.md": "Do it.", "s.json": okSchema,
+		"plan.json": `{"trace": "trace.jsonl", "nodes": {"a": [[` + p + p + p + `{"result": {"outcome": "ok"}}]]}}`}, "")
+	f.drive(Done)
+	want(t, f.finished(), []string{"a#1 ok/"})
 }
 
 const limitOrders = `version: 0

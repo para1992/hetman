@@ -149,8 +149,10 @@ type Node struct {
 	// or the orders' default.
 	Workdir string
 	// Agent nodes: an answer after a tool call the client denied fails the
-	// attempt instead of being accepted.
-	FailOnDenied bool
+	// attempt instead of being accepted: after any denied call when
+	// FailOnDenied, else after a denied call of one of FailOnDeniedTools.
+	FailOnDenied      bool
+	FailOnDeniedTools []string
 
 	// Any node: resources its steps hold exclusively, as written.
 	Locks []string

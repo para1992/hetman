@@ -54,6 +54,24 @@ func TestCheckFlag(t *testing.T) {
 	}
 }
 
+// The check looks a model up in the client's catalogue: one not listed is
+// a problem, one that cannot be looked up is said to be unverified.
+func TestCheckModels(t *testing.T) {
+	t.Setenv(envFake, "normal")
+	in := adapter.EncodeCheck([]adapter.Step{{NodeID: "a", Model: "example/fast"}, {NodeID: "b", Model: "example/missing"}, {NodeID: "c", Model: "bare"}})
+	var out, diag bytes.Buffer
+	if code := run(append(fakeArgs(t), adapter.CheckFlag), bytes.NewReader(in), &out, &diag); code != 0 {
+		t.Fatalf("exit %d: %s", code, diag.String())
+	}
+	problems, err := adapter.ParseCheckReply(out.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(problems) != 2 || problems[0].NodeID != "b" || problems[0].Warning || problems[1].NodeID != "c" || !problems[1].Warning {
+		t.Fatalf("problems %+v", problems)
+	}
+}
+
 // pathForms writes a path relative to the working folder and to every
 // folder above it, as the client may write it relative to its worktree.
 func TestPathForms(t *testing.T) {

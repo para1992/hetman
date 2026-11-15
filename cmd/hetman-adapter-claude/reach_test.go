@@ -65,6 +65,21 @@ func TestCheckFlag(t *testing.T) {
 	}
 }
 
+// A model name other than the client's aliases is reported as not
+// verified, a warning, and does not stop a step.
+func TestModelNotVerified(t *testing.T) {
+	ps := stepProblems(options{}, adapter.Step{Model: "some-model"}, io.Discard)
+	if len(ps) != 1 || !ps[0].Warning || ps[0].Field != adapter.FieldModel || !strings.Contains(ps[0].Message, "was not verified") {
+		t.Fatalf("problems %+v", ps)
+	}
+	if ps := stepProblems(options{}, adapter.Step{Model: "sonnet"}, io.Discard); len(ps) != 0 {
+		t.Fatalf("an alias: %+v", ps)
+	}
+	if err := checkStep(adapter.Step{Model: "some-model"}); err != nil {
+		t.Fatalf("a warning stopped the step: %v", err)
+	}
+}
+
 // Protected paths become Edit deny rules, around the writable folder when
 // it lies inside one; a writable folder outside the working folder is
 // added as a working folder; an Edit rule with a path makes Write
@@ -147,6 +162,24 @@ func TestWorkdirBehindALink(t *testing.T) {
 	}
 	if strings.Contains(args, "--add-dir") {
 		t.Errorf("the work folder inside the working folder was added:\n%s", args)
+	}
+}
+
+// While the model thinks, the client streams pieces of its message; the
+// adapter turns them into progress messages, not log lines.
+func TestProgressWhileThinking(t *testing.T) {
+	old := progressEvery
+	progressEvery = 0
+	defer func() { progressEvery = old }()
+	msgs := stepRun(t, "thinking", testStep(t.TempDir()))
+	n := 0
+	for _, m := range msgs {
+		if m.Type == adapter.TypeProgress {
+			n++
+		}
+	}
+	if n != 3 || strings.Contains(logText(msgs), "Let me think") || final(msgs).Type != adapter.TypeResult {
+		t.Fatalf("progress %d, messages %+v", n, msgs)
 	}
 }
 

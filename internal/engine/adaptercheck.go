@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -69,7 +70,13 @@ func CheckAdapters(ctx context.Context, o *orders.Orders) (errs, warnings orders
 				}
 				described[key] = d
 			}
-			if failed[key] || !d.Has(adapter.FeatureCheck) {
+			if failed[key] {
+				continue
+			}
+			if !d.Has(adapter.FeatureProgress) {
+				warnings = append(warnings, quietWarnings(o, name, byExecutor[name])...)
+			}
+			if !d.Has(adapter.FeatureCheck) {
 				continue
 			}
 			steps := byExecutor[name]
@@ -98,12 +105,59 @@ func CheckAdapters(ctx context.Context, o *orders.Orders) (errs, warnings orders
 				} else if p.Field != "" {
 					msg = fmt.Sprintf("node %q: %s: %s (adapter of executor %s)", p.NodeID, p.Field, p.Message, name)
 				}
+				if p.Warning {
+					warnings = append(warnings, orders.Problem{File: o.Path, Line: line, Col: col, Msg: "warning: " + msg})
+					continue
+				}
 				errs = append(errs, orders.Problem{File: o.Path, Line: line, Col: col, Msg: msg})
 			}
 		}
 	}
 	walk(o, 0)
 	return errs, warnings
+}
+
+// AdapterWarnings is CheckAdapters for a flow being edited: everything it
+// finds, as warnings in the form edit.Warnings gives them, since an edit is
+// not refused for what an adapter says.
+func AdapterWarnings(ctx context.Context, o *orders.Orders) []string {
+	errs, warnings := CheckAdapters(ctx, o)
+	var out []string
+	for _, p := range append(errs, warnings...) {
+		msg := strings.TrimPrefix(p.Msg, "warning: ")
+		if p.Line == 0 {
+			out = append(out, fmt.Sprintf("%s: %s", filepath.Base(p.File), msg))
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s:%d:%d: %s", filepath.Base(p.File), p.Line, p.Col, msg))
+	}
+	return out
+}
+
+// QuietIdle is the shortest idle_timeout hetman check accepts without a
+// warning for a node with an effort whose adapter sends no progress
+// messages: a model asked for a high effort may think for many minutes
+// without a word, and its client prints nothing meanwhile.
+const QuietIdle = 15 * time.Minute
+
+// quietWarnings warns about nodes that set an effort and an idle_timeout
+// shorter than QuietIdle on an adapter that reports nothing while the
+// model thinks.
+func quietWarnings(o *orders.Orders, executor string, steps []adapter.Step) orders.Problems {
+	var out orders.Problems
+	seen := map[string]bool{}
+	for _, st := range steps {
+		n := o.Nodes[st.NodeID]
+		if seen[st.NodeID] || st.Effort == "" || n == nil || n.IdleTimeout == 0 || n.IdleTimeout >= QuietIdle {
+			continue
+		}
+		seen[st.NodeID] = true
+		line, col := orders.Position(o.Path, st.NodeID, "idle_timeout", -1)
+		out = append(out, orders.Problem{File: o.Path, Line: line, Col: col, Msg: fmt.Sprintf(
+			"warning: node %q: idle_timeout %s with effort %q: the adapter of executor %s sends nothing while the model thinks, which may take longer; use at least %s",
+			st.NodeID, n.IdleTimeout, st.Effort, executor, QuietIdle)})
+	}
+	return out
 }
 
 // adapterEnv is the environment an adapter is asked to describe or check

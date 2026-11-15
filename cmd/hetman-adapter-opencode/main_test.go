@@ -335,7 +335,8 @@ func TestCommandLineAndEnvironment(t *testing.T) {
 	if err := json.Unmarshal([]byte(inv.Config), &cfg); err != nil {
 		t.Errorf("configuration is not JSON: %v", err)
 	}
-	if !strings.HasPrefix(inv.Prompt, "write the note\n\n---\nAnswer format:") ||
+	if !strings.HasPrefix(inv.Prompt, "write the note\n\n---\nThe tools of this step") || !strings.Contains(inv.Prompt, "- bash: only a command line that matches one of `go test *`, `git status`\n") ||
+		!strings.Contains(inv.Prompt, "\n\n---\nAnswer format:") ||
 		!strings.Contains(inv.Prompt, `{"type":"object","properties":{"outcome":{"type":"string","enum":["ok"]}},"required":["outcome"]}`) {
 		t.Errorf("prompt on standard input:\n%s", inv.Prompt)
 	}

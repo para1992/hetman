@@ -34,6 +34,7 @@ func TestParseMessage(t *testing.T) {
 	good := map[string]Message{
 		`{"v":0,"type":"log","text":""}`:      {Type: TypeLog},
 		`{"v":0,"type":"session","id":"abc"}`: {Type: TypeSession, ID: "abc"},
+		`{"v":0,"type":"progress"}`:           {Type: TypeProgress},
 		`{"v":0,"type":"error","kind":"limit","message":"m","retry_at":"2030-01-02T03:04:05Z"}`: {Type: TypeError, Kind: ErrLimit, Message: "m", RetryAt: "2030-01-02T03:04:05Z"},
 		`{"v":0,"type":"error","kind":"offline"}`:                                               {Type: TypeError, Kind: ErrOffline},
 	}
@@ -61,7 +62,7 @@ func TestParseMessage(t *testing.T) {
 		`{"v":0,"type":"error","kind":"oops"}`:  `kind "oops"`,
 		`{"v":0,"type":"error","kind":"transient","retry_at":"2030-01-02T03:04:05Z"}`: "only on an error of kind limit",
 		`{"v":0,"type":"error","kind":"limit","retry_at":"tomorrow"}`:                 "not an RFC 3339 time",
-		`{"v":0,"type":"progress"}`:     `unknown message type "progress"`,
+		`{"v":0,"type":"status"}`:       `unknown message type "status"`,
 		`{"v":0,"type":"log","text":5}`: "malformed",
 	}
 	for line, want := range bad {

@@ -74,16 +74,20 @@ type block struct {
 const answerTool = "StructuredOutput"
 
 // stream follows the client's events.
+// progressEvery is the least time between two progress messages.
+var progressEvery = 10 * time.Second
+
 type stream struct {
-	workdir string
-	allowed []string // the step's tools entries
-	out     *sender
-	session string
-	tools   map[string]string          // tool name by tool use id
-	inputs  map[string]json.RawMessage // tool input by tool use id
-	refused map[string]string          // the error the client returned for a tool call, by tool use id
-	denied  []string                   // the denied tool calls, described with the client's reason
-	result  *event
+	workdir      string
+	lastProgress time.Time // when the last progress message was sent
+	allowed      []string  // the step's tools entries
+	out          *sender
+	session      string
+	tools        map[string]string          // tool name by tool use id
+	inputs       map[string]json.RawMessage // tool input by tool use id
+	refused      map[string]string          // the error the client returned for a tool call, by tool use id
+	denied       []string                   // the denied tool calls, described with the client's reason
+	result       *event
 	// API errors the client reported in assistant messages
 	apiErrors []event
 	// the reset time of a limit that was reached, Unix seconds
@@ -106,6 +110,15 @@ func (s *stream) line(raw []byte) {
 	if ev.SessionID != "" && s.session == "" {
 		s.session = ev.SessionID
 		s.out.session(ev.SessionID)
+	}
+	if ev.Type == "stream_event" {
+		// A piece of a message still being written, thinking included:
+		// a sign of life, not worth a log line.
+		if now := time.Now(); now.Sub(s.lastProgress) >= progressEvery {
+			s.lastProgress = now
+			s.out.send(adapter.Message{Type: adapter.TypeProgress})
+		}
+		return
 	}
 	indent := ""
 	if ev.ParentToolUseID != nil && *ev.ParentToolUseID != "" {

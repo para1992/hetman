@@ -93,7 +93,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if check {
-		if err := adapter.ServeCheck(stdin, stdout, func(st adapter.Step) []adapter.CheckProblem { return stepProblems(o, st, stderr) }); err != nil {
+		if err := adapter.ServeCheck(stdin, stdout, func(st adapter.Step) []adapter.CheckProblem {
+			return append(stepProblems(o, st, stderr), modelProblems(o, st)...)
+		}); err != nil {
 			fmt.Fprintf(stderr, "%s adapter: %v\n", adapterName, err)
 			return 2
 		}

@@ -306,9 +306,12 @@ nodes:
   with the full prompt and every question a person answered so far.
 - **Denied tool calls.** The adapter reports the tool calls its client denied; they
   show in `hetman status`. For a step that must run tests or other commands, set
-  `fail_on_denied: true` on the node (`hetman scribe set NODE fail_on_denied true`),
-  so that an answer after a denied call fails the attempt instead of being accepted;
-  recommend it to the person for such steps. Give the commands as narrow patterns
+  `fail_on_denied: [Bash]` on the node (`hetman scribe set NODE fail_on_denied Bash`;
+  the client's shell tool, by the name its adapter uses), so that an answer after a denied
+  command fails the attempt instead of being accepted, while a harmless denied read
+  does not; recommend it to the person for such steps. `true` counts every tool.
+- **Thinking takes time.** A node with an `effort` needs an `idle_timeout` of 15
+  minutes or more unless its adapter sends progress messages; `hetman check` warns. Give the commands as narrow patterns
   the client can match whole: `Bash(make -C work *)` rather than a `cd work && make`
   the agent might try.
 - **Gates tell why they blocked.** The files the checks of a gate list in their result
@@ -495,6 +498,8 @@ hetman scribe assistant EXECUTOR MODEL [-effort E]   the model hetman scribe may
 hetman scribe language CODE                  the language for the person, such as es
 hetman scribe unlanguage                     remove it: English, nothing added to prompts
 hetman scribe workdir FOLDER                 the folder agent steps work in, such as ..
+hetman scribe show-add NODE FILE             show a file at a gate or human node; {{work}}/FILE for the work folder
+hetman scribe show-remove NODE FILE          stop showing it
 ```
 
 Node flags: `-run 'CMD ARGS'` (one string, split at spaces; quote an argument that has

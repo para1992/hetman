@@ -22,7 +22,7 @@ import (
 // testdata. Files recorded from the real client and sanitized: normal,
 // resume, badmodel, noauth, offline and resume_missing (the .stderr files
 // too). Files written by hand after the client's own message schema: the two
-// limit files, garbage, textjson, ok and denied.
+// limit files, garbage, textjson, ok, denied and thinking.
 const (
 	envSelf   = "HETMAN_TEST_ADAPTER_SELF" // the test binary runs the adapter
 	envFake   = "FAKE_CLIENT_SCENARIO"     // the test binary acts as the client
@@ -77,7 +77,7 @@ func fakeClient(scenario string) int {
 		}
 	}
 	switch scenario {
-	case "normal", "garbage", "textjson", "denied":
+	case "normal", "garbage", "textjson", "denied", "thinking":
 		return replay(scenario, 0)
 	case "resume":
 		if resume == "" {
@@ -270,15 +270,16 @@ func TestCommandLineAndEnvironment(t *testing.T) {
 	st.Tools = []string{"Read", "Write", "Bash(go test *)", "Bash(git status)"}
 	stepRun(t, "normal", st)
 	inv := recorded(t, rec)[0]
-	want := []string{"-p", "--output-format", "stream-json", "--verbose", "--restricted", "--strict-mcp-config",
+	want := []string{"-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--restricted", "--strict-mcp-config",
 		"--permission-mode", "dontAsk", "--permission-prompts", "none", "--tools=Read,Write,Bash",
 		"--allowedTools=Read", "--allowedTools=Write", "--allowedTools=Bash(go test *)", "--allowedTools=Bash(git status)",
 		"--model", "haiku", "--effort", "low", "--json-schema", `{"type":"object","properties":{"outcome":{"type":"string","enum":["ok"]}},"required":["outcome"]}`}
 	if strings.Join(inv.Args, "\n") != strings.Join(want, "\n") {
 		t.Errorf("arguments\n got %q\nwant %q", inv.Args, want)
 	}
-	if inv.Prompt != st.Prompt {
-		t.Errorf("prompt on standard input %q, want %q", inv.Prompt, st.Prompt)
+	// The prompt, then which entries of each tool the step allows.
+	if inv.Prompt != st.Prompt+scopeNote(st.Tools) || !strings.Contains(inv.Prompt, "- Bash: only a command line that matches one of `go test *`, `git status`") {
+		t.Errorf("prompt on standard input %q", inv.Prompt)
 	}
 	env := strings.Join(inv.Env, " ")
 	for _, name := range []string{"ANTHROPIC_API_KEY", "CLAUDECODE", "HETMAN_RUN_ID", envSelf} {

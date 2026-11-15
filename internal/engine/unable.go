@@ -45,6 +45,62 @@ If you cannot do this step at all, for example because a tool or file you need i
 `, orders.Unable, orders.UnableField)
 }
 
+// allowedAfterAll points a person at entries the agent did not use when an
+// agent says it cannot proceed and every call the client denied it was of
+// a tool the step allows otherwise: the stated reason is then likely a
+// wrong conclusion from the denial, and a retry likely to succeed. It is
+// empty otherwise; the engine does not argue with the agent beyond this.
+func allowedAfterAll(node *orders.Node, denied []string) string {
+	if len(denied) == 0 {
+		return ""
+	}
+	var entries []string
+	seen := map[string]bool{}
+	for _, d := range denied {
+		tool := deniedTool(d)
+		found := false
+		for _, t := range node.Tools {
+			name, _, _ := strings.Cut(strings.TrimSpace(t), "(")
+			if strings.EqualFold(strings.TrimSpace(name), tool) {
+				found = true
+				if !seen[t] {
+					seen[t] = true
+					entries = append(entries, t)
+				}
+			}
+		}
+		if !found {
+			return ""
+		}
+	}
+	return fmt.Sprintf(" (every call the client denied was of a tool the step allows otherwise, as %s; the agent may have taken the denial for the whole tool, so hetman retry is likely to succeed)", strings.Join(entries, ", "))
+}
+
+// deniedTool is the tool of a denied call as adapters write it: the tool,
+// what it was called on, and the reason.
+func deniedTool(call string) string {
+	end := strings.IndexAny(call, " :")
+	if end < 0 {
+		return call
+	}
+	return call[:end]
+}
+
+// deniedFails reports whether denied calls fail an attempt of node.
+func deniedFails(node *orders.Node, denied []string) bool {
+	for _, d := range denied {
+		if node.FailOnDenied {
+			return true
+		}
+		for _, t := range node.FailOnDeniedTools {
+			if strings.EqualFold(t, deniedTool(d)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // deniedError says which tool calls the client denied, one per line after
 // the first, so that deniedOf can take them apart for the next prompt.
 func deniedError(denied []string) string {

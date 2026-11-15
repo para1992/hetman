@@ -46,6 +46,10 @@ const (
 	// FeatureCheck: the adapter checks the model, effort and tools of steps
 	// without running them when started with CheckFlag (see check.go).
 	FeatureCheck = "check"
+	// FeatureProgress: the adapter sends progress messages while its
+	// client works without output, such as while a model thinks, so a step
+	// is not taken for silent by idle_timeout.
+	FeatureProgress = "progress"
 	// FeatureUsage: the adapter answers UsageFlag with its client's usage
 	// of the named windows, measured by the client, without a model
 	// request.
@@ -131,6 +135,11 @@ const (
 	TypeSession = "session"
 	TypeResult  = "result"
 	TypeError   = "error"
+	// TypeProgress says the client is still working, for example while a
+	// model thinks, without anything worth logging. It resets the step's
+	// idle timer and is not shown. Send it only with FeatureProgress, and
+	// not more often than every few seconds.
+	TypeProgress = "progress"
 )
 
 // Error kinds an adapter reports.
@@ -283,6 +292,7 @@ func ParseMessage(line []byte) (Message, error) {
 		if m.ID == "" {
 			return m, errors.New("session message has no id")
 		}
+	case TypeProgress:
 	case TypeResult:
 		if len(m.Output) == 0 || string(m.Output) == "null" {
 			return m, errors.New("result message has no output")

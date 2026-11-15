@@ -2,6 +2,7 @@ package watchtower
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -146,7 +147,8 @@ type FlowNode struct {
 	Model    string            `json:"model,omitempty"`
 	Effort   string            `json:"effort,omitempty"`
 	Attempts int               `json:"attempts,omitempty"`
-	Ask      []string          `json:"ask,omitempty"` // question ids
+	Ask      []string          `json:"ask,omitempty"`  // question ids
+	Show     []string          `json:"show,omitempty"` // files shown to the person
 }
 
 // FlowRole is a declared role.
@@ -182,7 +184,7 @@ func (s *Server) handleFlow(w http.ResponseWriter, r *http.Request) {
 		for _, id := range o.Order {
 			n := o.Nodes[id]
 			fn := FlowNode{ID: id, Type: n.Type, On: n.On, Run: n.Run, Checks: n.Checks, Executor: n.Executor, Role: n.Role,
-				Model: n.Model, Effort: n.Effort, Attempts: n.MaxAttempts}
+				Model: n.Model, Effort: n.Effort, Attempts: n.MaxAttempts, Show: n.Show}
 			if n.Timeout > 0 {
 				fn.Timeout = n.Timeout.String()
 			}
@@ -447,7 +449,7 @@ func (s *Server) change(p *i18n.Printer, f FlowFile, op edit.Op) (*edit.Doc, Cha
 	case err != nil:
 		c.Problems = []string{err.Error()}
 	default:
-		c.Warnings = edit.Warnings(o)
+		c.Warnings = append(edit.Warnings(o), engine.AdapterWarnings(context.Background(), o)...)
 	}
 	if err := s.mayWrite(f, doc); err != nil {
 		c.Refused = err.Error()

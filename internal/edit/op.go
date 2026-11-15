@@ -33,6 +33,8 @@ const (
 	OpLanguage   = "language"    // set the language for the person
 	OpUnlanguage = "unlanguage"  // remove the language for the person
 	OpWorkdir    = "workdir"     // set the folder agent steps work in unless a node names its own
+	OpShowAdd    = "show-add"    // add a file to what a gate or human node shows the person
+	OpShowRemove = "show-remove" // remove a file from what a gate or human node shows
 )
 
 // Op is one operation on an orders file. Only the fields its operation
@@ -80,6 +82,7 @@ type Op struct {
 	Workdir  string            `json:"workdir,omitempty"`  // workdir: the default folder of agent steps; add: an agent node's own; new: the default
 	Max      int               `json:"max,omitempty"`      // link: how many times the transition may be taken
 	Then     string            `json:"then,omitempty"`     // link with max: the outcome taken instead after that
+	File     string            `json:"file,omitempty"`     // show-add, show-remove: a file relative to the orders folder, or {{work}}/FILE
 	Role     string            `json:"role,omitempty"`     // a new agent node: the role whose clients run it
 	Select   string            `json:"select,omitempty"`   // role: fixed, round_robin or quota
 }
@@ -137,6 +140,10 @@ var Specs = []Spec{
 		"write what the flow addresses to a person (questions, summaries, plans) in this language, given by its code; code and the repository stay English"},
 	{OpUnlanguage, nil, nil, nil,
 		"remove the language for the person: the flow uses English and adds no language instruction"},
+	{OpShowAdd, []string{"node", "file"}, []string{"node", "file"}, nil,
+		"add a file to what a gate or human node shows the person before answering: relative to the orders folder, or {{work}}/FILE for one in the campaign's work folder"},
+	{OpShowRemove, []string{"node", "file"}, []string{"node", "file"}, nil,
+		"remove a file from what a gate or human node shows the person"},
 	{OpWorkdir, []string{"workdir"}, []string{"workdir"}, nil,
 		"set the folder agent steps work in, relative to the orders folder, for every agent node that names none of its own"},
 }
@@ -233,7 +240,7 @@ func (op Op) Validate() error {
 	if op.Executor != "" && op.Role != "" {
 		return fmt.Errorf("%s: an agent node names either a role or an executor, not both", op.Op)
 	}
-	for _, s := range append(append(append([]string{op.Value, op.Question, op.Model, op.Effort, op.Segment, op.Input, op.Items, op.Workdir, op.Then}, op.Run...), op.Options...), op.Tools...) {
+	for _, s := range append(append(append([]string{op.Value, op.Question, op.Model, op.Effort, op.Segment, op.Input, op.Items, op.Workdir, op.Then, op.File}, op.Run...), op.Options...), op.Tools...) {
 		if strings.ContainsAny(s, "\r\n") {
 			return fmt.Errorf("%s: values must be one line", op.Op)
 		}
@@ -273,6 +280,10 @@ func (op Op) WordsIn(p *i18n.Printer) string {
 		return p.T("op.words.link", "outcome", op.Outcome, "node", op.Node, "target", op.Target)
 	case OpWorkdir:
 		return p.T("op.words.workdir", "workdir", op.Workdir)
+	case OpShowAdd:
+		return p.T("op.words.show_add", "file", op.File, "node", op.Node)
+	case OpShowRemove:
+		return p.T("op.words.show_remove", "file", op.File, "node", op.Node)
 	case OpUnlink:
 		return p.T("op.words.unlink", "node", op.Node, "outcome", op.Outcome)
 	case OpSet:

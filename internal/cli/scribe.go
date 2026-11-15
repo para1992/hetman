@@ -49,6 +49,8 @@ var opUsage = []struct{ op, form, example string }{
 	{edit.OpAssistant, "assistant EXECUTOR MODEL [-effort E]", "hetman scribe assistant stub any-model"},
 	{edit.OpLanguage, "language CODE", "hetman scribe language pt"},
 	{edit.OpUnlanguage, "unlanguage", "hetman scribe unlanguage"},
+	{edit.OpShowAdd, "show-add NODE FILE", "hetman scribe show-add approve '{{work}}/plan.md'"},
+	{edit.OpShowRemove, "show-remove NODE FILE", "hetman scribe show-remove approve notes.md"},
 	{edit.OpWorkdir, "workdir FOLDER", "hetman scribe workdir .."},
 }
 
@@ -252,6 +254,8 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 			op.Items = value
 		case "workdir":
 			op.Workdir = value
+		case "file":
+			op.File = value
 		case "then":
 			op.Then = value
 		case "locks", "checks", "tools", "outcomes", "options":
@@ -358,7 +362,7 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 	if checkErr != nil {
 		fmt.Fprintf(stderr, "%v\n%s\n", checkErr, p.T("scribe.does_not_pass"))
 	} else {
-		for _, s := range edit.Warnings(o) {
+		for _, s := range append(edit.Warnings(o), engine.AdapterWarnings(context.Background(), o)...) {
 			fmt.Fprintln(stderr, "warning:", s)
 		}
 	}

@@ -43,6 +43,23 @@ func sqlitePath(t *testing.T, uri string) string {
 	return b.String()
 }
 
+// A failed agent attempt is retried; any other stop is resumed.
+func TestStopHint(t *testing.T) {
+	failed := []Event{{Kind: CampaignStarted, Node: "a"}, {Kind: StepStarted, Node: "a", Attempt: 1},
+		{Kind: StepFinished, Node: "a", Attempt: 1, Details: Details{Failure: FailUnable, Error: "no"}}, {Kind: Stopped, Node: "a", Details: Details{Error: "no"}}}
+	if h := StopHint(failed); h != HintRetry {
+		t.Errorf("unable: %q", h)
+	}
+	other := []Event{{Kind: CampaignStarted, Node: "a"}, {Kind: StepStarted, Node: "a", Attempt: 1},
+		{Kind: StepFinished, Node: "a", Attempt: 1, Outcome: "odd"}, {Kind: Stopped, Node: "a", Details: Details{Error: "no transition"}}}
+	if h := StopHint(other); h != HintResume {
+		t.Errorf("no transition: %q", h)
+	}
+	if h := StopHint(failed[:2]); h != "" {
+		t.Errorf("not stopped: %q", h)
+	}
+}
+
 func TestFileURI(t *testing.T) {
 	for _, path := range []string{
 		`C:/Users/RUNNER~1/AppData/Local/Temp/hetman-test-2927611789/.hetman/chronicle.db`,

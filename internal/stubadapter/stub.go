@@ -31,6 +31,7 @@
 //	{"log": "text"}                      send a log message
 //	{"session": "id"}                    send a session message
 //	{"stderr": "text"}                   write a line to standard error
+//	{"progress": true}                   send a progress message
 //	{"sleep": "2s"}                      wait (a cancel message ends the wait)
 //	{"touch": "path"}                    create an empty file, for tests to wait on
 //	{"write": "path", "text": "..."}     write a file, as an agent working in the folder would
@@ -104,24 +105,25 @@ type When struct {
 
 // Move is one thing the adapter does.
 type Move struct {
-	Log     *string         `json:"log"`
-	Session string          `json:"session"`
-	Stderr  string          `json:"stderr"`
-	Sleep   string          `json:"sleep"`
-	Touch   string          `json:"touch"`
-	Result  json.RawMessage `json:"result"`
-	Error   string          `json:"error"`
-	Message string          `json:"message"`
-	RetryIn string          `json:"retry_in"`
-	RetryAt string          `json:"retry_at"`
-	Raw     *string         `json:"raw"`
-	Exit    *int            `json:"exit"`
-	Code    int             `json:"code"`
-	Hang    bool            `json:"hang"`
-	Require string          `json:"require_session"`
-	Write   string          `json:"write"`
-	Denied  []string        `json:"denied"`
-	Text    string          `json:"text"`
+	Log      *string         `json:"log"`
+	Session  string          `json:"session"`
+	Stderr   string          `json:"stderr"`
+	Sleep    string          `json:"sleep"`
+	Touch    string          `json:"touch"`
+	Result   json.RawMessage `json:"result"`
+	Error    string          `json:"error"`
+	Message  string          `json:"message"`
+	RetryIn  string          `json:"retry_in"`
+	RetryAt  string          `json:"retry_at"`
+	Raw      *string         `json:"raw"`
+	Exit     *int            `json:"exit"`
+	Code     int             `json:"code"`
+	Hang     bool            `json:"hang"`
+	Require  string          `json:"require_session"`
+	Write    string          `json:"write"`
+	Denied   []string        `json:"denied"`
+	Progress bool            `json:"progress"`
+	Text     string          `json:"text"`
 }
 
 type stub struct {
@@ -357,6 +359,8 @@ func (s *stub) do(m Move, step adapter.Step) (int, bool) {
 		s.send(adapter.Message{Type: adapter.TypeSession, ID: m.Session})
 	case m.Stderr != "":
 		fmt.Fprintln(s.stderr, m.Stderr)
+	case m.Progress:
+		s.send(adapter.Message{Type: adapter.TypeProgress})
 	case m.Sleep != "":
 		d, err := time.ParseDuration(m.Sleep)
 		if err != nil {

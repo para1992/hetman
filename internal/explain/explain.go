@@ -188,7 +188,7 @@ func (x *explainer) where() []string {
 		s = p.T(key, "node", t.Node, "outcome", t.Outcome, "at", x.at(t.At))
 	case st.Error != "":
 		e := x.last(chronicle.Stopped, "")
-		s = p.T("explain.where.error", "node", e.Node, "at", x.at(e.At), "error", trim(e.Error))
+		s = p.T("explain.where.error", "node", e.Node, "at", x.at(e.At), "error", trim(e.Error)) + " " + p.T("explain.hint."+chronicle.StopHint(x.events))
 	case st.Halted:
 		e := x.last(chronicle.Halted, "")
 		s = p.T("explain.where.halted", "node", e.Node, "at", x.at(e.At))

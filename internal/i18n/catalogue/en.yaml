@@ -67,6 +67,8 @@ explain.stopped: "The campaign stopped in the error state at {node}: {error}."
 explain.halt_requested: A halt was requested.
 explain.halted: The campaign halted before {node}.
 explain.resumed: The campaign was resumed.
+explain.hint.retry: The step itself failed; once the cause is fixed, hetman retry runs it again with a fresh attempt budget.
+explain.hint.resume: Once the cause is fixed, hetman resume continues from where it stopped.
 explain.child_started: "{node} ran its segment as campaign {child}."
 explain.child_started_item: "{node} ran item {item} as campaign {child}."
 explain.item_finished: "{node}: item {item} (campaign {child}) ended {outcome}."
@@ -124,6 +126,8 @@ op.words.executor: declare or change the executor {name}, running {run}
 op.words.gate_add: add the check {check} to the gate {node} at the end
 op.words.gate_add_at: add the check {check} to the gate {node} at position {at}
 op.words.gate_remove: remove the check {check} from the gate {node}
+op.words.show_add: show {file} to the person at {node}
+op.words.show_remove: stop showing {file} at {node}
 op.words.ask: "add the {kind} question {id} to {node}: {question}"
 op.words.ask_options: "add the {kind} question {id} to {node}: {question} (options {options})"
 op.words.language: write what the flow addresses to a person in {language}, code {code}
@@ -157,6 +161,8 @@ op.summary.check: declare a check, or change the command, timeout, soft flag or 
 op.summary.executor: declare an executor (an adapter program and its arguments), or change its command
 op.summary.gate-add: add a declared check to a gate, at a position from 1 (the end when not given)
 op.summary.gate-remove: remove a check from a gate
+op.summary.show-add: "add a file to what a gate or human node shows the person before answering: relative to the orders folder, or {{work}}/FILE for one in the campaign's work folder"
+op.summary.show-remove: remove a file from what a gate or human node shows the person
 op.summary.ask: add a question to a gate (yes or no) or a human node (yesno, choice with options, or text)
 op.summary.assistant: name the executor and model Scribe may ask to turn a sentence into one operation
 op.summary.language: write what the flow addresses to a person (questions, summaries, plans) in this language, given by its code; code and the repository stay English
@@ -298,6 +304,7 @@ cli.interrupted: campaign {id} interrupted; the current step runs again on hetma
 cli.halted: campaign {id} halted; continue with hetman resume -c {id}
 cli.waiting: campaign {id} waits for a person; when the cause is gone, run hetman resume -c {id}
 cli.error_state: campaign {id} stopped in the error state; fix the cause and run hetman resume -c {id}
+cli.error_state_retry: campaign {id} stopped in the error state because its step failed; fix the cause and run hetman retry -c {id}, which runs the step again with a fresh attempt budget
 cli.halt_already: campaign {id} is already halted
 cli.halt_pending: campaign {id} will halt after its current step
 cli.halt_done: campaign {id} halted at {node}
@@ -391,6 +398,9 @@ status.agent.continued: "    continued session {session}"
 status.agent.session: "    session  {session}"
 status.agent.output: "    output   {output}"
 status.d.error: "error: {error} (fix the cause, then hetman resume)"
+status.reason: "{node}: {reason}"
+status.reason_below: (reason below)
+status.d.error_retry: "error: {error} (fix the cause, then hetman retry runs the step again)"
 status.d.asking_driven: "waiting for a person at {node}: hetman answer (the running hetman process continues once answered)"
 status.d.asking: "waiting for a person at {node}: hetman answer (no hetman process drives it: after answering, hetman resume continues it)"
 status.d.answered: answered at {node}, but no hetman process drives it (hetman resume to continue)
@@ -582,7 +592,7 @@ wizard.which_executor: Which executor runs it?
 wizard.no_executor: No executor is declared yet; declare the adapter that runs agent steps.
 wizard.model: Model, passed to the adapter as is (Enter for none)
 wizard.effort: Effort, passed to the adapter as is (Enter for none)
-wizard.fail_on_denied_hint: "Recommended for a step that must run tests or other commands: fail_on_denied true (under \"change an agent step\"), so that an answer after a tool call the client denied fails the attempt instead of being accepted."
+wizard.fail_on_denied_hint: "Recommended for a step that must run tests or other commands: fail_on_denied Bash (under \"change an agent step\"), so that an answer after a command the client denied fails the attempt instead of being accepted, while a denied read elsewhere does not; true counts every tool."
 wizard.outcomes: Outcomes the model may report, separated by commas
 wizard.if_outcome: If the outcome is {outcome}, go to
 wizard.if_step_fails: If the step fails, go to
@@ -713,6 +723,7 @@ page.fact.language: language {language}{code}
 page.fact.language_title: Text for a person is written in this language
 page.error_state: "Stopped in the error state:"
 page.error_fix: Fix the cause, then resume.
+page.error_fix_retry: The step failed. Fix the cause, then retry it.
 page.tab.pipeline: Pipeline
 page.tab.timeline: Timeline
 page.tab.chronicle: Chronicle
@@ -960,6 +971,8 @@ page.op.agent: Change an agent setting
 page.op.ask: Add a question
 page.op.gate_add: Add a check to this gate
 page.op.gate_remove: Remove a check from this gate
+page.op.show_add: Show a file to the person here
+page.op.show_remove: Stop showing a file here
 page.op.soft: Mark a check soft or required
 page.field.type: Type
 page.field.node: Name of the new node
@@ -981,6 +994,7 @@ page.field.question: Question
 page.field.kind: Kind of answer
 page.field.options: Options
 page.field.max: At most, times per campaign
+page.field.file: File
 page.field.then: Then take the outcome
 page.field.check: Check
 page.field.at: Position
@@ -994,6 +1008,7 @@ page.field.hint.value: A duration such as 30s, 5m or 1h; empty removes the setti
 page.field.hint.at: From 1; empty for the end.
 page.field.hint.starters: Only files that do not exist yet are created, next to the orders.
 page.field.hint.options: Separated by commas.
+page.field.hint.file: "Relative to the orders folder, or {{work}}/FILE for a file in the campaign's work folder."
 page.field.hint.max: How many times this transition may be taken in one campaign; once it has been, the outcome under "Then take the outcome" is taken instead. Empty for no limit.
 page.kv.type: Type
 page.kv.run: Command

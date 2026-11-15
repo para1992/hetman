@@ -111,7 +111,7 @@ func opSchema() map[string]any {
 	}
 	props := map[string]any{"op": map[string]any{"type": "string", "enum": ops}}
 	for _, f := range []string{"node", "type", "after", "via", "before", "name", "outcome", "target", "field", "value",
-		"check", "id", "question", "kind", "flow", "timeout", "executor", "role", "model", "effort", "prompt", "schema", "segment", "input", "items", "workdir", "then"} {
+		"check", "id", "question", "kind", "flow", "timeout", "executor", "role", "model", "effort", "prompt", "schema", "segment", "input", "items", "workdir", "then", "file"} {
 		props[f] = str
 	}
 	for _, f := range []string{"options", "run", "checks", "tools", "outcomes", "locks"} {
@@ -316,6 +316,7 @@ const fieldHelp = `  node: a node id (for new and add: the new node's id); type:
   outcomes: the outcomes of an agent or human node; on: transitions other than the defaults, as {"outcome": "target"};
   soft: true for a check that only warns, false for a required one; starters: true to create missing prompt and schema files;
   max and then (link): the transition may be taken max times per campaign, then the outcome then is taken instead;
+  file (show-add, show-remove): a file a gate or human node shows, relative to the orders folder or as {{work}}/FILE;
   workdir: the folder agent steps work in, relative to the orders folder (workdir; add: one agent node's own);
   language: the code of the language for the person, one of ` + "%s" + `.
 `

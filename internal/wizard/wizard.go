@@ -7,6 +7,7 @@ package wizard
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"strings"
 
 	"hetman/internal/edit"
+	"hetman/internal/engine"
 	"hetman/internal/i18n"
 	"hetman/internal/language"
 	"hetman/internal/orders"
@@ -177,7 +179,7 @@ func (w *wizard) commit(ops []edit.Op) bool {
 	for _, n := range doc.NotesIn(w.p) {
 		fmt.Fprintln(w.out, w.p.T("op.note", "note", n))
 	}
-	for _, s := range edit.Warnings(o) {
+	for _, s := range append(edit.Warnings(o), engine.AdapterWarnings(context.Background(), o)...) {
 		fmt.Fprintln(w.out, "warning:", s) // i18n: keep; the orders check problems stay as tools read them
 	}
 	ok, err := w.yesno(w.p.T("wizard.write_it"), true)
@@ -745,7 +747,7 @@ func (w *wizard) changeAgent() ([]edit.Op, error) {
 	}
 	node := w.o.Nodes[n]
 	cur := map[string]string{"executor": node.Executor, "model": node.Model, "effort": node.Effort,
-		"tools": strings.Join(node.Tools, ", "), "attempts": strconv.Itoa(node.MaxAttempts), "fail_on_denied": strconv.FormatBool(node.FailOnDenied)}[field]
+		"tools": strings.Join(node.Tools, ", "), "attempts": strconv.Itoa(node.MaxAttempts), "fail_on_denied": failOnDenied(node)}[field]
 	if field == "fail_on_denied" {
 		fmt.Fprintln(w.out, w.p.T("wizard.fail_on_denied_hint"))
 	}
@@ -757,6 +759,14 @@ func (w *wizard) changeAgent() ([]edit.Op, error) {
 		return []edit.Op{{Op: edit.OpUnset, Node: n, Field: field}}, nil
 	}
 	return []edit.Op{{Op: edit.OpSet, Node: n, Field: field, Value: v}}, nil
+}
+
+// failOnDenied writes a node's fail_on_denied as the set operation takes it.
+func failOnDenied(n *orders.Node) string {
+	if len(n.FailOnDeniedTools) > 0 {
+		return strings.Join(n.FailOnDeniedTools, ", ")
+	}
+	return strconv.FormatBool(n.FailOnDenied)
 }
 
 func (w *wizard) declareCheck() ([]edit.Op, error) {

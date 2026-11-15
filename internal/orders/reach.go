@@ -122,10 +122,21 @@ func (p *parser) agentReach(node *Node, keyN *yaml.Node, fields map[string]entry
 		}
 	}
 	if f, ok := fields[FailOnDeniedKey]; ok {
-		if f.value.Kind != yaml.ScalarNode || f.value.Tag != "!!bool" {
-			p.errorf(f.value, "%s: %s must be true or false", what, FailOnDeniedKey)
-		} else {
-			node.FailOnDenied = f.value.Value == "true"
+		switch v := f.value; {
+		case v.Kind == yaml.ScalarNode && v.Tag == "!!bool":
+			node.FailOnDenied = v.Value == "true"
+		case v.Kind == yaml.SequenceNode && len(v.Content) > 0:
+			for _, item := range v.Content {
+				if s, ok := p.scalar(resolve(item), what+": "+FailOnDeniedKey+" item"); ok {
+					if strings.TrimSpace(s) == "" || strings.ContainsAny(s, "() ") {
+						p.errorf(item, "%s: %s lists tool names, such as Bash, not %q", what, FailOnDeniedKey, s)
+						continue
+					}
+					node.FailOnDeniedTools = append(node.FailOnDeniedTools, s)
+				}
+			}
+		default:
+			p.errorf(v, "%s: %s is true (any denied call), false, or a list of the tools whose denied calls fail the attempt, such as [Bash]", what, FailOnDeniedKey)
 		}
 	}
 	if contains(node.ModelOutcomes(), Unable) {

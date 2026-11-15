@@ -201,6 +201,8 @@ func runAdapter(ctx context.Context, p adapterProc) adapterRun {
 				io.WriteString(p.log, text)
 			case adapter.TypeSession:
 				p.session(m.ID)
+			case adapter.TypeProgress:
+				// Only a sign of life: the idle timer was reset above.
 			default:
 				r.terminal = &m
 				stopTimer(idle)

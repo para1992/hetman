@@ -1,0 +1,6 @@
+{"type":"system","subtype":"init","cwd":"$WORKDIR","session_id":"00000004-0000-4000-8000-000000000004","tools":["StructuredOutput"],"mcp_servers":[],"model":"claude-haiku-5-5","permissionMode":"dontAsk","apiKeySource":"none"}
+{"type":"stream_event","event":{"type":"message_start"},"session_id":"00000004-0000-4000-8000-000000000004","parent_tool_use_id":null}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me think"}},"session_id":"00000004-0000-4000-8000-000000000004","parent_tool_use_id":null}
+{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" about it."}},"session_id":"00000004-0000-4000-8000-000000000004","parent_tool_use_id":null}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_02","name":"StructuredOutput","input":{"outcome":"ok"}}]},"parent_tool_use_id":null,"session_id":"00000004-0000-4000-8000-000000000004"}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"result":"","structured_output":{"outcome":"ok"},"session_id":"00000004-0000-4000-8000-000000000004"}

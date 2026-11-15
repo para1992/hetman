@@ -262,7 +262,7 @@ Warnings:
 	e.add(chronicle.Event{Kind: chronicle.Stopped, Node: "ship", Details: chronicle.Details{Error: `ship attempt 1: cannot start ./ship.sh: no such file`}})
 	same(t, Text(Campaign(chronicle.Campaign{ID: 5, Flow: "f"}, e, Summary, "", time.UTC)), `Where it is:
   Campaign 5 of flow f started at 2026-03-02 09:00:00 at ship.
-  It stopped in the error state at ship at 2026-03-02 09:00:03: ship attempt 1: cannot start ./ship.sh: no such file.
+  It stopped in the error state at ship at 2026-03-02 09:00:03: ship attempt 1: cannot start ./ship.sh: no such file. Once the cause is fixed, hetman resume continues from where it stopped.
 
 What ran:
   2026-03-02 09:00:02  ship attempt 1 could not finish: cannot start ./ship.sh: no such file.

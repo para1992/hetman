@@ -396,7 +396,11 @@ func (c *command) drive(id int64) int {
 		fmt.Fprintln(c.stdout, c.p.T("cli.waiting", "id", id))
 		return exitWaiting
 	default:
-		fmt.Fprintln(c.stdout, c.p.T("cli.error_state", "id", id))
+		key := "cli.error_state"
+		if events, err := c.chron.Events(id); err == nil && chronicle.StopHint(events) == chronicle.HintRetry {
+			key = "cli.error_state_retry"
+		}
+		fmt.Fprintln(c.stdout, c.p.T(key, "id", id))
 		return exitError
 	}
 }

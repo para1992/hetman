@@ -88,7 +88,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if describe {
 		data, _ := json.Marshal(adapter.Description{Protocol: []int{adapter.Version}, Name: adapterName,
-			Features: []string{adapter.FeatureResume, adapter.FeatureProtect, adapter.FeatureCheck}})
+			Features: []string{adapter.FeatureResume, adapter.FeatureProtect, adapter.FeatureCheck, adapter.FeatureProgress}})
 		fmt.Fprintf(stdout, "%s\n", data)
 		return 0
 	}
@@ -208,8 +208,10 @@ var efforts = []string{"low", "medium", "high", "xhigh", "max"}
 // checkStep rejects a step the client would not run as written, naming
 // the first problem (see stepProblems).
 func checkStep(st adapter.Step) error {
-	if ps := stepProblems(options{}, st, io.Discard); len(ps) > 0 {
-		return errors.New(adapter.ProblemText(st, ps[0]))
+	for _, p := range stepProblems(options{}, st, io.Discard) {
+		if !p.Warning {
+			return errors.New(adapter.ProblemText(st, p))
+		}
 	}
 	return nil
 }

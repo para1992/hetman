@@ -562,7 +562,7 @@
           language: h('b', { text: c.language.english ? c.language.english + ' (' + c.language.native + ')' : c.language.code }),
           code: c.language.english ? ' ' + c.language.code : '' })) : null,
         pos ? h('span', null, pos) : null),
-      c.error ? h('div', { class: 'problem' }, h('b', { text: t('page.error_state') + ' ' }), c.error, '\n' + t('page.error_fix')) : null,
+      c.error ? h('div', { class: 'problem' }, h('b', { text: t('page.error_state') + ' ' }), c.error, '\n' + t(c.hint === 'retry' ? 'page.error_fix_retry' : 'page.error_fix')) : null,
       waitNote(c),
       c.ordersProblem ? h('div', { class: 'problem soft', text: c.ordersProblem }) : null,
       h('nav', { class: 'tabs' }, ['pipeline', 'timeline', 'chronicle', 'words'].map((x) =>

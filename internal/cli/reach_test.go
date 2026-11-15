@@ -69,6 +69,41 @@ func TestInterfaceLanguageIsThePersons(t *testing.T) {
 	}
 }
 
+// A long reason goes under the status table instead of stretching it, and
+// a stop that is not a failed step points at resume.
+func TestLongReasonUnderTheTable(t *testing.T) {
+	w := newWorld(t, "  a: {type: script, run: "+arg("badresult")+", on: {ok: done, fail: failed}}\n")
+	out := w.call(exitError, "run")
+	if !strings.Contains(out, "hetman resume -c 1") {
+		t.Fatalf("run:\n%s", out)
+	}
+	status := w.call(0, "status")
+	var table, below bool
+	for _, line := range strings.Split(status, "\n") {
+		if strings.HasPrefix(line, "> a") || strings.HasPrefix(line, "  a ") {
+			table = strings.Contains(line, "(reason below)") && len(line) < 120
+		}
+		if strings.HasPrefix(line, "a: result file is not valid JSON") {
+			below = true
+		}
+	}
+	if !table || !below {
+		t.Fatalf("status:\n%s", status)
+	}
+}
+
+// hetman check warns about a node with an effort and a short idle_timeout
+// on an adapter that sends no progress messages.
+func TestCheckWarnsAboutQuietThinking(t *testing.T) {
+	w := newAgentWorld(t, `{"trace": "trace.jsonl"}`, "Do it.")
+	text, _ := os.ReadFile(w.orders)
+	os.WriteFile(w.orders, []byte(strings.Replace(string(text), "max_attempts: 1,", "max_attempts: 1, idle_timeout: 5m,", 1)), 0o644)
+	var stdout, stderr bytes.Buffer
+	if code := Main([]string{"check", "-f", w.orders}, &stdout, &stderr); code != exitDone || !strings.Contains(stderr.String(), `warning: node "a": idle_timeout 5m0s with effort "e1": the adapter of executor stub sends nothing while the model thinks`) {
+		t.Fatalf("check exit %d:\n%s%s", code, stdout.String(), stderr.String())
+	}
+}
+
 // hetman check rejects an entry with unbalanced parentheses at its line,
 // and asks an adapter that can check steps about the rest.
 func TestCheckAsksTheAdapter(t *testing.T) {

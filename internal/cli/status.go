@@ -44,6 +44,9 @@ type agentAttempt struct {
 	choice                  *chronicle.Choice // how the client of a step run through a role was chosen
 }
 
+// resultWidth is the longest text the RESULT column of status shows.
+const resultWidth = 60
+
 func (c *command) status(id int64, listEvents bool) int {
 	k, err := c.campaign(id)
 	if err != nil {
@@ -72,7 +75,7 @@ func (c *command) status(id int64, listEvents bool) int {
 		case chronicle.StepStarted:
 			v := view(e.Node)
 			v.attempts++
-			v.attempt, v.running, v.outcome, v.err, v.artifacts = e.Attempt, true, "", "", nil
+			v.attempt, v.running, v.outcome, v.err, v.artifacts, v.millis = e.Attempt, true, "", "", nil, 0
 			v.checks = map[string]chronicle.Event{}
 			if e.Executor != "" {
 				v.agent = append(v.agent, &agentAttempt{n: e.Attempt, executor: e.Executor, model: e.Model, effort: e.Effort,
@@ -149,6 +152,7 @@ func (c *command) status(id int64, listEvents bool) int {
 			order = append(order, n)
 		}
 	}
+	var reasons []string // long reasons, printed under the table
 	for _, n := range order {
 		typ := "?"
 		var node *orders.Node
@@ -192,6 +196,11 @@ func (c *command) status(id int64, listEvents bool) int {
 		if v.interrupted > 0 {
 			attempts += p.T("status.interrupted_count", "n", v.interrupted)
 		}
+		// A long reason would stretch the table; it goes under it.
+		if len([]rune(outcome)) > resultWidth {
+			reasons = append(reasons, p.T("status.reason", "node", n, "reason", outcome))
+			outcome = p.T("status.reason_below")
+		}
 		fmt.Fprintf(tw, "%s %s\t%s\t%s\t%s\t%s\t%s\t\n", marker, n, typ, p.T("status.st."+status), outcome, attempts, dur)
 		if node != nil {
 			for _, name := range node.Checks {
@@ -203,6 +212,9 @@ func (c *command) status(id int64, listEvents bool) int {
 		}
 	}
 	tw.Flush()
+	for _, r := range reasons {
+		fmt.Fprintln(w, r)
+	}
 	for _, n := range order {
 		if v := views[n]; v != nil && len(v.artifacts) > 0 {
 			fmt.Fprintln(w, p.T("status.artifacts", "node", n, "files", strings.Join(v.artifacts, ", ")))
@@ -478,6 +490,9 @@ func (c *command) describe(id int64, st chronicle.State) string {
 	case st.End != "":
 		return st.End
 	case st.Error != "":
+		if events, err := c.chron.Events(id); err == nil && chronicle.StopHint(events) == chronicle.HintRetry {
+			return p.T("status.d.error_retry", "error", st.Error)
+		}
 		return p.T("status.d.error", "error", st.Error)
 	}
 	alive, _ := engine.Driven(c.o, id)

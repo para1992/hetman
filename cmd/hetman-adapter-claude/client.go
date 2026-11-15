@@ -29,10 +29,12 @@ import (
 //     that pattern.
 //   - --permission-mode dontAsk and --permission-prompts none deny every
 //     request that is not pre-approved instead of asking anybody.
+//   - --include-partial-messages streams the model's output as it comes,
+//     thinking included, which the adapter turns into progress messages.
 //   - --disallowedTools and --add-dir keep the file tools off the step's
 //     protected paths and let them reach its writable folders (fenceArgs).
 func clientArgs(st adapter.Step, session string) []string {
-	a := []string{"-p", "--output-format", "stream-json", "--verbose",
+	a := []string{"-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
 		"--restricted", "--strict-mcp-config",
 		"--permission-mode", "dontAsk", "--permission-prompts", "none",
 		"--tools=" + strings.Join(toolNames(st.Tools), ",")}
@@ -164,7 +166,7 @@ func attempt(o options, st adapter.Step, session string, out *sender, diag io.Wr
 	cmd := exec.Command(o.client, clientArgs(st, session)...)
 	cmd.Dir = st.Workdir
 	cmd.Env = clientEnv(os.Environ(), o.env)
-	cmd.Stdin = strings.NewReader(st.Prompt)
+	cmd.Stdin = strings.NewReader(st.Prompt + scopeNote(st.Tools))
 	tail := &tailBuffer{max: 8 << 10}
 	cmd.Stderr = io.MultiWriter(diag, tail)
 	// A process the client started must not keep the adapter waiting for

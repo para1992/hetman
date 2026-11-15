@@ -46,6 +46,10 @@ type CheckProblem struct {
 	Field   string `json:"field"`          // model, effort or tools
 	Item    *int   `json:"item,omitempty"` // tools: the index of the entry, from 0
 	Message string `json:"message"`
+	// Warning marks something the adapter could not verify, such as a model
+	// name its client cannot check without a model request; it does not
+	// reject the orders.
+	Warning bool `json:"warning,omitempty"`
 }
 
 // CheckReply is the adapter's answer to a check.

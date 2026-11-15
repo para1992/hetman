@@ -80,6 +80,32 @@ func stepProblems(o options, st adapter.Step, diag io.Writer) []adapter.CheckPro
 	return out
 }
 
+// modelProblems checks a step's model against the client's catalogue of
+// its provider, which needs no model request: a model the catalogue does
+// not list fails at once when the step runs. When the catalogue cannot be
+// read, or the model names no provider, it says the model was not
+// verified.
+func modelProblems(o options, st adapter.Step) []adapter.CheckProblem {
+	if st.Model == "" {
+		return nil
+	}
+	provider, _, ok := strings.Cut(st.Model, "/")
+	if !ok || provider == "" {
+		return []adapter.CheckProblem{{Field: adapter.FieldModel, Warning: true, Message: fmt.Sprintf(
+			"model %q was not verified: it names no provider, as in provider/model", st.Model)}}
+	}
+	_, found, err := modelVariants(o, st, provider)
+	switch {
+	case err != nil:
+		return []adapter.CheckProblem{{Field: adapter.FieldModel, Warning: true, Message: fmt.Sprintf(
+			"model %q was not verified: the client's catalogue of %s cannot be read (%v)", st.Model, provider, err)}}
+	case !found:
+		return []adapter.CheckProblem{{Field: adapter.FieldModel, Message: fmt.Sprintf(
+			"model %q is not in the client's catalogue (opencode models %s lists what it can use)", st.Model, provider)}}
+	}
+	return nil
+}
+
 // pathForms are the ways the client may write a path when it asks for the
 // edit permission: relative to its worktree, which is the root of the git
 // repository holding the working folder, or the root of the file system

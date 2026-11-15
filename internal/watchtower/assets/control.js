@@ -469,7 +469,7 @@
     }
     if (n.type === 'agent') {
       const agentFields = (n.role ? ['role', 'executor'] : ['executor', 'model', 'effort'].concat(f.roles.length ? ['role'] : []))
-        .concat(['attempts', 'dialogue', 'idle_timeout', 'tools', 'workdir', 'prompt', 'schema']);
+        .concat(['attempts', 'dialogue', 'idle_timeout', 'tools', 'workdir', 'fail_on_denied', 'prompt', 'schema']);
       const first = n.role ? 'role' : 'model';
       const valueField = (field) => {
         if (field === 'executor') return { name: 'value', kind: 'select', options: f.executors, value: n.executor };
@@ -485,6 +485,12 @@
       } });
     }
     if (n.type === 'gate' || n.type === 'human') {
+      ops.push({ key: 'show_add', fields: () => [{ name: 'file', kind: 'text', mono: true }],
+        op: (v) => ({ op: 'show-add', node: n.id, file: (v.file || '').trim() }) });
+      if ((n.show || []).length) {
+        ops.push({ key: 'show_remove', fields: () => [{ name: 'file', kind: 'select', options: n.show }],
+          op: (v) => ({ op: 'show-remove', node: n.id, file: v.file || n.show[0] }) });
+      }
       ops.push({ key: 'ask', fields: (v) => {
         const out = [{ name: 'id', kind: 'text' }, { name: 'question', kind: 'text' }];
         if (n.type === 'human') {
@@ -618,7 +624,7 @@
       I18N_HINTS.includes(fd.name) ? h('span', { class: 'hint', text: t('page.field.hint.' + fd.name) }) : null);
   }
 
-  const I18N_HINTS = ['run', 'outcomes', 'via', 'value', 'at', 'starters', 'options', 'max'];
+  const I18N_HINTS = ['run', 'outcomes', 'via', 'value', 'at', 'starters', 'options', 'max', 'file'];
 
   Object.assign(W.hooks, { listTop, campaignButtons, cardTop, columnNote, openFlow, renderFlow });
 })();
