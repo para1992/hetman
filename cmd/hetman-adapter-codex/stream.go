@@ -206,9 +206,7 @@ func (s *stream) result(it item) {
 		}
 		if it.Status == "failed" || code != 0 {
 			if m := sandboxDenial.FindString(it.Output); m != "" {
-				text := s.describe(it) + ": " + s.short(clip(oneLine(lineWith(it.Output, m)), 300))
-				s.denied = append(s.denied, text)
-				s.out.log("denied: " + text)
+				s.deny(s.describe(it), s.short(oneLine(lineWith(it.Output, m))), strings.ToLower(m))
 				return
 			}
 			s.out.log(fmt.Sprintf("  < exit %d: %s", code, s.short(firstLine(it.Output, 200))))
@@ -231,10 +229,28 @@ func (s *stream) result(it item) {
 // errLine handles one line of the client's standard error.
 func (s *stream) errLine(line string) {
 	if g := patchRefused.FindStringSubmatch(strings.TrimSpace(line)); g != nil {
-		text := "apply_patch: " + s.short(clip(oneLine(g[1]), 300))
-		s.denied = append(s.denied, text)
-		s.out.log("denied: " + text)
+		s.deny("apply_patch", s.short(oneLine(g[1])), "")
 	}
+}
+
+// maxDenied is the most characters of one refused call's description.
+const maxDenied = 300
+
+// deny records a call the sandbox refused: what was called, the line of
+// the refusal and its kind (the words that told it apart). A build tool
+// may be refused the same way for every file it writes, and a model may
+// repeat a refused command, so a call already recorded with the same text,
+// or the same call with the same kind of refusal, is not recorded again;
+// the description is clipped.
+func (s *stream) deny(call, reason, kind string) {
+	text := clip(call+": "+reason, maxDenied)
+	for _, d := range s.denied {
+		if d == text || kind != "" && strings.HasPrefix(d, call+": ") && strings.Contains(strings.ToLower(d[len(call)+2:]), kind) {
+			return
+		}
+	}
+	s.denied = append(s.denied, text)
+	s.out.log("denied: " + text)
 }
 
 // alive sends a progress message, at most every progressEvery, while the

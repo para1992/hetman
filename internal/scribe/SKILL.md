@@ -514,6 +514,10 @@ hetman scribe unlink NODE OUTCOME            remove a transition
 hetman scribe set NODE FIELD VALUE           run, timeout, idle_timeout, executor, role, model, effort,
                                              tools, attempts, dialogue, prompt, schema, workdir,
                                              fail_on_denied, locks, segment, input, items, parallel
+hetman scribe set NODE executor EXECUTOR -model MODEL [-effort EFFORT]
+                                             switch a node to another client in one operation; the
+                                             model and effort are checked against EXECUTOR's catalogue
+                                             (an effort not given is removed)
 hetman scribe unset NODE FIELD               timeout, idle_timeout, model, effort, tools, attempts, dialogue,
                                              workdir, fail_on_denied, locks, input, parallel
 hetman scribe check NAME -run CMD [-timeout D] [-soft | -required] [-locks A,B]   declare a check or change one

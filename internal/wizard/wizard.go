@@ -752,6 +752,9 @@ func (w *wizard) changeAgent() ([]edit.Op, error) {
 	if (field == "model" || field == "effort") && node.Role == "" {
 		return w.changeModel(n, field)
 	}
+	if field == "executor" && len(w.o.Executors) > 0 {
+		return w.changeExecutor(n)
+	}
 	cur := map[string]string{"executor": node.Executor, "model": node.Model, "effort": node.Effort,
 		"tools": strings.Join(node.Tools, ", "), "attempts": strconv.Itoa(node.MaxAttempts), "fail_on_denied": failOnDenied(node)}[field]
 	if field == "fail_on_denied" {
@@ -798,6 +801,62 @@ func (w *wizard) changeModel(n, field string) ([]edit.Op, error) {
 	}
 	if len(ops) == 0 {
 		return nil, errors.New(w.p.T("wizard.models.unchanged"))
+	}
+	return ops, nil
+}
+
+// changeExecutor switches an agent node to another executor: the model and
+// the effort are picked from the new executor's catalogue and written with
+// it in one operation, since the old model is seldom one the new client
+// offers. The current model is offered only when the new catalogue lists
+// it (or there is no catalogue).
+func (w *wizard) changeExecutor(n string) ([]edit.Op, error) {
+	node := w.o.Nodes[n]
+	var executors []string
+	for name := range w.o.Executors {
+		executors = append(executors, name)
+	}
+	sort.Strings(executors)
+	def := node.Executor
+	if def == "" {
+		def = executors[0]
+	}
+	x, err := w.choose(w.p.T("wizard.which_executor"), executors, def)
+	if err != nil {
+		return nil, err
+	}
+	c := w.catalog(x, nil)
+	cur := node.Model
+	if c != nil && c.Model(cur) == nil {
+		cur = ""
+	}
+	model, entry, err := w.pickModel(c, cur)
+	if err != nil {
+		return nil, err
+	}
+	effort := ""
+	if model != "" {
+		curEffort := ""
+		if model == node.Model {
+			curEffort = node.Effort
+		}
+		if effort, err = w.pickEffort(entry, curEffort); err != nil {
+			return nil, err
+		}
+	}
+	if x == node.Executor && node.Role == "" && model == node.Model && effort == node.Effort {
+		return nil, errors.New(w.p.T("wizard.models.unchanged"))
+	}
+	if model != "" {
+		return []edit.Op{{Op: edit.OpSet, Node: n, Field: "executor", Value: x, Model: model, Effort: effort}}, nil
+	}
+	// The client's default model: the old model and effort go.
+	ops := []edit.Op{{Op: edit.OpSet, Node: n, Field: "executor", Value: x}}
+	if node.Model != "" {
+		ops = append(ops, edit.Op{Op: edit.OpUnset, Node: n, Field: "model"})
+	}
+	if node.Effort != "" {
+		ops = append(ops, edit.Op{Op: edit.OpUnset, Node: n, Field: "effort"})
 	}
 	return ops, nil
 }

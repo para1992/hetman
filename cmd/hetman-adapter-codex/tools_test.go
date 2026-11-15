@@ -155,3 +155,111 @@ func TestTomlString(t *testing.T) {
 		t.Errorf("tomlString = %s", got)
 	}
 }
+
+// write together with write(FOLDER) gives the workspace profile and makes
+// each folder, also one outside the working folder, writable as well; a
+// folder that does not exist is refused as in the plain form.
+func TestSandboxWriteAndFolders(t *testing.T) {
+	root := t.TempDir()
+	code := filepath.Join(root, "code")
+	cache := filepath.Join(root, "cache")
+	os.MkdirAll(code, 0o755)
+	os.MkdirAll(cache, 0o755)
+	st := adapter.Step{Workdir: code}
+	ts, problems := parseTools([]string{"write", "write(" + cache + ")", "network"})
+	if len(problems) > 0 {
+		t.Fatal(problems)
+	}
+	sb, err := sandboxFor(st, ts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sb.extends != ":workspace" {
+		t.Errorf("extends %q", sb.extends)
+	}
+	modes := map[string]string{}
+	for _, e := range sb.entries {
+		modes[e.path] = e.mode
+	}
+	for _, p := range append(adapter.Spellings(code), adapter.Spellings(cache)...) {
+		if modes[p] != "write" {
+			t.Errorf("%s: mode %q (entries %+v)", p, modes[p], sb.entries)
+		}
+	}
+	if !reflect.DeepEqual(sb.writes, []string{code, cache}) {
+		t.Errorf("writes %q", sb.writes)
+	}
+	if n := scopeNote(st, sb); !strings.Contains(n, "only in "+code+", "+cache+" and") || !strings.Contains(n, "commands can reach the network") {
+		t.Errorf("scope note:\n%s", n)
+	}
+
+	ts, _ = parseTools([]string{"write", "write(missing)"})
+	if _, err := sandboxFor(st, ts); err == nil || !strings.Contains(err.Error(), "not an existing folder") {
+		t.Errorf("missing folder: %v", err)
+	}
+}
+
+// The scope note says, from the step's profile, that the shell is the way
+// to read files, which folders can be written, whether commands reach the
+// network, and that a refusal is a limit of the step.
+func TestScopeNote(t *testing.T) {
+	code := t.TempDir()
+	st := adapter.Step{Workdir: code}
+	note := func(tools ...string) string {
+		ts, problems := parseTools(tools)
+		if len(problems) > 0 {
+			t.Fatal(problems)
+		}
+		sb, err := sandboxFor(st, ts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return scopeNote(st, sb)
+	}
+	read := note("read")
+	for _, want := range []string{"you work through shell commands", "read-only commands, such as cat", "write nothing", "cannot reach the network", "is no reason to stop"} {
+		if !strings.Contains(read, want) {
+			t.Errorf("read note lacks %q:\n%s", want, read)
+		}
+	}
+	write := note("write", "network")
+	for _, want := range []string{"only in " + code + " and the system's temporary folders", "commands can reach the network", "is no reason to stop"} {
+		if !strings.Contains(write, want) {
+			t.Errorf("write note lacks %q:\n%s", want, write)
+		}
+	}
+	none := note()
+	if !strings.Contains(none, "no shell commands") || strings.Contains(none, "no reason to stop") {
+		t.Errorf("note without tools:\n%s", none)
+	}
+}
+
+// A refusal is recorded once: the same text again, or the same call
+// refused the same way on another file, adds nothing, and a long refusal
+// is clipped.
+func TestDeniedOnce(t *testing.T) {
+	var buf bytes.Buffer
+	s := newStream(adapter.Step{Workdir: t.TempDir()}, newSender(&buf))
+	code := 1
+	cmd := func(id, command, output string) item {
+		return item{ID: id, Type: "command_execution", Command: command, Output: output, ExitCode: &code, Status: "failed"}
+	}
+	s.item("item.completed", cmd("1", "go test ./...", "open /c/go-build/aa/1-d: read-only file system\n"))
+	s.item("item.completed", cmd("2", "go test ./...", "open /c/go-build/bb/2-d: read-only file system\n"))
+	s.item("item.completed", cmd("3", "go test ./...", "open /c/go-build/aa/1-d: read-only file system\n"))
+	s.item("item.completed", cmd("4", "touch x", "touch: x: Read-only file system\n"))
+	s.item("item.completed", cmd("5", "cat big", strings.Repeat("y", 1000)+" operation not permitted\n"))
+	s.errLine("ERROR codex_core: error=patch rejected: writing outside of the project\n")
+	s.errLine("ERROR codex_core: error=patch rejected: writing outside of the project\n")
+	if len(s.denied) != 4 {
+		t.Fatalf("denied %q", s.denied)
+	}
+	for _, d := range s.denied {
+		if n := len([]rune(d)); n > maxDenied+3 {
+			t.Errorf("not clipped: %d characters", n)
+		}
+	}
+	if strings.Count(buf.String(), "denied: shell go test") != 1 {
+		t.Errorf("log:\n%s", buf.String())
+	}
+}

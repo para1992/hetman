@@ -431,8 +431,8 @@ func TestCommandLineAndEnvironment(t *testing.T) {
 		t.Errorf("schema given to the client: %s", inv[0].Schema)
 	}
 	p := inv[0].Prompt
-	if !strings.HasPrefix(p, "write the note\n\n---\nWhat this step may do") || !strings.Contains(p, "only in "+dir+", "+work) ||
-		!strings.Contains(p, "never write in "+filepath.Join(dir, ".hetman")) || !strings.Contains(p, "commands may reach the network") ||
+	if !strings.HasPrefix(p, "write the note\n\n---\nWhat this step can do") || !strings.Contains(p, "you work through shell commands") || !strings.Contains(p, "only in "+dir+", "+work) ||
+		!strings.Contains(p, "never write in "+filepath.Join(dir, ".hetman")) || !strings.Contains(p, "commands can reach the network") ||
 		!strings.Contains(p, "\n\n---\nAnswer format:") || !strings.Contains(p, testSchema) {
 		t.Errorf("prompt on standard input:\n%s", p)
 	}
@@ -493,7 +493,13 @@ func TestReadAndWriteFolder(t *testing.T) {
 	st.Tools = []string{"write(docs/**)"}
 	stepRun(t, "ok", st)
 	a = runs(t, rec)[0].Args
-	want := "permissions.hetman.filesystem={" + tomlString(filepath.Join(st.Workdir, "docs")) + `="write",":slash_tmp"="write",":tmpdir"="write"}`
+	// A folder behind a symbolic link (the temporary folder on macOS, a
+	// short name on Windows) is written in both spellings.
+	want := "permissions.hetman.filesystem={"
+	for _, p := range adapter.Spellings(filepath.Join(st.Workdir, "docs")) {
+		want += tomlString(p) + `="write",`
+	}
+	want += `":slash_tmp"="write",":tmpdir"="write"}`
 	if !contains(a, "-c", `permissions.hetman.extends=":read-only"`) || !contains(a, "-c", want) {
 		t.Errorf("write(docs): %q", a)
 	}
@@ -656,7 +662,7 @@ func TestContinuation(t *testing.T) {
 	}
 	p := inv[1].Prompt
 	if !strings.Contains(p, "ended without an answer") || !strings.Contains(p, "- shell touch made.txt: touch: cannot touch 'made.txt': Read-only file system") ||
-		!strings.Contains(p, "write nothing") || !strings.Contains(p, "Answer format:") {
+		!strings.Contains(p, "write nothing") || !strings.Contains(p, "you work through shell commands") || !strings.Contains(p, "Answer format:") {
 		t.Errorf("continuation:\n%s", p)
 	}
 	f := final(msgs)

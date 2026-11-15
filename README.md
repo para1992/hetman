@@ -2134,6 +2134,7 @@ hetman scribe rename NODE NEW                rename a node wherever it is refere
 hetman scribe link NODE OUTCOME TARGET [-max N -then OUTCOME]   set or change a transition, limited or not
 hetman scribe unlink NODE OUTCOME            remove a transition
 hetman scribe set NODE FIELD VALUE           set a field of a node
+hetman scribe set NODE executor EXECUTOR -model MODEL [-effort EFFORT]   switch a node to another client in one operation
 hetman scribe unset NODE FIELD               remove a field of a node
 hetman scribe check NAME [-run CMD] [-timeout D] [-soft | -required] [-locks A,B]   declare a check, or change one
 hetman scribe executor NAME -run CMD         declare an executor, or change its command

@@ -30,7 +30,8 @@ import (
 //     working folder, or absolute), the step's writable folders and the
 //     temporary folders, except the protected paths. The client's sandbox
 //     opens only an existing folder for writing, so FOLDER must exist when
-//     the step runs; "FOLDER/**" means the same;
+//     the step runs; "FOLDER/**" means the same. Together with write, each
+//     FOLDER is writable as well as the working folder;
 //   - network: commands may reach the network (with read or write);
 //   - web_search: the client's own web search tool is available.
 //
@@ -203,20 +204,21 @@ func sandboxFor(st adapter.Step, ts toolset) (sandbox, error) {
 		sb.extends = ":workspace"
 		add(st.Workdir, "write")
 		sb.writes = append(sb.writes, st.Workdir)
-	} else {
-		for _, f := range ts.folders {
-			p := f
-			if !filepath.IsAbs(p) {
-				p = filepath.Join(st.Workdir, p)
-			}
-			p = filepath.Clean(p)
-			fi, err := os.Stat(p)
-			if err != nil || !fi.IsDir() {
-				return sb, fmt.Errorf("tools entry %q: %s is not an existing folder; the client's sandbox opens only an existing folder for writing, so create it before the step", "write("+f+")", p)
-			}
-			add(p, "write")
-			sb.writes = append(sb.writes, p)
+	}
+	for _, f := range ts.folders {
+		p := f
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(st.Workdir, p)
 		}
+		p = filepath.Clean(p)
+		fi, err := os.Stat(p)
+		if err != nil || !fi.IsDir() {
+			return sb, fmt.Errorf("tools entry %q: %s is not an existing folder; the client's sandbox opens only an existing folder for writing, so create it before the step", "write("+f+")", p)
+		}
+		add(p, "write")
+		sb.writes = appendNew(sb.writes, p)
+	}
+	if !ts.write {
 		// The client's workspace mode lets commands write the temporary
 		// folders; tools such as compilers and test runners need them.
 		sb.entries = append(sb.entries, access{":slash_tmp", "write"}, access{":tmpdir", "write"})
@@ -234,7 +236,7 @@ func sandboxFor(st adapter.Step, ts toolset) (sandbox, error) {
 			writable[q] = true
 		}
 		add(w, "write")
-		sb.writes = append(sb.writes, w)
+		sb.writes = appendNew(sb.writes, w)
 	}
 	for _, p := range st.Protect {
 		if p == "" || writable[filepath.Clean(p)] {
@@ -249,6 +251,16 @@ func sandboxFor(st adapter.Step, ts toolset) (sandbox, error) {
 		sb.protect = append(sb.protect, p)
 	}
 	return sb, nil
+}
+
+// appendNew appends p to list unless it is there already.
+func appendNew(list []string, p string) []string {
+	for _, q := range list {
+		if q == p {
+			return list
+		}
+	}
+	return append(list, p)
 }
 
 // profileArgs are the client's configuration overrides that define the
@@ -297,26 +309,29 @@ func tomlString(s string) string {
 	return b.String()
 }
 
-// scopeNote tells the model what the step's sandbox allows. The client's
-// message for a refused write names neither the folders nor the reason, and
-// a model may take it for the shell being unavailable.
+// scopeNote tells the model what the step's sandbox allows, built from the
+// step's profile. The client's message for a refused write names neither
+// the folders nor the reason, and a model given a prompt written for
+// another client may look for a file reading tool, find none and take the
+// step for impossible, so the note says the shell is the way to read.
 func scopeNote(st adapter.Step, sb sandbox) string {
 	var b strings.Builder
-	b.WriteString("\n\n---\nWhat this step may do; the client's sandbox enforces it, and anything else fails without asking anybody:\n")
+	b.WriteString("\n\n---\nWhat this step can do (the client's sandbox enforces it):\n")
 	if !sb.tools.shell() {
-		b.WriteString("- no shell commands and no file edits\n")
+		b.WriteString("- no shell commands and no file edits: work from the prompt alone\n")
 	} else {
-		b.WriteString("- run shell commands and read files\n")
+		b.WriteString("- you work through shell commands; there is no separate tool for reading files\n")
+		b.WriteString("- read any file with ordinary read-only commands, such as cat, ls, find, grep or sed -n\n")
 		if len(sb.writes) == 0 {
-			b.WriteString("- write nothing: a write fails with a read-only file system error\n")
+			b.WriteString("- write nothing: every folder is read-only in this step\n")
 		} else {
 			fmt.Fprintf(&b, "- write files, with apply_patch or commands, only in %s and the system's temporary folders\n", strings.Join(sb.writes, ", "))
 			if len(sb.protect) > 0 {
-				fmt.Fprintf(&b, "- never write in %s (protected; a write there fails)\n", strings.Join(sb.protect, ", "))
+				fmt.Fprintf(&b, "- never write in %s (protected)\n", strings.Join(sb.protect, ", "))
 			}
 		}
 		if sb.tools.network {
-			b.WriteString("- commands may reach the network\n")
+			b.WriteString("- commands can reach the network\n")
 		} else {
 			b.WriteString("- commands cannot reach the network\n")
 		}
@@ -324,7 +339,9 @@ func scopeNote(st adapter.Step, sb sandbox) string {
 	if sb.tools.search {
 		b.WriteString("- search the web with the web search tool\n")
 	}
-	b.WriteString("A failed write does not mean other writes fail: a write the list above allows still works.\n")
+	if sb.tools.shell() {
+		b.WriteString("A command the sandbox refuses (\"read-only file system\", \"operation not permitted\") hit a limit of this step, not a missing tool, and is no reason to stop: go on with what the list above allows.\n")
+	}
 	return b.String()
 }
 

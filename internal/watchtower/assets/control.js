@@ -743,9 +743,32 @@
         if (field === 'effort') return { name: 'value', label: 'effort', kind: 'effort', executor: n.executor || '', model: n.model || '', value: n.effort || '' };
         return { name: 'value', kind: 'text', value: current(n, field) };
       };
-      ops.push({ key: 'agent', fields: (v) => [{ name: 'field', kind: 'select', options: agentFields, value: first }, valueField(v.field || first)],
+      // Another executor takes the model and effort its own catalogue
+      // offers: they are picked with it and written in one operation.
+      const executorFields = (v) => {
+        const exec = v.executor || n.executor || f.executors[0] || '';
+        if (v.clientOf !== exec) {
+          v.clientOf = exec;
+          v.model = exec === n.executor ? n.model || '' : '';
+          v.effort = exec === n.executor ? n.effort || '' : '';
+        }
+        return [{ name: 'executor', kind: 'select', options: f.executors, value: n.executor }, ...catalogFields(exec, v.model)];
+      };
+      ops.push({ key: 'agent', fields: (v) => {
+        const field = v.field || first;
+        const head = { name: 'field', kind: 'select', options: agentFields, value: first };
+        return field === 'executor' && !n.role ? [head, ...executorFields(v)] : [head, valueField(field)];
+      },
       op: (v) => {
         const field = v.field || first;
+        if (field === 'executor' && !n.role) {
+          const op = { op: 'set', node: n.id, field: 'executor', value: v.executor || n.executor || f.executors[0] || '' };
+          const model = (v.model || '').trim();
+          const effort = (v.effort || '').trim();
+          if (model) op.model = model;
+          if (model && effort) op.effort = effort;
+          return op;
+        }
         const value = (v.value === undefined ? current(n, field) : v.value).trim();
         if (!value && f.fields.unset.includes(field)) return { op: 'unset', node: n.id, field: field };
         return { op: 'set', node: n.id, field: field, value: value };

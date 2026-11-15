@@ -36,7 +36,7 @@ var opUsage = []struct{ op, form, example string }{
 	{edit.OpRename, "rename NODE NEW", "hetman scribe rename build compile"},
 	{edit.OpLink, "link NODE OUTCOME TARGET [-max N -then OUTCOME]", "hetman scribe link tests blocked fix -max 3 -then stuck"},
 	{edit.OpUnlink, "unlink NODE OUTCOME", "hetman scribe unlink release rework"},
-	{edit.OpSet, "set NODE FIELD VALUE", "hetman scribe set build timeout 5m"},
+	{edit.OpSet, "set NODE FIELD VALUE | set NODE executor EXECUTOR -model MODEL [-effort EFFORT]", "hetman scribe set build timeout 5m"},
 	{edit.OpUnset, "unset NODE FIELD", "hetman scribe unset build timeout"},
 	{edit.OpCheck, "check NAME [-run CMD] [-timeout D] [-soft | -required] [-locks A,B]", "hetman scribe check lint -run 'sh checks/lint.sh' -soft"},
 	{edit.OpExecutor, "executor NAME -run CMD", "hetman scribe executor stub -run './bin/stub-adapter plan.json'"},
@@ -416,7 +416,11 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 			for _, line := range refused {
 				fmt.Fprintln(stderr, line)
 			}
-			fmt.Fprintln(stderr, p.T("scribe.catalog_refused"))
+			if op.Op == edit.OpSet && op.Field == "executor" && op.Model == "" {
+				fmt.Fprintln(stderr, p.T("scribe.catalog_refused_executor", "node", op.Node, "executor", op.Value))
+			} else {
+				fmt.Fprintln(stderr, p.T("scribe.catalog_refused"))
+			}
 			return exitUsage
 		}
 	}

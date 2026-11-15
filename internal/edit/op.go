@@ -131,8 +131,8 @@ var Specs = []Spec{
 		"make an outcome of a node lead to a node, done or failed; with max and then, at most max times per campaign, after which the outcome then is taken instead"},
 	{OpUnlink, []string{"node", "outcome"}, []string{"node", "outcome"}, nil,
 		"remove the transition of an outcome of a node"},
-	{OpSet, []string{"node", "field", "value"}, []string{"node", "field", "value"}, nil,
-		"set a field of a node: " + strings.Join(setFields, ", ")},
+	{OpSet, []string{"node", "field", "value"}, []string{"node", "field", "value"}, []string{"model", "effort"},
+		"set a field of a node: " + strings.Join(setFields, ", ") + "; with field executor, model and effort switch the node to another client in one operation (an effort not given is removed when a model is given)"},
 	{OpUnset, []string{"node", "field"}, []string{"node", "field"}, nil,
 		"remove a field of a node: " + strings.Join(unsetFields, ", ")},
 	{OpCheck, []string{"name"}, []string{"name"}, []string{"run", "timeout", "soft", "locks"},
@@ -286,6 +286,9 @@ func (op Op) Validate() error {
 	if op.Op == OpInputAdd && op.Language != "" && op.Label == "" && op.Hint == "" {
 		return fmt.Errorf("input-add: language says which language the label and hint are in; give one of them")
 	}
+	if op.Op == OpSet && op.Field != "executor" && (op.Model != "" || op.Effort != "") {
+		return fmt.Errorf("set: model and effort are given only with the field executor, to switch a node to another client in one operation")
+	}
 	if op.Op == OpRole && op.Executor == "" && (op.Model != "" || op.Effort != "") {
 		return fmt.Errorf("role: model and effort belong to the first client; give its executor too")
 	}
@@ -339,6 +342,9 @@ func (op Op) WordsIn(p *i18n.Printer) string {
 	case OpUnlink:
 		return p.T("op.words.unlink", "node", op.Node, "outcome", op.Outcome)
 	case OpSet:
+		if op.Field == "executor" && (op.Model != "" || op.Effort != "") {
+			return p.T("op.words.set_client", "node", op.Node, "client", clientWords(p, Op{Executor: op.Value, Model: op.Model, Effort: op.Effort}))
+		}
 		return p.T("op.words.set", "field", op.Field, "node", op.Node, "value", op.Value)
 	case OpUnset:
 		return p.T("op.words.unset", "field", op.Field, "node", op.Node)

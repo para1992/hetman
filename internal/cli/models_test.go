@@ -58,6 +58,60 @@ func TestScribeModels(t *testing.T) {
 	}
 }
 
+// A node is switched to an executor whose catalogue lacks its model in one
+// operation, with the model and effort checked against the new catalogue;
+// the plain form is refused with exactly that command, and still works when
+// the new catalogue lists the node's model.
+func TestScribeSetExecutorWithItsModel(t *testing.T) {
+	w := catalogWorld(t)
+	os.WriteFile(filepath.Join(w.dir, "other.json"), []byte(`{"catalog": {"complete": true, "models": [{"id": "gamma/one", "efforts": ["low", "high"]}, {"id": "alpha/large", "efforts": ["high"]}]}}`), 0o644)
+	text, _ := os.ReadFile(w.orders)
+	config := strings.Replace(string(text), "executors:\n", "executors:\n  other: {run: "+teststep.Adapter(filepath.Join(w.dir, "other.json"))+"}\n", 1)
+	config = strings.Replace(config, "model: alpha/large, effort: high", "model: alpha/small", 1)
+	if err := os.WriteFile(w.orders, []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(w.orders)
+
+	code, _, errOut := call("scribe", "set", "a", "executor", "other", "-f", w.orders)
+	if code != exitUsage || !strings.Contains(errOut, "hetman scribe set a executor other -model MODEL [-effort EFFORT]") {
+		t.Fatalf("plain form: exit %d\n%s", code, errOut)
+	}
+	if after, _ := os.ReadFile(w.orders); !bytes.Equal(before, after) {
+		t.Fatal("a refused change was written")
+	}
+	code, _, errOut = call("scribe", "set", "a", "executor", "other", "-model", "gamma/one", "-effort", "max", "-f", w.orders)
+	if code != exitUsage || !strings.Contains(errOut, `effort "max" is not offered by model "gamma/one"`) {
+		t.Fatalf("an effort the new model lacks: exit %d\n%s", code, errOut)
+	}
+	code, out, errOut := call("scribe", "set", "a", "executor", "other", "-model", "gamma/one", "-effort", "low", "-f", w.orders)
+	if code != exitDone || !strings.Contains(out, "Switch a to the client other, model gamma/one, effort low") {
+		t.Fatalf("one operation: exit %d\n%s%s", code, out, errOut)
+	}
+	data, _ := os.ReadFile(w.orders)
+	if s := string(data); !strings.Contains(s, "executor: other") || !strings.Contains(s, "model: gamma/one") || !strings.Contains(s, "effort: low") {
+		t.Fatalf("orders:\n%s", s)
+	}
+	if code, _, errOut := call("check", "-f", w.orders); code != exitDone {
+		t.Fatalf("check: exit %d\n%s", code, errOut)
+	}
+	// Back to stub with a model it lists and no effort: the old effort goes.
+	if code, out, errOut := call("scribe", "set", "a", "executor", "stub", "-model", "alpha/small", "-f", w.orders); code != exitDone {
+		t.Fatalf("model without effort: exit %d\n%s%s", code, out, errOut)
+	}
+	if data, _ := os.ReadFile(w.orders); strings.Contains(string(data), "effort") {
+		t.Fatalf("the old effort stayed:\n%s", data)
+	}
+	// alpha/large is listed by both; the plain form switches it.
+	call("scribe", "set", "a", "model", "alpha/large", "-f", w.orders)
+	if code, out, errOut := call("scribe", "set", "a", "executor", "other", "-f", w.orders); code != exitDone {
+		t.Fatalf("plain form with a listed model: exit %d\n%s%s", code, out, errOut)
+	}
+	if code, _, errOut := call("scribe", "set", "a", "model", "alpha/large", "-effort", "high", "-f", w.orders); code != exitUsage || !strings.Contains(errOut, "only with the field executor") {
+		t.Fatalf("model and effort with another field: exit %d\n%s", code, errOut)
+	}
+}
+
 // hetman scribe set refuses a model or effort the catalogue does not
 // offer, with the nearest names, unless -unlisted is given.
 func TestScribeSetChecksTheCatalogue(t *testing.T) {

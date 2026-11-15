@@ -117,6 +117,7 @@ op.words.link_limited: make the outcome {outcome} of {node} lead to {target} at 
 op.words.workdir: let agent steps work in {workdir}, relative to the orders folder, unless a node names its own folder
 op.words.unlink: remove the transition of {node} on the outcome {outcome}
 op.words.set: set {field} of {node} to {value}
+op.words.set_client: switch {node} to the client {client}
 op.words.unset: remove {field} from {node}
 op.words.running: running {run}
 op.words.with_timeout: with the timeout {timeout}
@@ -156,7 +157,7 @@ op.summary.remove: remove a node; whatever led to it then leads where its main o
 op.summary.rename: rename a node in the start, every transition and every prompt template placeholder
 op.summary.link: make an outcome of a node lead to a node, done or failed; with max and then, at most max times per campaign, after which the outcome then is taken instead
 op.summary.unlink: remove the transition of an outcome of a node
-op.summary.set: "set a field of a node: {fields}"
+op.summary.set: "set a field of a node: {fields}; with field executor, model and effort switch the node to another client in one operation (an effort not given is removed when a model is given)"
 op.summary.unset: "remove a field of a node: {fields}"
 op.summary.check: declare a check, or change the command, timeout, soft flag or locks of a declared one (soft only warns; required blocks the gate)
 op.summary.executor: declare an executor (an adapter program and its arguments), or change its command
@@ -1401,6 +1402,7 @@ scribe.models.efforts: "effort: {efforts}"
 scribe.models.no_effort: no effort setting
 scribe.models.efforts_unknown: effort not known
 scribe.catalog_refused: "hetman scribe: nothing was written; pick a model and an effort the catalogue lists (hetman scribe models), or add -unlisted to write it anyway"
+scribe.catalog_refused_executor: "hetman scribe: nothing was written; to switch {node} to {executor}, give the model and effort with it in one operation: hetman scribe set {node} executor {executor} -model MODEL [-effort EFFORT] (hetman scribe models {executor} lists them), or add -unlisted to write it anyway"
 wizard.models.none: "No list of models: {reason}."
 wizard.models.title:
   one: "The executor's client offers {n} model."

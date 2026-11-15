@@ -71,6 +71,44 @@ func TestPickEffort(t *testing.T) {
 	}
 }
 
+// Changing the executor of an agent step offers the model and effort from
+// the new executor's catalogue and writes all three in one operation.
+func TestChangeExecutorWithItsModel(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, orders.DefaultFile)
+	files := map[string]string{
+		"p.md":       "Do it.",
+		"s.json":     `{"type": "object", "properties": {"outcome": {"type": "string", "enum": ["ok"]}}, "required": ["outcome"]}`,
+		"plan.json":  `{"catalog": true}`,
+		"other.json": `{"catalog": {"complete": true, "models": [{"id": "gamma/one", "efforts": ["low", "high"]}]}}`,
+		orders.DefaultFile: `version: 0
+workdir: .
+start: a
+executors:
+  stub: {run: ` + teststep.Adapter(filepath.Join(dir, "plan.json")) + `}
+  other: {run: ` + teststep.Adapter(filepath.Join(dir, "other.json")) + `}
+nodes:
+  a: {type: agent, executor: stub, prompt: p.md, schema: s.json, model: alpha/large, effort: high, on: {ok: done, fail: failed}}
+`,
+	}
+	for name, text := range files {
+		os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644)
+	}
+	var out bytes.Buffer
+	// change an agent step, a, executor, other; the old model is not
+	// offered, gamma/one is picked, effort 1 (low); write it; quit.
+	if err := Run(path, input("7", "", "1", "other", "gamma/one", "1", "", "11"), &out, true); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if s := string(data); !strings.Contains(s, "executor: other") || !strings.Contains(s, "model: gamma/one") || !strings.Contains(s, "effort: low") {
+		t.Fatalf("orders:\n%s\ntranscript:\n%s", data, out.String())
+	}
+	if !strings.Contains(out.String(), "The executor's client offers 1 model.") || !strings.Contains(out.String(), "switch a to the client other, model gamma/one, effort low") {
+		t.Errorf("transcript:\n%s", out.String())
+	}
+}
+
 // Changing the model of an agent step offers the catalogue of its
 // executor; a model without the step's effort removes the effort too.
 func TestChangeModelFromTheCatalogue(t *testing.T) {

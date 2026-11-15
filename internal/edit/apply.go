@@ -1019,6 +1019,19 @@ func (e *editing) setField() error {
 		v = str(op.Value)
 	}
 	e.set(n, fieldKey(op.Field), v, nodeOrder)
+	// A new executor with its model and effort switches the node to another
+	// client at once; an effort of the old client is not carried over to a
+	// model given without one.
+	if op.Field == "executor" {
+		if op.Model != "" {
+			e.set(n, "model", str(op.Model), nodeOrder)
+		}
+		if op.Effort != "" {
+			e.set(n, "effort", str(op.Effort), nodeOrder)
+		} else if op.Model != "" {
+			e.unset(n, "effort")
+		}
+	}
 	// A step with a timeout can end with the outcome timeout, which needs
 	// a transition.
 	if op.Field == "timeout" && (typ == orders.Script || typ == orders.Gate && hasKey(n, "run")) {

@@ -324,6 +324,11 @@ func TestFlowEditOverHTTP(t *testing.T) {
 			func(o *orders.Orders) bool { return o.Nodes["compile"].Timeout.String() == "5m0s" }},
 		{map[string]any{"op": "set", "node": "write", "field": "model", "value": "m2"}, "", "Set model of write to m2",
 			func(o *orders.Orders) bool { return o.Nodes["write"].Model == "m2" }},
+		{map[string]any{"op": "set", "node": "write", "field": "executor", "value": "stub", "model": "m3", "effort": "e3"}, "", "Switch write to the client stub, model m3, effort e3",
+			func(o *orders.Orders) bool {
+				n := o.Nodes["write"]
+				return n.Executor == "stub" && n.Model == "m3" && n.Effort == "e3"
+			}},
 		{map[string]any{"op": "ask", "node": "ready", "id": "docs", "question": "Docs updated?"}, "", "Add the yesno question docs to ready",
 			func(o *orders.Orders) bool { return len(o.Nodes["ready"].Ask) == 1 }},
 		{map[string]any{"op": "gate-add", "node": "ready", "check": "tests"}, "", "Add the check tests to the gate ready",
