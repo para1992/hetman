@@ -1,0 +1,17 @@
+{
+  "project": "demo",
+  "tasks": [
+    {
+      "id": "TASK-1",
+      "title": "Storage layer",
+      "description": "Keep the records in one file.",
+      "criteria": ["records survive a restart"]
+    },
+    {
+      "id": "TASK-2",
+      "needs": ["TASK-1"],
+      "title": "Command line",
+      "criteria": ["lists the records", "adds a record"]
+    }
+  ]
+}

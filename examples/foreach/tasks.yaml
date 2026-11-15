@@ -1,0 +1,60 @@
+# A list of tasks given by a person, each run as its own small campaign.
+#
+# There is no plan step here: the person lists the tasks when starting the
+# campaign, and the foreach node runs the segment segments/item.yaml once for
+# every task, as orders.yaml does for the items of a plan. The input section
+# describes what the person gives, so nobody has to write the JSON by hand:
+#
+#   hetman run -f tasks.yaml -ask             asks for the tasks one by one, shows
+#                                             them, then starts the campaign
+#   hetman run -f tasks.yaml -ask -save-only  only writes the input file under
+#                                             .hetman/inputs and prints its path
+#   hetman run -f tasks.yaml -input tasks.json
+#                                             the same input from a file, checked
+#                                             against the input section first
+#   hetman serve                              the page's start form asks the same
+#
+# The segment's steps are POSIX shell scripts run through sh (on Windows,
+# from Git Bash or another shell that has sh).
+version: 0
+flow: tasks-demo
+start: build-all
+
+input:
+  project:
+    kind: text
+    default: demo
+    ask: false            # a fixed value: never asked, always in the input
+  tasks:
+    kind: objects
+    label: {en: Tasks, uk: Завдання}   # a label per language; HETMAN_LANGUAGE picks one
+    required: true
+    fields:
+      id:
+        kind: text
+        label: Task id
+        hint: letters, digits, '_', '-' and '.', such as TASK-2
+        required: true
+      needs:
+        kind: list
+        label: Ids of the tasks that must be done first
+      title:
+        kind: text
+        label: Title
+        required: true
+      description:
+        kind: longtext
+        label: Description
+      criteria:
+        kind: list
+        label: Acceptance criteria
+        hint: each one something a check can call passed or failed
+        required: true
+
+nodes:
+  build-all:
+    type: foreach
+    segment: segments/item.yaml   # each task is the input of one child campaign
+    items: input.tasks            # the list the person gave
+    parallel: 2                   # at most two tasks at the same time
+    on: {done: done, failed: failed}

@@ -52,7 +52,34 @@ var opUsage = []struct{ op, form, example string }{
 	{edit.OpShowAdd, "show-add NODE FILE", "hetman scribe show-add approve '{{work}}/plan.md'"},
 	{edit.OpShowRemove, "show-remove NODE FILE", "hetman scribe show-remove approve notes.md"},
 	{edit.OpWorkdir, "workdir FOLDER", "hetman scribe workdir .."},
+	{edit.OpInputAdd, "input-add NAME KIND [-of LIST] [-label TEXT] [-hint TEXT] [-language CODE] [-required] [-default VALUE [-ask=false]] [-options A,B]",
+		"hetman scribe input-add title text -of tasks -label 'Title' -required"},
+	{edit.OpInputRm, "input-remove NAME [-of LIST]", "hetman scribe input-remove criteria -of tasks"},
+	{edit.OpInputSet, "input-set NAME FIELD VALUE [-of LIST] [-language CODE]", "hetman scribe input-set tasks label 'Tasks' -language en"},
+	{edit.OpInputUnset, "input-unset NAME FIELD [-of LIST] [-language CODE]", "hetman scribe input-unset id hint -of tasks"},
 }
+
+// optBool is a flag that may be given as -name, -name=true or -name=false,
+// and tells whether it was given at all.
+type optBool struct{ v *bool }
+
+func (b *optBool) String() string {
+	if b == nil || b.v == nil {
+		return ""
+	}
+	return strconv.FormatBool(*b.v)
+}
+
+func (b *optBool) Set(s string) error {
+	v, err := strconv.ParseBool(s)
+	if err != nil {
+		return err
+	}
+	b.v = &v
+	return nil
+}
+
+func (b *optBool) IsBoolFlag() bool { return true }
 
 func scribeUsage(p *i18n.Printer) string {
 	var b strings.Builder
@@ -159,6 +186,7 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 	ints := map[string]*int{}
 	var run *string
 	var starters, soft, required *bool
+	opts := map[string]*optBool{}
 	on := onFlag{}
 	for _, f := range append(append([]string{}, spec.Required...), spec.Optional...) {
 		if contains(spec.Args, f) {
@@ -176,6 +204,9 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 		case "soft":
 			soft = fs.Bool("soft", false, p.T("flag.soft"))
 			required = fs.Bool("required", false, p.T("flag.required"))
+		case "required", "ask":
+			opts[f] = &optBool{}
+			fs.Var(opts[f], f, p.T(map[string]string{"required": "flag.form_field_required", "ask": "flag.form_field_ask"}[f]))
 		case "on":
 			fs.Var(on, "on", "OUTCOME=TARGET")
 		default:
@@ -258,6 +289,14 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 			op.File = value
 		case "then":
 			op.Then = value
+		case "of":
+			op.Of = value
+		case "label":
+			op.Label = value
+		case "hint":
+			op.Hint = value
+		case "default":
+			op.Default = value
 		case "locks", "checks", "tools", "outcomes", "options":
 			// An entry ends at a comma or space outside parentheses and
 			// quotes, so "Bash(go test *)" stays one entry.
@@ -339,6 +378,12 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 	}
 	if len(on) > 0 {
 		op.On = on
+	}
+	if b := opts["required"]; b != nil {
+		op.Required = b.v
+	}
+	if b := opts["ask"]; b != nil {
+		op.Ask = b.v
 	}
 	doc, err := edit.Open(*file)
 	if err != nil {

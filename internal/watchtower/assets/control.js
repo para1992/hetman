@@ -48,7 +48,7 @@
     if (C.loading) return;
     C.loading = true;
     try {
-      const res = await fetch('/api/flows');
+      const res = await fetch('/api/flows?lang=' + encodeURIComponent(W.lang()));
       C.flows = await res.json();
     } catch (e) {
       C.flows = [];
@@ -81,7 +81,125 @@
 
   function newStart(f) {
     const file = f ? f.file : '';
-    return { file: file, input: stored('hetman.input.' + file), error: '', problems: [], busy: false };
+    return { file: file, input: stored('hetman.input.' + file), values: f && f.input ? formValues(f) : null,
+      error: '', problems: [], fields: [], busy: false };
+  }
+
+  // ---- the run input as a form, made from the input section of the orders
+
+  // formValues are the values of the form: the ones last sent from this
+  // browser, else the defaults the orders give.
+  function formValues(f) {
+    try {
+      const kept = JSON.parse(stored('hetman.form.' + f.file) || 'null');
+      if (kept && typeof kept === 'object' && !Array.isArray(kept)) return kept;
+    } catch (e) { /* not kept */ }
+    return fieldDefaults(f.input);
+  }
+
+  function fieldDefaults(fields) {
+    const v = {};
+    for (const fd of fields) {
+      if (fd.default === undefined) continue;
+      if (fd.kind === 'yesno') v[fd.name] = fd.default ? 'yes' : 'no';
+      else if (fd.kind === 'list') v[fd.name] = fd.default.slice();
+      else v[fd.name] = String(fd.default);
+    }
+    return v;
+  }
+
+  // formField renders one field; v holds the values of the object it
+  // belongs to, key prefixes its focus keys.
+  function formField(fd, v, key) {
+    const fkey = key + fd.name;
+    const label = fd.label + (fd.required ? ' *' : '');
+    const hint = fd.hint ? h('div', { class: 'hint', text: fd.hint }) : null;
+    const setv = (e) => { v[fd.name] = e.target.value; };
+    let input;
+    switch (fd.kind) {
+      case 'longtext':
+        input = h('textarea', { rows: 4, 'data-fkey': fkey, 'aria-label': fd.label, oninput: setv });
+        input.value = v[fd.name] || '';
+        break;
+      case 'yesno':
+      case 'choice': {
+        const opts = fd.kind === 'yesno' ? [['yes', t('page.form.yes')], ['no', t('page.form.no')]] : fd.options.map((o) => [o, o]);
+        input = h('select', { 'data-fkey': fkey, 'aria-label': fd.label, onchange: setv },
+          h('option', { value: '', selected: !v[fd.name] }, '—'),
+          opts.map(([val, text]) => h('option', { value: val, selected: v[fd.name] === val }, text)));
+        break;
+      }
+      case 'list':
+        return formList(fd, v, fkey, label, hint);
+      case 'objects':
+        return formObjects(fd, v, fkey, label, hint);
+      default:
+        input = h('input', { type: fd.kind === 'number' ? 'number' : 'text', step: fd.kind === 'number' ? 'any' : null,
+          'data-fkey': fkey, 'aria-label': fd.label, oninput: setv });
+        input.value = v[fd.name] || '';
+    }
+    return h('label', { class: 'row form-field' }, h('span', { class: 'lbl', text: label }), input, hint);
+  }
+
+  function formList(fd, v, fkey, label, hint) {
+    const items = Array.isArray(v[fd.name]) ? v[fd.name] : (v[fd.name] = []);
+    return h('fieldset', { class: 'form-list' }, h('legend', { text: label }), hint,
+      items.map((item, i) => {
+        const input = h('input', { type: 'text', 'data-fkey': fkey + '.' + i, 'aria-label': fd.label + ' ' + (i + 1),
+          oninput: (e) => { items[i] = e.target.value; } });
+        input.value = item;
+        return h('div', { class: 'form-item' }, input,
+          h('button', { class: 'btn', type: 'button', title: t('page.input.remove'), 'aria-label': t('page.input.remove'),
+            onclick: () => { items.splice(i, 1); W.render(); } }, '×'));
+      }),
+      h('button', { class: 'btn', type: 'button', 'data-fkey': fkey + '.add',
+        onclick: () => { items.push(''); W.render(); } }, t('page.input.add_item')));
+  }
+
+  function formObjects(fd, v, fkey, label, hint) {
+    const items = Array.isArray(v[fd.name]) ? v[fd.name] : (v[fd.name] = []);
+    return h('fieldset', { class: 'form-list' }, h('legend', { text: label }), hint,
+      items.map((item, i) => h('fieldset', { class: 'form-object' },
+        h('legend', { text: t('page.input.item', { label: fd.label, n: i + 1 }) }),
+        fd.fields.map((sub) => formField(sub, item, fkey + '.' + i + '.')),
+        h('div', { class: 'send' }, h('button', { class: 'btn', type: 'button',
+          onclick: () => { items.splice(i, 1); W.render(); } }, t('page.input.remove_item'))))),
+      h('button', { class: 'btn', type: 'button', 'data-fkey': fkey + '.add',
+        onclick: () => { items.push(fieldDefaults(fd.fields)); W.render(); } }, t('page.input.add_object', { label: fd.label })));
+  }
+
+  // formInput turns the values of the form into the run input: empty
+  // answers are left out, numbers and yes/no become JSON values. The server
+  // checks the result with the same code as hetman run.
+  function formInput(fields, v) {
+    const out = {};
+    for (const fd of fields) {
+      const x = v[fd.name];
+      switch (fd.kind) {
+        case 'list': {
+          const items = (x || []).map((s) => s.trim()).filter((s) => s);
+          if (items.length) out[fd.name] = items;
+          break;
+        }
+        case 'objects': {
+          const items = (x || []).map((item) => formInput(fd.fields, item));
+          if (items.length) out[fd.name] = items;
+          break;
+        }
+        case 'number':
+          if (x !== undefined && String(x).trim() !== '') out[fd.name] = isNaN(Number(x)) ? String(x) : Number(x);
+          break;
+        case 'yesno':
+          if (x === 'yes' || x === 'no') out[fd.name] = x === 'yes';
+          break;
+        case 'longtext':
+          if (x && x.trim()) out[fd.name] = x;
+          break;
+        default:
+          if (x && x.trim()) out[fd.name] = x.trim();
+      }
+    }
+    return out;
   }
 
   function startForm(usable) {
@@ -90,16 +208,24 @@
     if (!f) return null;
     const pick = h('select', { 'data-fkey': 'start-file', onchange: (e) => { C.start = newStart(usable.find((x) => x.file === e.target.value)); W.render(); } },
       usable.map((x) => h('option', { value: x.file, selected: x.file === f.file }, x.file + ' · ' + x.flow)));
-    const input = h('textarea', { rows: 6, class: 'mono', 'data-fkey': 'start-input', placeholder: t('page.start.input_placeholder'),
-      'aria-label': t('page.start.input'), oninput: (e) => { st.input = e.target.value; } });
-    input.value = st.input;
+    let inputPart;
+    if (f.input && st.values) {
+      inputPart = [h('div', { class: 'hint', text: t('page.input.hint') }),
+        f.input.map((fd) => formField(fd, st.values, 'form-'))];
+    } else {
+      const input = h('textarea', { rows: 6, class: 'mono', 'data-fkey': 'start-input', placeholder: t('page.start.input_placeholder'),
+        'aria-label': t('page.start.input'), oninput: (e) => { st.input = e.target.value; } });
+      input.value = st.input;
+      inputPart = [h('label', { class: 'hint', text: t('page.start.input') }), input,
+        h('div', { class: 'hint', text: t('page.start.input_hint') })];
+    }
     return h('form', { class: 'answer ctl-panel', novalidate: true, onsubmit: (e) => { e.preventDefault(); startCampaign(f); } },
       h('fieldset', { class: 'q' }, h('legend', { text: t('page.start.title') }),
         h('label', { class: 'row' }, t('page.start.flow') + ' ', pick),
         h('div', { class: 'hint' }, t('page.start.language') + ' ', h('b', null, langLabel(f))),
-        h('label', { class: 'hint', text: t('page.start.input') }), input,
-        h('div', { class: 'hint', text: t('page.start.input_hint') })),
+        inputPart),
       st.error ? h('div', { class: 'err form-err', role: 'alert', text: st.error }) : null,
+      st.fields.length ? h('div', { class: 'err form-err', role: 'alert' }, h('b', { text: t('page.input.problems') }), '\n' + st.fields.join('\n')) : null,
       st.problems.length ? h('div', { class: 'err form-err', role: 'alert' }, h('b', { text: t('page.start.problems') }), '\n' + st.problems.join('\n')) : null,
       h('div', { class: 'send' },
         h('button', { class: 'btn', type: 'button', onclick: () => { C.start = null; W.render(); } }, t('page.cancel')),
@@ -121,9 +247,16 @@
     const st = C.start;
     st.error = '';
     st.problems = [];
-    const parsed = parseInput(st.input);
-    if (parsed.error) { st.error = parsed.error; W.render(); return; }
-    store('hetman.input.' + f.file, st.input);
+    st.fields = [];
+    let parsed;
+    if (f.input && st.values) {
+      parsed = { value: formInput(f.input, st.values) };
+      store('hetman.form.' + f.file, JSON.stringify(st.values));
+    } else {
+      parsed = parseInput(st.input);
+      if (parsed.error) { st.error = parsed.error; W.render(); return; }
+      store('hetman.input.' + f.file, st.input);
+    }
     st.busy = true;
     W.render();
     try {
@@ -135,6 +268,7 @@
         return;
       }
       if (r.data.problems) st.problems = r.data.problems;
+      else if (r.data.fields) st.fields = r.data.fields;
       else st.error = r.data.error || String(r.status);
     } catch (e) {
       st.error = e.message;

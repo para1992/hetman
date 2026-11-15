@@ -23,6 +23,7 @@ import (
 	"hetman/internal/i18n"
 	"hetman/internal/language"
 	"hetman/internal/orders"
+	"hetman/internal/runinput"
 	"hetman/internal/scribe"
 )
 
@@ -57,6 +58,9 @@ type FlowFile struct {
 	Language        *Language `json:"language,omitempty"`
 	LanguageProblem string    `json:"languageProblem,omitempty"`
 	Scribe          bool      `json:"scribe"` // it names an executor and model for Scribe
+	// Input describes the run input as a form, in the language of the
+	// request; absent when the orders describe none.
+	Input []FormField `json:"input,omitempty"`
 
 	path string
 	o    *orders.Orders
@@ -116,7 +120,14 @@ func (s *Server) startLanguage(o *orders.Orders) (string, error) {
 }
 
 func (s *Server) handleFlows(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.flowFiles())
+	files := s.flowFiles()
+	code := s.printer(r).Lang()
+	for i, f := range files {
+		if f.o != nil && f.o.Input != nil {
+			files[i].Input = formFields(f.o.Input.Fields, code)
+		}
+	}
+	writeJSON(w, http.StatusOK, files)
 }
 
 // Flow is the pipeline of an orders file and what its editor offers.
@@ -322,6 +333,24 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 	if len(problems) > 0 {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": strings.Join(problems, "\n"), "problems": problems})
 		return
+	}
+	// Orders that describe their input get it checked by the same code as
+	// hetman run, with the defaults filled in.
+	if o.Input != nil {
+		checked, err := runinput.Check(o.Input, input)
+		var inv *runinput.Invalid
+		switch {
+		case errors.As(err, &inv):
+			p := s.printer(r)
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": inv.Localize(p), "fields": inv.Lines(p)})
+			return
+		case err != nil:
+			writeError(w, err)
+			return
+		}
+		if input != nil || string(checked) != "{}" {
+			input = checked
+		}
 	}
 	id, err := s.Chron.NewCampaign(o.Flow, o.Path, o.Start, input, lang)
 	if err != nil {

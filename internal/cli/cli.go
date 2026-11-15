@@ -68,7 +68,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	file := fs.String("f", orders.DefaultFile, p.T("flag.f"))
 	var campaign *int64
-	var events *bool
+	var events, askForm, saveOnly *bool
 	var addr, input *string
 	var answers *answerFlags
 	var again *againFlags
@@ -76,6 +76,8 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	case "check":
 	case "run":
 		input = fs.String("input", "", p.T("flag.input"))
+		askForm = fs.Bool("ask", false, p.T("flag.form_ask"))
+		saveOnly = fs.Bool("save-only", false, p.T("flag.form_save_only"))
 	case "serve":
 		addr = fs.String("addr", DefaultAddr, p.T("flag.addr"))
 	case "status", "halt", "resume", "answer":
@@ -102,6 +104,16 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	if fs.NArg() > 0 {
 		fmt.Fprintln(stderr, p.T("cli.unexpected_argument", "command", cmd, "arg", strconv.Quote(fs.Arg(0))))
 		return exitUsage
+	}
+	if askForm != nil {
+		switch {
+		case *askForm && *input != "":
+			fmt.Fprintln(stderr, p.T("cli.form.ask_or_input"))
+			return exitUsage
+		case *saveOnly && !*askForm:
+			fmt.Fprintln(stderr, p.T("cli.form.save_needs_ask", "command", "run"))
+			return exitUsage
+		}
 	}
 	o, err := orders.Load(*file)
 	if err != nil {
@@ -155,6 +167,20 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	if input != nil && *input != "" {
 		if runInput, err = readInput(p, *input); err != nil {
 			fmt.Fprintln(stderr, p.T("cli.bad_input", "file", *input, "error", err))
+			return exitUsage
+		}
+	}
+	if cmd == "run" {
+		if *askForm {
+			var code int
+			if runInput, _, code = askInput(p, o, engine.StateDir(o), o.Flow, "run", stdout, stderr); runInput == nil {
+				return code
+			}
+			if *saveOnly {
+				return exitDone
+			}
+		} else if runInput, err = checkInput(o, runInput); err != nil {
+			fmt.Fprintln(stderr, p.T("cli.form.input_refused", "command", "run", "error", p.Error(err)))
 			return exitUsage
 		}
 	}

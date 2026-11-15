@@ -23,7 +23,7 @@ import (
 var phrase = regexp.MustCompile(`[A-Za-z]{2,}[ ,;:]+[A-Za-z]{2,}`)
 
 // keyLike is a string literal that names a message.
-var keyLike = regexp.MustCompile(`^(answer|ask|assist|cli|engine|explain|flag|op|page|query|scribe|serve|status|wizard|yes|no)\.[a-z0-9_.\-]+$`)
+var keyLike = regexp.MustCompile(`^(answer|ask|assist|cli|engine|explain|flag|form|op|page|query|scribe|serve|status|wizard|yes|no)\.[a-z0-9_.\-]+$`)
 
 // printCalls are the calls whose literal arguments a person reads.
 var printCalls = map[string]bool{

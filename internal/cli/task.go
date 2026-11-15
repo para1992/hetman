@@ -22,6 +22,7 @@ import (
 	"hetman/internal/engine"
 	"hetman/internal/i18n"
 	"hetman/internal/orders"
+	"hetman/internal/runinput"
 )
 
 // Stdin of task add -input -.
@@ -41,13 +42,17 @@ func taskCmd(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	file := fs.String("r", dispatch.DefaultRoutesFile, p.T("flag.task_r"))
 	var kind, key, input, state *string
-	var force *bool
+	var force, saveOnly *bool
 	switch sub {
-	case "add":
+	case "add", "new":
 		kind = fs.String("kind", "", p.T("flag.task_kind"))
 		key = fs.String("key", "", p.T("flag.task_key"))
-		input = fs.String("input", "", p.T("flag.task_input"))
 		force = fs.Bool("force", false, p.T("flag.task_force"))
+		if sub == "add" {
+			input = fs.String("input", "", p.T("flag.task_input"))
+		} else {
+			saveOnly = fs.Bool("save-only", false, p.T("flag.form_save_only"))
+		}
 	case "list":
 		state = fs.String("state", "", p.T("flag.task_state"))
 	case "show", "cancel", "check":
@@ -101,6 +106,8 @@ func taskCmd(args []string, stdout, stderr io.Writer) int {
 	switch sub {
 	case "add":
 		return t.add(*kind, *key, *input, *force)
+	case "new":
+		return t.newTask(*kind, *key, *force, *saveOnly)
 	case "list":
 		return t.list(*state)
 	case "show":
@@ -221,10 +228,54 @@ func (t *tasks) add(kind, key, inputFile string, force bool) int {
 		fmt.Fprintln(t.stderr, t.p.T("cli.task.bad_input", "file", inputFile, "error", err))
 		return exitUsage
 	}
+	return t.queueInput(kind, key, data, force)
+}
+
+// newTask asks for the input of a task in the terminal, through the form
+// made from the input section of the orders the kind is routed to, then
+// queues it as add does.
+func (t *tasks) newTask(kind, key string, force, saveOnly bool) int {
+	if kind == "" {
+		fmt.Fprintln(t.stderr, t.p.T("cli.task.kind_required"))
+		return exitUsage
+	}
+	if err := t.routes.Known(kind); err != nil {
+		fmt.Fprintln(t.stderr, "hetman task new:", t.p.Error(err))
+		fmt.Fprintln(t.stderr, t.p.T("cli.task.nothing_added"))
+		return exitUsage
+	}
+	o, err := orders.Load(t.routes.Routes[kind].Orders)
+	if err != nil {
+		return t.fail(err)
+	}
+	data, _, code := askInput(t.p, o, filepath.Join(t.routes.Dir, ".hetman"), kind, "task new", t.stdout, t.stderr)
+	if data == nil {
+		return code
+	}
+	if saveOnly {
+		return exitDone
+	}
+	return t.queueInput(kind, key, data, force)
+}
+
+// queueInput checks a task's input, against the input section of the
+// routed orders when they have one, and queues the task.
+func (t *tasks) queueInput(kind, key string, data []byte, force bool) int {
 	input, err := dispatch.CheckInput(data)
 	if err != nil {
 		fmt.Fprintln(t.stderr, "hetman task add:", t.p.Error(err))
 		return exitUsage
+	}
+	o, err := orders.Load(t.routes.Routes[kind].Orders)
+	if err != nil {
+		return t.fail(err)
+	}
+	if o.Input != nil {
+		if input, err = runinput.Check(o.Input, input); err != nil {
+			fmt.Fprintln(t.stderr, t.p.T("cli.form.input_refused", "command", "task add", "error", t.p.Error(err)))
+			fmt.Fprintln(t.stderr, t.p.T("cli.task.nothing_added"))
+			return exitUsage
+		}
 	}
 	task, added, err := t.queue.Add(kind, input, key, force)
 	if err != nil {
