@@ -1,0 +1,80 @@
+# Agent steps run through roles: pools of clients a step may run on, each
+# client an executor with its own model and effort.
+#
+#   outline, draft  role writer, round robin: the clients take turns, so the
+#                   outline runs on first and the draft on second
+#   review          role reviewer, quota: the client that has used the
+#                   smallest share of its allowance runs; first reports 70%
+#                   of its five-hour window used, second at most 40% of any
+#                   window, so second runs
+#   polish          role fixer, fixed: always the first client that can
+#                   run; first reports a subscription limit, so the step
+#                   moves to second at once, without waiting and without
+#                   using an attempt
+#
+# Both clients are the stub adapter, which runs no model and follows a plan
+# file; each plan also says what the client reports when asked for its usage.
+# Build the stub once, from the repository root:
+#
+#   go build -o examples/roles/bin/stub-adapter ./cmd/hetman-stub-adapter
+#
+# Then, in this folder:
+#
+#   hetman check
+#   hetman run -input input.json
+#   hetman status          which client ran each attempt, and why
+#   hetman serve           the Roles tab shows each client's usage
+#
+# The limit first reported resets an hour later; until then a new campaign
+# skips first wherever it would choose it.
+version: 0
+flow: roles-demo
+start: outline
+
+executors:
+  first: {run: [./bin/stub-adapter, plans/first.json]}
+  second: {run: [./bin/stub-adapter, plans/second.json]}
+
+roles:
+  writer:
+    select: round_robin
+    clients:
+      - {executor: first, model: model-one, effort: medium}
+      - {executor: second, model: model-two}
+  reviewer:
+    select: quota
+    clients:
+      - {executor: first, model: model-one, allowance: {five_hour: 40, monthly: 600}}
+      - {executor: second, model: model-two, allowance: {five_hour: 2h, weekly: 20h}}
+  fixer:
+    select: fixed
+    clients:
+      - {executor: first, model: model-one}
+      - {executor: second, model: model-two}
+
+nodes:
+  outline:
+    type: agent
+    role: writer
+    prompt: prompts/outline.md
+    schema: schemas/text.json
+    on: {ok: draft, fail: failed}
+  draft:
+    type: agent
+    role: writer
+    prompt: prompts/draft.md
+    schema: schemas/text.json
+    on: {ok: review, fail: failed}
+  review:
+    type: agent
+    role: reviewer
+    prompt: prompts/review.md
+    schema: schemas/text.json
+    on: {ok: polish, fail: failed}
+  polish:
+    type: agent
+    role: fixer
+    prompt: prompts/polish.md
+    schema: schemas/text.json
+    max_attempts: 1
+    on: {ok: done, fail: failed}

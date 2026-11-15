@@ -43,6 +43,7 @@ const (
 	ItemKept        = "item_kept"     // a retried for-each keeps an item that reached done in the attempt before
 	Retried         = "retried"       // a person sent the campaign back to a failed step, with a fresh attempt budget
 	Rewound         = "rewound"       // a person sent the campaign back to a node it visited before
+	NoClient        = "no_client"     // no client of a step's role can run it now; the campaign waits
 )
 
 // Why a campaign waits for a person, recorded as Details.Reason of an asked
@@ -103,7 +104,7 @@ type Details struct {
 
 	Input    json.RawMessage `json:"input,omitempty"`    // run input, on campaign_started
 	Language string          `json:"language,omitempty"` // code of the language for the person, on campaign_started; empty for none
-	Executor string          `json:"executor,omitempty"` // agent step: executor name
+	Executor string          `json:"executor,omitempty"` // agent step: executor name, on step_started and step_finished
 	Model    string          `json:"model,omitempty"`    // agent step: model string passed through
 	Effort   string          `json:"effort,omitempty"`   // agent step: effort string passed through
 	Prompt   string          `json:"prompt,omitempty"`   // agent step: rendered prompt file, relative to the campaign folder
@@ -132,6 +133,64 @@ type Details struct {
 	Items      json.RawMessage `json:"items,omitempty"`       // step_started of a for-each: the list, as read when the step started
 	Parent     int64           `json:"parent,omitempty"`      // campaign_started of a child: the campaign that started it
 	ParentNode string          `json:"parent_node,omitempty"` // campaign_started of a child: the node of the parent that started it
+
+	Role      string     `json:"role,omitempty"`       // step_finished of a step run through a role: the role
+	Choice    *Choice    `json:"choice,omitempty"`     // step_started of a step run through a role, no_client: how the client was chosen
+	WaitUntil *time.Time `json:"wait_until,omitempty"` // no_client: when the first client can run again; nil for a person
+}
+
+// Why a client of a role was chosen, in Choice.Reason.
+const (
+	ChoseFixed  = "fixed"  // the first client of the list that can run
+	ChoseTurn   = "turn"   // round robin: the next client after the one chosen last for the role
+	ChoseQuota  = "quota"  // the client that has used the smallest share of its allowance
+	ChoseResume = "resume" // the client that ran the step's cut-off attempt or asked its questions continues
+	ChoseNone   = "none"   // no_client: no client can run
+)
+
+// Choice is how the client of an attempt was chosen. Usage holds what was
+// compared, for every client of the role in its order, so that a reader
+// needs nothing else to explain the choice.
+type Choice struct {
+	Role   string        `json:"role"`
+	Mode   string        `json:"mode"`           // the role's selection mode
+	Client int           `json:"client"`         // the chosen client's position in the role, from 1; 0 for none
+	Reason string        `json:"reason"`         // Chose*
+	From   int           `json:"from,omitempty"` // the client whose limit made the step change client
+	Usage  []ClientUsage `json:"usage"`
+}
+
+// ClientUsage is what was known about one client of a role at a choice.
+type ClientUsage struct {
+	Client   int           `json:"client"` // position in the role, from 1
+	Executor string        `json:"executor"`
+	Model    string        `json:"model,omitempty"`
+	Windows  []WindowUsage `json:"windows,omitempty"`
+	// Exhausted: the client cannot run until Until, or, when Until is nil,
+	// until a person resumes or its window is seen to reset.
+	Exhausted bool       `json:"exhausted,omitempty"`
+	Until     *time.Time `json:"until,omitempty"`
+	Why       string     `json:"why,omitempty"` // what exhausted it: Source* of the window, or limit
+}
+
+// Where the share of a usage window comes from, in WindowUsage.Source.
+const (
+	SourceMeasured  = "measured"  // reported by the adapter, from the client itself
+	SourceEstimated = "estimated" // counted by the engine against the allowance the role states
+	SourceLimit     = "limit"     // the client's last attempt hit its limit, which resets at a known time
+	SourceUnknown   = "unknown"   // nothing is known: no measurement and no allowance
+)
+
+// WindowUsage is the usage of one window of a client.
+type WindowUsage struct {
+	Name      string     `json:"name"`           // five_hour or weekly
+	Source    string     `json:"source"`         // Source*
+	Used      *float64   `json:"used,omitempty"` // share of the allowance used; nil when unknown
+	ResetsAt  *time.Time `json:"resets_at,omitempty"`
+	At        *time.Time `json:"at,omitempty"`        // measured: when the adapter was asked
+	Attempts  int        `json:"attempts,omitempty"`  // attempts the engine saw in the window
+	Millis    int64      `json:"ms,omitempty"`        // their total duration
+	Allowance string     `json:"allowance,omitempty"` // estimated: the allowance, as written in the orders
 }
 
 // Campaign is one execution of a flow.
@@ -170,6 +229,7 @@ CREATE TABLE IF NOT EXISTS events (
 	details    TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS events_by_campaign ON events(campaign, seq);
+CREATE INDEX IF NOT EXISTS events_by_kind ON events(kind, seq);
 `
 
 // Open opens or creates the journal file at path. Several processes may
@@ -446,14 +506,22 @@ func Replay(events []Event) State {
 			if Counts(e.Failure) {
 				s.Failures++
 			}
-			switch e.Failure {
-			case FailLimit:
+			switch {
+			case e.Failure == FailLimit && e.Role != "":
+				// A step run through a role does not wait here: the engine
+				// chooses another client next, or records no_client.
+			case e.Failure == FailLimit:
 				s.Waiting = WaitLimit
 				if e.RetryAt != nil {
 					s.WaitUntil = *e.RetryAt
 				}
-			case FailOffline:
+			case e.Failure == FailOffline:
 				s.Waiting = WaitOffline
+			}
+		case NoClient:
+			s.Waiting, s.WaitUntil = WaitLimit, time.Time{}
+			if e.WaitUntil != nil {
+				s.WaitUntil = *e.WaitUntil
 			}
 		case Asked:
 			ev := e

@@ -89,6 +89,31 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, views)
 }
 
+// roleViews returns the roles view of the served orders: every role with
+// the usage of its clients now; nil when the orders declare no role.
+func (s *Server) roleViews() []engine.RoleView {
+	o, _ := s.currentOrders()
+	if o == nil {
+		return nil
+	}
+	views, err := engine.RolesView(o, s.Chron, time.Now())
+	if err != nil {
+		return nil
+	}
+	return views
+}
+
+func nonNilRoles(v []engine.RoleView) []engine.RoleView {
+	if v == nil {
+		return []engine.RoleView{}
+	}
+	return v
+}
+
+func (s *Server) handleRoles(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, nonNilRoles(s.roleViews()))
+}
+
 type loaded struct {
 	o     *orders.Orders
 	stamp time.Time

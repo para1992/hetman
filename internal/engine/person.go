@@ -309,8 +309,14 @@ func (e *Engine) notice(ev chronicle.Event) (Notice, bool) {
 		}
 	case ev.Kind == chronicle.StepFinished && ev.Failure == chronicle.FailOffline:
 		n.Reason, n.Message = chronicle.ReasonOffline, fmt.Sprintf("%s lost connectivity (%s); resume runs it again", ev.Node, ev.Error)
-	case ev.Kind == chronicle.StepFinished && ev.Failure == chronicle.FailLimit && ev.RetryAt == nil:
+	case ev.Kind == chronicle.StepFinished && ev.Failure == chronicle.FailLimit && ev.RetryAt == nil && ev.Role == "":
 		n.Reason, n.Message = chronicle.ReasonLimit, fmt.Sprintf("%s hit the subscription limit with no time to retry (%s); resume runs it again", ev.Node, ev.Error)
+	case ev.Kind == chronicle.NoClient && ev.WaitUntil == nil:
+		role := ""
+		if ev.Choice != nil {
+			role = ev.Choice.Role
+		}
+		n.Reason, n.Message = chronicle.ReasonLimit, fmt.Sprintf("no client of role %s can run %s and none says when it can again; resume tries them again", role, ev.Node)
 	case ev.Kind == chronicle.Stopped:
 		n.Reason, n.Message = chronicle.ReasonError, ev.Error
 	default:

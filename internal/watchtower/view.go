@@ -88,6 +88,7 @@ type Campaign struct {
 	Retry         string               `json:"retry,omitempty"`    // the node a retry runs again; empty when nothing failed
 	Rewind        []string             `json:"rewind,omitempty"`   // the nodes a rewind may send the campaign back to
 	Returns       []Return             `json:"returns,omitempty"`  // every retry and rewind, oldest first
+	NoClient      string               `json:"noClient,omitempty"` // in words: no client of the role of the step at Node can run, and what is known of each
 
 	returned map[string]bool // nodes sent back to that have not run since
 }
@@ -148,6 +149,7 @@ type Column struct {
 	Exits    []Exit   `json:"exits"`
 	Side     []Column `json:"side,omitempty"`
 	// Agent nodes: as in the current orders.
+	Role        string `json:"role,omitempty"`
 	Executor    string `json:"executor,omitempty"`
 	Model       string `json:"model,omitempty"`
 	Effort      string `json:"effort,omitempty"`
@@ -210,6 +212,12 @@ type Attempt struct {
 	Failure   string          `json:"failure,omitempty"`   // why the attempt failed
 	RetryAt   *time.Time      `json:"retryAt,omitempty"`   // limit: when it is tried again
 	Ask       *Ask            `json:"ask,omitempty"`       // the questions this attempt put to a person
+	// A step run through a role: how its client was chosen, and the same
+	// in words of the reader's language.
+	Choice   *chronicle.Choice `json:"choice,omitempty"`
+	Client   string            `json:"client,omitempty"`   // the client, its role and why it was chosen
+	Switched string            `json:"switched,omitempty"` // the client whose limit made the step change client
+	Compared string            `json:"compared,omitempty"` // the quota mode: the shares compared
 }
 
 // CheckRun is one execution of a gate check within an attempt.
@@ -267,6 +275,10 @@ type Event struct {
 	Failure  string          `json:"failure,omitempty"`
 	RetryAt  *time.Time      `json:"retryAt,omitempty"`
 
+	Role      string            `json:"role,omitempty"`
+	Choice    *chronicle.Choice `json:"choice,omitempty"`
+	WaitUntil *time.Time        `json:"waitUntil,omitempty"`
+
 	Reason    string         `json:"reason,omitempty"`
 	Questions []ask.Question `json:"questions,omitempty"`
 	Show      []string       `json:"show,omitempty"`
@@ -286,6 +298,7 @@ func eventsJSON(events []chronicle.Event) []Event {
 			Artifacts: e.Artifacts, Soft: e.Soft, Pid: e.Pid, Ident: e.Ident,
 			Input: e.Input, Language: e.Language, Executor: e.Executor, Model: e.Model, Effort: e.Effort, Prompt: e.Prompt,
 			Session: e.Session, Output: e.Output, Failure: e.Failure, RetryAt: e.RetryAt,
+			Role: e.Role, Choice: e.Choice, WaitUntil: e.WaitUntil,
 			Reason: e.Reason, Questions: e.Questions, Show: e.Show, Outcomes: e.Outcomes, Round: e.Round,
 			Answers: e.Answers, Ask: e.Ask, By: e.By, Via: e.Via}
 	}
@@ -393,7 +406,7 @@ func build(k chronicle.Campaign, events []chronicle.Event, o *orders.Orders, cam
 			}
 			c.Nodes[e.Node] = append(c.Nodes[e.Node], Attempt{N: e.Attempt, Status: StatusRunning, Started: e.At,
 				Log: logIfScript(o, e.Node, e.Attempt), Executor: e.Executor, Model: e.Model, Effort: e.Effort,
-				Prompt: e.Prompt, SessionIn: e.Session})
+				Prompt: e.Prompt, SessionIn: e.Session, Choice: e.Choice})
 			if e.Executor != "" {
 				list := c.Nodes[e.Node]
 				list[len(list)-1].Log = engine.LogFile(e.Node, "", e.Attempt)
@@ -823,7 +836,7 @@ func column(o *orders.Orders, node string, transitions map[string][]chronicle.Ev
 	}
 	col.Known, col.Type = true, def.Type
 	if def.Type == orders.Agent {
-		col.Executor, col.Model, col.Effort, col.MaxAttempts = def.Executor, def.Model, def.Effort, def.MaxAttempts
+		col.Role, col.Executor, col.Model, col.Effort, col.MaxAttempts = def.Role, def.Executor, def.Model, def.Effort, def.MaxAttempts
 	}
 	for _, name := range def.Checks {
 		col.Tiles = append(col.Tiles, Tile{Check: name})

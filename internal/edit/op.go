@@ -27,6 +27,9 @@ const (
 	OpGateRemove = "gate-remove" // remove a check from a gate
 	OpAsk        = "ask"         // add a question to a gate or a human node
 	OpAssistant  = "assistant"   // name the executor and model Scribe may ask
+	OpRole       = "role"        // declare a role, or change its selection mode
+	OpRoleAdd    = "role-add"    // add a client to a role
+	OpRoleRemove = "role-remove" // remove a client from a role
 	OpLanguage   = "language"    // set the language for the person
 	OpUnlanguage = "unlanguage"  // remove the language for the person
 )
@@ -73,6 +76,8 @@ type Op struct {
 	Items    string            `json:"items,omitempty"`    // foreach node: the list, such as output.plan.items
 	Parallel int               `json:"parallel,omitempty"` // foreach node: how many items run at the same time
 	Locks    []string          `json:"locks,omitempty"`    // a new node or a check: resources it holds exclusively
+	Role     string            `json:"role,omitempty"`     // a new agent node: the role whose clients run it
+	Select   string            `json:"select,omitempty"`   // role: fixed, round_robin or quota
 }
 
 // Spec describes one operation for people, the command line and a model.
@@ -85,7 +90,7 @@ type Spec struct {
 }
 
 // nodeFields are the fields that describe a new node.
-var nodeFields = []string{"run", "timeout", "checks", "executor", "model", "effort", "tools", "attempts", "prompt", "schema", "outcomes", "on", "starters",
+var nodeFields = []string{"run", "timeout", "checks", "executor", "role", "model", "effort", "tools", "attempts", "prompt", "schema", "outcomes", "on", "starters",
 	"segment", "input", "items", "parallel", "locks"}
 
 // Specs lists every operation.
@@ -118,6 +123,12 @@ var Specs = []Spec{
 		"add a question to a gate (yes or no) or a human node (yesno, choice with options, or text)"},
 	{OpAssistant, []string{"executor", "model"}, []string{"executor", "model"}, []string{"effort"},
 		"name the executor and model Scribe may ask to turn a sentence into one operation"},
+	{OpRole, []string{"name"}, []string{"name"}, []string{"select", "executor", "model", "effort"},
+		"declare a role (its selection mode, fixed, round_robin or quota, and its first client: executor, model, effort), or change the mode of a declared one"},
+	{OpRoleAdd, []string{"name", "executor"}, []string{"name", "executor"}, []string{"model", "effort", "at"},
+		"add a client (an executor with its own model and effort) to a role, at a position from 1 (the end when not given)"},
+	{OpRoleRemove, []string{"name", "at"}, []string{"name", "at"}, nil,
+		"remove the client at a position from 1 from a role; a role keeps at least one client"},
 	{OpLanguage, []string{"language"}, []string{"language"}, nil,
 		"write what the flow addresses to a person (questions, summaries, plans) in this language, given by its code; code and the repository stay English"},
 	{OpUnlanguage, nil, nil, nil,
@@ -148,7 +159,7 @@ func SpecOf(op string) (Spec, bool) {
 
 // Node fields set and unset can change.
 var (
-	setFields = []string{"run", "timeout", "idle_timeout", "executor", "model", "effort", "tools", "attempts", "dialogue", "prompt", "schema",
+	setFields = []string{"run", "timeout", "idle_timeout", "executor", "role", "model", "effort", "tools", "attempts", "dialogue", "prompt", "schema",
 		"locks", "segment", "input", "items", "parallel"}
 	unsetFields = []string{"timeout", "idle_timeout", "model", "effort", "tools", "attempts", "dialogue", "locks", "input", "parallel"}
 )
@@ -206,6 +217,12 @@ func (op Op) Validate() error {
 		if !contains(list, op.Field) {
 			return fmt.Errorf("%s: unknown field %q (known: %s)", op.Op, op.Field, strings.Join(list, ", "))
 		}
+	}
+	if op.Op == OpRole && op.Executor == "" && (op.Model != "" || op.Effort != "") {
+		return fmt.Errorf("role: model and effort belong to the first client; give its executor too")
+	}
+	if op.Executor != "" && op.Role != "" {
+		return fmt.Errorf("%s: an agent node names either a role or an executor, not both", op.Op)
 	}
 	for _, s := range append(append(append([]string{op.Value, op.Question, op.Model, op.Effort, op.Segment, op.Input, op.Items}, op.Run...), op.Options...), op.Tools...) {
 		if strings.ContainsAny(s, "\r\n") {
@@ -282,6 +299,18 @@ func (op Op) WordsIn(p *i18n.Printer) string {
 			return p.T("op.words.ask_options", args...)
 		}
 		return p.T("op.words.ask", args...)
+	case OpRole:
+		if op.Executor == "" {
+			return p.T("op.words.role_select", "name", op.Name, "select", op.Select)
+		}
+		return p.T("op.words.role", "name", op.Name, "select", op.Select, "client", clientWords(p, op))
+	case OpRoleAdd:
+		if op.At > 0 {
+			return p.T("op.words.role_add_at", "name", op.Name, "client", clientWords(p, op), "at", op.At)
+		}
+		return p.T("op.words.role_add", "name", op.Name, "client", clientWords(p, op))
+	case OpRoleRemove:
+		return p.T("op.words.role_remove", "name", op.Name, "at", op.At)
 	case OpLanguage:
 		if l, ok := language.Lookup(op.Language); ok {
 			return p.T("op.words.language", "language", l.Label(), "code", l.Code)
@@ -297,6 +326,18 @@ func (op Op) WordsIn(p *i18n.Printer) string {
 		return p.T(key, "model", op.Model, "executor", op.Executor, "effort", op.Effort)
 	}
 	return op.Op
+}
+
+// clientWords describes the client of a role operation.
+func clientWords(p *i18n.Printer, op Op) string {
+	var parts []string
+	if op.Model != "" {
+		parts = append(parts, p.T("op.words.model", "model", op.Model))
+	}
+	if op.Effort != "" {
+		parts = append(parts, p.T("op.words.effort", "effort", op.Effort))
+	}
+	return op.Executor + optList(", ", parts)
 }
 
 func optList(prefix string, parts []string) string {
@@ -316,6 +357,9 @@ func nodeWords(p *i18n.Printer, op Op) string {
 	}
 	if op.Executor != "" {
 		parts = append(parts, p.T("op.words.through_executor", "executor", op.Executor))
+	}
+	if op.Role != "" {
+		parts = append(parts, p.T("op.words.through_role", "role", op.Role))
 	}
 	if op.Segment != "" {
 		parts = append(parts, p.T("op.words.segment", "segment", op.Segment))

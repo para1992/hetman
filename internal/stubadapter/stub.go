@@ -7,9 +7,14 @@
 //
 //	{
 //	  "name": "stub",                 name to describe itself with (default "stub")
-//	  "features": ["resume"],          features to declare (default ["resume"])
+//	  "features": ["resume"],          features to declare (default ["resume"], and
+//	                                   "usage" when the plan has usage)
 //	  "protocol": [0],                 protocol versions to declare (default [0])
 //	  "trace": "stub-trace.jsonl",     file to append every start message's step to
+//	  "usage": {                       what --usage reports, per window asked for;
+//	    "five_hour": {"used": 0.4, "resets_in": "2h"},   a window not listed is
+//	    "weekly": {"used": 0.9, "resets_at": "RFC 3339"} left out
+//	  },
 //	  "when": [                        moves chosen by the prompt, before "nodes":
 //	    {"prompt": "text", "moves": [[MOVE, ...], ...]}  the first entry whose text is
 //	  ],                               part of the prompt is used, by attempt as below
@@ -33,6 +38,9 @@
 //	{"result": {...}}                    send a result with this output
 //	{"error": "KIND", "message": "...", "retry_in": "30s", "retry_at": "RFC 3339 time"}
 //	                                     send an error; retry_in or retry_at for a limit
+//
+// The plan is read again for every start, --describe and --usage, so a test
+// can change what the adapter does between steps by rewriting the file.
 //
 // A dialogue step asks with a result whose outcome is "questions", such as
 // {"result": {"outcome": "questions", "questions": [{"id": "q", "question": "?", "kind": "yesno"}]}};
@@ -75,6 +83,14 @@ type Plan struct {
 	Trace    string              `json:"trace"`
 	When     []When              `json:"when"`
 	Nodes    map[string][][]Move `json:"nodes"`
+	Usage    map[string]Window   `json:"usage"`
+}
+
+// Window is the usage the adapter reports for one window.
+type Window struct {
+	Used     float64 `json:"used"`
+	ResetsIn string  `json:"resets_in"` // a duration from now
+	ResetsAt string  `json:"resets_at"` // an RFC 3339 time
 }
 
 // When chooses moves by the text of the prompt.
@@ -117,6 +133,14 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if n := len(args); n > 0 && args[n-1] == adapter.DescribeFlag {
 		describeOnly, args = true, args[:n-1]
 	}
+	var windows []string
+	usageOnly := false
+	for i, a := range args {
+		if a == adapter.UsageFlag {
+			usageOnly, windows, args = true, args[i+1:], args[:i]
+			break
+		}
+	}
 	planPath := os.Getenv(EnvPlan)
 	if planPath == "" && len(args) > 0 {
 		planPath = args[0]
@@ -140,12 +164,18 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if d.Name == "" {
 			d.Name = "stub"
 		}
+		if plan.Usage != nil {
+			d.Features = append(d.Features, adapter.FeatureUsage)
+		}
 		if plan.Features != nil {
 			d.Features = *plan.Features
 		}
 		data, _ := json.Marshal(d)
 		fmt.Fprintf(stdout, "%s\n", data)
 		return 0
+	}
+	if usageOnly {
+		return usage(plan, windows, stdout, stderr)
 	}
 
 	in := bufio.NewReader(stdin)
@@ -190,6 +220,31 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return code
 		}
 	}
+	return 0
+}
+
+// usage prints what the plan says the client has used of each window asked
+// for.
+func usage(plan Plan, windows []string, stdout, stderr io.Writer) int {
+	u := adapter.Usage{Windows: []adapter.UsageWindow{}}
+	for _, name := range windows {
+		w, ok := plan.Usage[name]
+		if !ok {
+			continue
+		}
+		uw := adapter.UsageWindow{Name: name, Used: w.Used, ResetsAt: w.ResetsAt}
+		if w.ResetsIn != "" {
+			d, err := time.ParseDuration(w.ResetsIn)
+			if err != nil {
+				fmt.Fprintf(stderr, "stub: bad resets_in %q\n", w.ResetsIn)
+				return 2
+			}
+			uw.ResetsAt = time.Now().Add(d).UTC().Format(time.RFC3339Nano)
+		}
+		u.Windows = append(u.Windows, uw)
+	}
+	data, _ := json.Marshal(u)
+	fmt.Fprintf(stdout, "%s\n", data)
 	return 0
 }
 

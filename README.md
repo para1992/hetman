@@ -509,6 +509,106 @@ When an attempt was cut off (Hetman stopped, a limit, lost connectivity) and the
 adapter declares the `resume` feature, the next attempt is given that id so the
 adapter can continue the conversation; otherwise the step starts fresh.
 
+### Roles: several clients for one step
+
+A role is a pool of clients a step may run on. Each client is an executor with its
+own model and effort, since a model name means nothing to another client. An agent
+node names a role instead of `executor`, `model` and `effort`; naming both is an
+error, and a node that names an executor works as before.
+
+```yaml
+executors:
+  first: {run: [./adapters/first-adapter]}
+  second: {run: [./adapters/second-adapter]}
+
+roles:
+  coder:
+    select: quota                  # required: fixed, round_robin or quota
+    clients:                       # required: at least one
+      - {executor: first, model: "...", effort: "...", allowance: {five_hour: 40, weekly: 300}}
+      - {executor: second, model: "...", allowance: {five_hour: 2h, monthly: 80h}}
+
+nodes:
+  implement:
+    type: agent
+    role: coder                    # instead of executor, model and effort
+    prompt: prompts/implement.md
+    schema: schemas/implement.json
+    on: {ok: review, fail: failed}
+```
+
+There are no defaults: a role says how it selects and lists its clients.
+
+| `select` | The client of an attempt |
+|---|---|
+| `fixed` | the first client of the list that can run |
+| `round_robin` | the next client after the one chosen last for this role, in the campaign and every child campaign of its segments and for-each steps; the turn is read from the chronicle, so it survives a restart |
+| `quota` | the client that has used the smallest share of its allowance (below) |
+
+**Which client can run.** In every mode, a client whose last attempt, in any
+campaign of the folder, hit a subscription limit that resets at a known time is not
+chosen until then; one whose attempt in this visit of the step hit a limit with no
+reset time is not chosen again until a person resumes the campaign. In the `quota`
+mode a client that has used up either window is not chosen until that window resets.
+Before the mode decides, the client that ran the step's cut-off attempt (Hetman
+stopped, a limit that has reset, lost connectivity) or asked the person questions
+continues, if it can run, so that its conversation goes on.
+
+**Ordering by remaining subscription.** Each client has a share of two windows, the
+last five hours and the week: 0 is nothing used, 1 the whole allowance. A window's
+share is *measured* when the adapter reports it (the `usage` feature, below);
+otherwise *estimated* from what Hetman saw, when the client states an allowance for
+that window; otherwise unknown. From its known shares each client gets two numbers:
+the larger share (the window that will stop it first) and the smaller one; with one
+known window both are that share. The client with the smallest larger share runs; a
+tie goes to the smaller second share, then to the client listed first. A client with
+no known share in either window comes after every client with one. A client with a
+share of 1 or more in a window is skipped until that window's reset, and a limit the
+client reported makes the window its reset falls in (five hours when it is at most
+five hours after the limit, else the week) used up until then.
+
+**Estimates.** `allowance` on a client gives, per window, either a number of attempts
+(`five_hour: 40`) or a duration of work (`weekly: 20h`); `monthly:` instead of
+`weekly:` is converted to a weekly allowance (times 12/52). Hetman counts the attempts
+of that executor's agent steps that finished in the window in every campaign of the
+same `.hetman` folder (attempts cut off by a limit or lost connectivity are left out)
+and, for a duration, adds up how long they took; the share is that count or time
+divided by the allowance. The windows roll: an estimate used up resets when enough
+of its oldest attempts have left the window. An estimate is only what Hetman saw:
+work done with the same subscription outside Hetman is not in it, and it is always
+shown as estimated. An executor name stands for one client account across the orders
+files of a folder.
+
+**Changing client after a limit.** When the client of an attempt reports a
+subscription limit, the attempt does not count and the step moves at once to the next
+client that can run, chosen by the mode as above, without waiting. Only when no client
+of the role can run does the campaign wait as for any limit: until the earliest time
+one of them can run again, and then it goes on by itself; when none says when, it
+waits for a person (exit code 5) and `hetman resume` tries the clients again. Lost
+connectivity does not change client: it is the computer's connection, not the
+client's allowance, so another client would most likely fail the same way, and the
+step waits for a person as before.
+
+**Sessions and dialogue.** A conversation belongs to one client. A step that
+continues on another client starts a fresh conversation with the full prompt, plus
+every round of questions it asked in this visit with the person's answers, so nothing
+the person said is lost.
+
+**What is recorded.** Every choice is in the chronicle with the attempt's
+`step_started`: the role, the mode, the client's position, the reason (`fixed`,
+`turn`, `quota` or `resume`), the client whose limit made the step change client, and
+what was known of every client of the role (each window's share, where it came from,
+when it resets, the attempts and time Hetman saw, and whether the client could run and
+until when). When no client can run, a `no_client` event records the same and the
+time the campaign waits for. `hetman status`, the step card on the page and `hetman
+scribe explain` show which client ran each attempt and why; the page's Roles tab shows
+every role of the served orders with each client's current usage per window, measured
+(as of the last time an adapter was asked) or estimated, and which clients are
+exhausted until when.
+
+`examples/roles` shows the three modes with two stub clients: round robin, selection
+by remaining subscription, and a change of client after a limit.
+
 ## Questions to a person
 
 A flow can stop and ask a person in three ways: a gate with questions, a human node,
@@ -809,6 +909,15 @@ so a session can be continued only by the same user on the same computer for the
 orders folder. When the client cannot find the session, the adapter says so in the
 log and starts a new conversation with the prompt.
 
+**Usage.** The adapter does not declare the `usage` feature. The installed client
+has no command, flag or status file meant for programs that reports how much of the
+subscription is used without a model request: `claude auth status` reports the
+account and plan, not usage; the usage shown inside an interactive session and the
+per-window utilization in the `rate_limit_event` lines of print mode exist only while
+a request runs. A role's `quota` mode therefore estimates this client from the
+attempts Hetman saw against the client's `allowance`, and the limit errors it reports
+(with their reset times) still keep it from being chosen until the reset.
+
 `examples/claude` is a small flow with this adapter: a draft step that writes a note
 into a file, a gate that checks the file, and a review step that may send the draft
 back once. Its comments say how to run it; a run makes two to four small requests
@@ -900,6 +1009,12 @@ computer that ran them, so a session can be continued only by the same user on t
 same computer. When the client cannot find the session, the adapter says so in the
 log and starts a new conversation with the prompt.
 
+**Usage.** The adapter does not declare the `usage` feature. `opencode stats` counts
+tokens and cost per day from the client's own records, but no share of a provider's
+allowance and no reset time, in a table meant for people; nothing else the client
+offers reports either without a request. A role's `quota` mode therefore estimates
+this client from the attempts Hetman saw against the client's `allowance`.
+
 `examples/opencode` is the same small flow as `examples/claude` with this adapter.
 Its comments say how to run it; a run makes two to four small requests and needs a
 provider with quota left. A step that hits the provider's limit makes the campaign
@@ -921,8 +1036,22 @@ the extra argument `--describe`. It must print one line and exit with code 0:
 {"protocol": [0], "name": "my-adapter", "features": ["resume"]}
 ```
 
-`protocol` lists the versions it speaks and must include 0. The only feature so far
-is `resume`, which dialogue steps need.
+`protocol` lists the versions it speaks and must include 0. The features are
+`resume`, which dialogue steps need, and `usage`, which the `quota` mode of a role
+reads.
+
+**Usage.** An adapter that declares `usage` answers the extra arguments `--usage
+five_hour weekly` with one line and exit code 0, without making a model request: its
+client's share of each window asked for that the client can tell (0 nothing used, 1
+all of it) and when the window resets, if known. A window the client does not report
+is left out; a client that counts by month reports that share as `weekly`.
+
+```json
+{"windows": [{"name": "five_hour", "used": 0.42, "resets_at": "2026-11-15T18:00:00Z"}, {"name": "weekly", "used": 0.1}]}
+```
+
+Report only what the client itself measures; when it has no such number, do not
+declare the feature, and Hetman estimates from what it saw.
 
 **Start.** Hetman then starts the program without `--describe` and writes:
 
@@ -967,7 +1096,8 @@ HETMAN_ADAPTER='["/path/to/my-adapter"]' go test ./internal/adapter/adaptertest 
 ```
 
 It sends tiny steps: one, one resumed and a dialogue of two steps (both only for an
-adapter that declares `resume`), and one that is cancelled; `HETMAN_ADAPTER_MODEL` and
+adapter that declares `resume`), and one that is cancelled, and asks for the usage
+(only for an adapter that declares `usage`; no model request); `HETMAN_ADAPTER_MODEL` and
 `HETMAN_ADAPTER_EFFORT` set the `model` and `effort` of those steps, so that a real
 client can be checked with its cheapest model. `cmd/hetman-stub-adapter` is an
 adapter that passes it without any client; its plan format is described in
@@ -1132,6 +1262,13 @@ a child shows on the parent's page too, with a link to the card that answers it.
 
 When the folder has a task queue (see Tasks and the dispatcher), a Tasks tab lists the
 tasks with their kind, state, campaign (a link), age and what a waiting one waits for.
+When the served orders declare roles, a Roles tab lists each role with its mode and
+each client with its executor, model and effort, its share of the five-hour and the
+weekly window (measured, with the time it was measured, or estimated, with the
+allowance and the attempts seen), and whether it can run or is exhausted until when.
+It is read-only and asks no adapter anything: measured shares are those recorded with
+the last choice. The flow editor has a small form for roles (declare one, change its
+mode, add or remove a client), and an agent node's settings can point it at a role.
 A campaign of another orders file of the same folder is shown with its own nodes.
 
 
@@ -1391,6 +1528,10 @@ hetman scribe gate-add GATE CHECK [-at N]    put a declared check into a gate, a
 hetman scribe gate-remove GATE CHECK         take a check out of a gate
 hetman scribe ask NODE ID QUESTION [-kind yesno|choice|text] [-options A,B]
                                              add a question to a gate or a human node
+hetman scribe role NAME [-select MODE] [-executor X [-model M] [-effort E]]
+                                             declare a role with its mode and first client, or change its mode
+hetman scribe role-add ROLE EXECUTOR [-model M] [-effort E] [-at N]   add a client to a role
+hetman scribe role-remove ROLE N             remove the client at position N from 1; a role keeps one
 hetman scribe assistant EXECUTOR MODEL [-effort E]   name the model Scribe may ask
 hetman scribe language CODE                  set the language for the person
 hetman scribe unlanguage                     remove it: English, and nothing added to prompts
@@ -1398,12 +1539,12 @@ hetman scribe unlanguage                     remove it: English, and nothing add
 
 `TYPE` is `script`, `gate`, `agent`, `human`, `segment` or `foreach`. The node flags
 are `-run CMD` (one string split at spaces; quotes keep spaces in an argument),
-`-timeout D`, `-checks A,B`, `-executor NAME`, `-model M`, `-effort E`, `-tools A,B`,
-`-attempts N`, `-prompt FILE`, `-schema FILE`, `-outcomes A,B` (of an agent or human
+`-timeout D`, `-checks A,B`, `-executor NAME`, `-role NAME` (instead of `-executor`,
+`-model` and `-effort`), `-model M`, `-effort E`, `-tools A,B`, `-attempts N`, `-prompt FILE`, `-schema FILE`, `-outcomes A,B` (of an agent or human
 node), `-on OUTCOME=TARGET` (repeatable), `-starters`, `-locks A,B` (any node),
 `-segment FILE` (segment and foreach), `-input REF` (segment), `-items REF` and
 `-parallel N` (foreach). The fields of `set` are `run`, `timeout`, `idle_timeout`,
-`executor`, `model`, `effort`, `tools`, `attempts`, `dialogue`, `prompt`, `schema`,
+`executor`, `role`, `model`, `effort`, `tools`, `attempts`, `dialogue`, `prompt`, `schema`,
 `locks`, `segment`, `input`, `items` and `parallel`; `unset` takes the optional ones
 of these. For example, `hetman scribe add foreach build-all -after plan -segment
 segments/item.yaml -items output.plan.items -parallel 2` and
@@ -1426,6 +1567,9 @@ How the flow is wired:
   `{{answers.NODE...}}`).
 - `set NODE timeout` on a script, or a gate with `run`, adds `timeout: failed` when
   the node has no transition for `timeout`; `unset NODE timeout` removes it.
+- `set NODE role R` removes the node's `executor`, `model` and `effort`, since each
+  client of the role names its own; `set NODE executor X` on a node run through a role
+  removes `role`. A client's `allowance` is written by hand.
 - For an agent node, `-prompt` and `-schema` default to `prompts/NODE.md` and
   `schemas/NODE.json`. An existing schema gives the outcomes. `-starters` creates a
   minimal template and schema where those files do not exist; an existing file is

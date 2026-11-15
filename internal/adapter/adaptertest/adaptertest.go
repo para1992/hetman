@@ -15,8 +15,11 @@
 // "conformance-dialogue" and "conformance-cancel" and ask for a trivial
 // answer, so an adapter for a real client makes real but tiny requests.
 //
-// Resume and dialogue are optional capabilities: their checks run only for
-// an adapter that declares the resume feature. The dialogue check is what a
+// Resume, dialogue and usage are optional capabilities: the resume and
+// dialogue checks run only for an adapter that declares the resume feature,
+// the usage check only for one that declares the usage feature. The usage
+// check makes no model request: it asks the adapter for its client's usage
+// of every window of the protocol and checks the line it prints. The dialogue check is what a
 // dialogue step needs: a step that answers with questions, then the same
 // conversation continued with the answers as the next message, ending in a
 // final result.
@@ -143,6 +146,12 @@ func Run(t *testing.T, cfg Config) {
 			t.Fatalf("the continued step must end with a result; got %+v", s.terminal)
 		}
 	})
+	t.Run("usage", func(t *testing.T) {
+		if !desc.Has(adapter.FeatureUsage) {
+			t.Skip("the adapter does not declare the usage feature")
+		}
+		usage(t, cfg)
+	})
 	t.Run("cancel", func(t *testing.T) {
 		run(t, cfg, desc, step(cfg, "conformance-cancel", CancelPrompt, nil), true)
 	})
@@ -230,6 +239,32 @@ func describe(t *testing.T, cfg Config) adapter.Description {
 		}
 	}
 	return d
+}
+
+// usage asks the adapter for its client's usage and checks what it prints.
+func usage(t *testing.T, cfg Config) {
+	cmd := command(cfg, append([]string{adapter.UsageFlag}, adapter.UsageWindows...))
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := start(t, cmd); err != nil {
+		t.Fatal(err)
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+	select {
+	case err := <-exited:
+		if err != nil {
+			t.Fatalf("%s must exit with code 0: %v", adapter.UsageFlag, err)
+		}
+	case <-time.After(30 * time.Second):
+		cmd.Process.Kill()
+		t.Fatalf("%s did not finish within 30s", adapter.UsageFlag)
+	}
+	u, err := adapter.ParseUsage(out.Bytes(), adapter.UsageWindows)
+	if err != nil {
+		t.Fatalf("%s: %v\noutput: %s", adapter.UsageFlag, err, out.String())
+	}
+	t.Logf("usage: %+v", u.Windows)
 }
 
 func step(cfg Config, node, prompt string, session *string) adapter.Step {

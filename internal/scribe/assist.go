@@ -111,7 +111,7 @@ func opSchema() map[string]any {
 	}
 	props := map[string]any{"op": map[string]any{"type": "string", "enum": ops}}
 	for _, f := range []string{"node", "type", "after", "via", "before", "name", "outcome", "target", "field", "value",
-		"check", "id", "question", "kind", "flow", "timeout", "executor", "model", "effort", "prompt", "schema", "segment", "input", "items"} {
+		"check", "id", "question", "kind", "flow", "timeout", "executor", "role", "model", "effort", "prompt", "schema", "segment", "input", "items"} {
 		props[f] = str
 	}
 	for _, f := range []string{"options", "run", "checks", "tools", "outcomes", "locks"} {
@@ -124,6 +124,7 @@ func opSchema() map[string]any {
 	props["starters"] = map[string]any{"type": "boolean"}
 	props["on"] = map[string]any{"type": "object", "additionalProperties": str}
 	props["language"] = map[string]any{"type": "string", "enum": language.Codes()}
+	props["select"] = map[string]any{"type": "string", "enum": orders.SelectModes}
 	return map[string]any{"type": "object", "properties": props, "required": []string{"op"}, "additionalProperties": false}
 }
 
@@ -183,6 +184,10 @@ func Describe(o *orders.Orders, campaigns []int64) string {
 				facts = append(facts, "runs a command")
 			}
 		case orders.Agent:
+			if n.Role != "" {
+				facts = append(facts, "role "+n.Role)
+				break
+			}
 			s := "executor " + n.Executor
 			if n.Model != "" {
 				s += ", model " + n.Model
@@ -219,6 +224,16 @@ func Describe(o *orders.Orders, campaigns []int64) string {
 	}
 	fmt.Fprintf(&b, "declared checks: %s\n", orNone(checks))
 	fmt.Fprintf(&b, "declared executors: %s\n", orNone(sortedKeys(o.Executors)))
+	var roles []string
+	for _, name := range sortedKeys(o.Roles) {
+		r := o.Roles[name]
+		var cs []string
+		for i, c := range r.Clients {
+			cs = append(cs, c.Label(i))
+		}
+		roles = append(roles, fmt.Sprintf("%s (%s: %s)", name, r.Select, strings.Join(cs, ", ")))
+	}
+	fmt.Fprintf(&b, "declared roles: %s\n", orNone(roles))
 	if n := len(campaigns); n > 0 {
 		var ids []string
 		for _, id := range campaigns {
@@ -295,6 +310,8 @@ const fieldHelp = `  node: a node id (for new and add: the new node's id); type:
   id, question, kind (yesno, choice, text), options: a question; flow: the flow name;
   run: the command as a list, program first; timeout: a duration such as 30s, 5m, 1h;
   checks: declared checks in order; executor, model, effort, tools, attempts, prompt, schema: agent settings;
+  role: a declared role whose clients run an agent node, instead of executor, model and effort;
+  name and select for role, role-add and role-remove: the role and its mode (fixed, round_robin or quota); at: a client's position from 1;
   outcomes: the outcomes of an agent or human node; on: transitions other than the defaults, as {"outcome": "target"};
   soft: true for a check that only warns, false for a required one; starters: true to create missing prompt and schema files;
   language: the code of the language for the person, one of ` + "%s" + `.

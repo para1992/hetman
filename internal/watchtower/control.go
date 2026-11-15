@@ -125,6 +125,8 @@ type Flow struct {
 	Nodes     []FlowNode          `json:"nodes"` // in file order
 	Checks    []FlowCheck         `json:"checks"`
 	Executors []string            `json:"executors"`
+	Roles     []FlowRole          `json:"roles"`
+	Modes     []string            `json:"modes"`  // the selection modes a role may have
 	Fields    map[string][]string `json:"fields"` // the fields set and unset change
 	Active    []int64             `json:"active"` // campaigns of this file that have not ended
 	Base      string              `json:"base"`   // fingerprint of the file as read
@@ -140,10 +142,25 @@ type FlowNode struct {
 	Checks   []string          `json:"checks,omitempty"`
 	Timeout  string            `json:"timeout,omitempty"`
 	Executor string            `json:"executor,omitempty"`
+	Role     string            `json:"role,omitempty"`
 	Model    string            `json:"model,omitempty"`
 	Effort   string            `json:"effort,omitempty"`
 	Attempts int               `json:"attempts,omitempty"`
 	Ask      []string          `json:"ask,omitempty"` // question ids
+}
+
+// FlowRole is a declared role.
+type FlowRole struct {
+	Name    string       `json:"name"`
+	Select  string       `json:"select"`
+	Clients []FlowClient `json:"clients"`
+}
+
+// FlowClient is one client of a role.
+type FlowClient struct {
+	Executor string `json:"executor"`
+	Model    string `json:"model,omitempty"`
+	Effort   string `json:"effort,omitempty"`
 }
 
 // FlowCheck is a declared check.
@@ -164,7 +181,7 @@ func (s *Server) handleFlow(w http.ResponseWriter, r *http.Request) {
 		fl.Columns = build(chronicle.Campaign{Flow: o.Flow, Orders: o.Path}, nil, o, "", func() bool { return false }).Columns
 		for _, id := range o.Order {
 			n := o.Nodes[id]
-			fn := FlowNode{ID: id, Type: n.Type, On: n.On, Run: n.Run, Checks: n.Checks, Executor: n.Executor,
+			fn := FlowNode{ID: id, Type: n.Type, On: n.On, Run: n.Run, Checks: n.Checks, Executor: n.Executor, Role: n.Role,
 				Model: n.Model, Effort: n.Effort, Attempts: n.MaxAttempts}
 			if n.Timeout > 0 {
 				fn.Timeout = n.Timeout.String()
@@ -188,7 +205,17 @@ func (s *Server) handleFlow(w http.ResponseWriter, r *http.Request) {
 			fl.Executors = append(fl.Executors, name)
 		}
 		sort.Strings(fl.Executors)
+		fl.Roles = []FlowRole{}
+		for name, r := range o.Roles {
+			fr := FlowRole{Name: name, Select: r.Select}
+			for _, c := range r.Clients {
+				fr.Clients = append(fr.Clients, FlowClient{Executor: c.Executor, Model: c.Model, Effort: c.Effort})
+			}
+			fl.Roles = append(fl.Roles, fr)
+		}
+		sort.Slice(fl.Roles, func(i, j int) bool { return fl.Roles[i].Name < fl.Roles[j].Name })
 	}
+	fl.Modes = orders.SelectModes
 	writeJSON(w, http.StatusOK, fl)
 }
 

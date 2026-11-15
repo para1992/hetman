@@ -43,6 +43,9 @@ var opUsage = []struct{ op, form, example string }{
 	{edit.OpGateAdd, "gate-add GATE CHECK [-at N]", "hetman scribe gate-add ready style -at 1"},
 	{edit.OpGateRemove, "gate-remove GATE CHECK", "hetman scribe gate-remove ready lint"},
 	{edit.OpAsk, "ask NODE ID QUESTION [-kind yesno|choice|text] [-options A,B]", "hetman scribe ask ready docs 'Are the docs updated?'"},
+	{edit.OpRole, "role NAME [-select fixed|round_robin|quota] [-executor X [-model M] [-effort E]]", "hetman scribe role coder -select round_robin -executor first -model m1"},
+	{edit.OpRoleAdd, "role-add ROLE EXECUTOR [-model M] [-effort E] [-at N]", "hetman scribe role-add coder second -model m2"},
+	{edit.OpRoleRemove, "role-remove ROLE N", "hetman scribe role-remove coder 2"},
 	{edit.OpAssistant, "assistant EXECUTOR MODEL [-effort E]", "hetman scribe assistant stub any-model"},
 	{edit.OpLanguage, "language CODE", "hetman scribe language pt"},
 	{edit.OpUnlanguage, "unlanguage", "hetman scribe unlanguage"},
@@ -230,6 +233,10 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 			op.Timeout = value
 		case "executor":
 			op.Executor = value
+		case "role":
+			op.Role = value
+		case "select":
+			op.Select = value
 		case "model":
 			op.Model = value
 		case "effort":

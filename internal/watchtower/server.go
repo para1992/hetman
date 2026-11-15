@@ -191,6 +191,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/campaigns/{id}/log", s.handleLog)
 	mux.HandleFunc("GET /api/stream", s.handleStream)
 	mux.HandleFunc("GET /api/tasks", s.handleTasks)
+	mux.HandleFunc("GET /api/roles", s.handleRoles)
 	mux.Handle("POST /api/campaigns/{id}/halt", s.control(s.handleHalt))
 	mux.Handle("POST /api/campaigns/{id}/resume", s.control(s.handleResume))
 	mux.HandleFunc("GET /api/campaigns/{id}/show", s.handleShow)
@@ -325,7 +326,41 @@ func (s *Server) campaign(p *i18n.Printer, id int64) (*Campaign, []chronicle.Eve
 	c := s.build(o, k, events)
 	c.OrdersProblem = problemIn(p, problem)
 	c.Words = explain.In(p, k, events, explain.Summary, "", time.Local)
+	clientWords(p, c, events)
 	return c, events, nil
+}
+
+// clientWords says, in the language of p, how the client of each attempt
+// run through a role was chosen, and why no client can run when that holds
+// the campaign up.
+func clientWords(p *i18n.Printer, c *Campaign, events []chronicle.Event) {
+	for _, list := range c.Nodes {
+		for i := range list {
+			a := &list[i]
+			if ch := a.Choice; ch != nil {
+				a.Client = p.T("page.client.chosen", "client", explain.ClientName(ch, ch.Client), "role", ch.Role, "mode", ch.Mode, "why", explain.Why(p, ch))
+				if ch.From > 0 {
+					a.Switched = p.T("page.client.switched", "from", explain.ClientName(ch, ch.From))
+				}
+				if ch.Reason == chronicle.ChoseQuota {
+					a.Compared = explain.UsageWords(p, ch, time.Local)
+				}
+			}
+		}
+	}
+	if c.Wait == "" || c.End != "" {
+		return
+	}
+	for i := len(events) - 1; i >= 0; i-- {
+		e := &events[i]
+		if e.Node == c.Node && (e.Kind == chronicle.StepStarted || e.Kind == chronicle.StepFinished) {
+			return
+		}
+		if e.Kind == chronicle.NoClient && e.Node == c.Node && e.Choice != nil {
+			c.NoClient = p.T("page.client.none", "node", e.Node, "role", e.Choice.Role, "usage", explain.UsageWords(p, e.Choice, time.Local))
+			return
+		}
+	}
 }
 
 func (s *Server) build(o *orders.Orders, k chronicle.Campaign, events []chronicle.Event) *Campaign {

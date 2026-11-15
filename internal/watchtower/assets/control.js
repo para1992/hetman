@@ -244,7 +244,43 @@
       out.push(W.pipeline(pseudo));
       if (r.node) out.push(...editorCard(f, r.node));
     }
+    if (!r.node && f.columns) out.push(rolesPanel(f));
     W.app.replaceChildren(...out.filter(Boolean));
+  }
+
+  // ---- roles: pools of clients agent steps run on --------------------------
+
+  function rolesPanel(f) {
+    const pseudo = { id: '#roles' };
+    const names = f.roles.map((r) => r.name);
+    const out = [h('h2', { text: t('page.roles.title') })];
+    if (!f.roles.length) out.push(h('p', { class: 'hint', text: t('page.flow.no_roles') }));
+    for (const r of f.roles) {
+      out.push(h('p', null, h('b', { text: r.name }), ' ', h('span', { class: 'tag', text: tk('page.roles.mode.', r.select) }), ' ',
+        r.clients.map((c, i) => h('span', { class: 'tag', text: (i + 1) + ' ' + c.executor + (c.model ? ' ' + c.model : '') + (c.effort ? ' · ' + c.effort : '') }))));
+    }
+    const client = [{ name: 'executor', kind: 'select', options: f.executors }, { name: 'model', kind: 'text' }, { name: 'effort', kind: 'text' }];
+    const withClient = (op, v) => {
+      if (v.model) op.model = v.model;
+      if (v.effort) op.effort = v.effort;
+      return op;
+    };
+    const ops = [{ key: 'role_new', fields: () => [{ name: 'rolename', kind: 'text' }, { name: 'select', kind: 'select', options: f.modes }].concat(client),
+      op: (v) => withClient({ op: 'role', name: v.rolename || '', select: v.select || f.modes[0], executor: v.executor || f.executors[0] || '' }, v) }];
+    if (names.length) {
+      ops.push({ key: 'role_select', fields: () => [{ name: 'rolename', kind: 'select', options: names }, { name: 'select', kind: 'select', options: f.modes }],
+        op: (v) => ({ op: 'role', name: v.rolename || names[0], select: v.select || f.modes[0] }) });
+      ops.push({ key: 'role_add', fields: () => [{ name: 'rolename', kind: 'select', options: names }].concat(client, [{ name: 'at', kind: 'number' }]),
+        op: (v) => {
+          const op = withClient({ op: 'role-add', name: v.rolename || names[0], executor: v.executor || f.executors[0] || '' }, v);
+          if (Number(v.at) > 0) op.at = Number(v.at);
+          return op;
+        } });
+      ops.push({ key: 'role_remove', fields: () => [{ name: 'rolename', kind: 'select', options: names }, { name: 'at', kind: 'number', value: '1' }],
+        op: (v) => ({ op: 'role-remove', name: v.rolename || names[0], at: Number(v.at) || 0 }) });
+    }
+    for (const op of ops) out.push(opForm(f, pseudo, op));
+    return h('section', { class: 'ctl-roles' }, out);
   }
 
   // ---- a sentence to Scribe -----------------------------------------------
@@ -385,8 +421,9 @@
       if (type === 'script' || type === 'gate') out.push({ name: 'run', kind: 'text', mono: true });
       if (type === 'gate') out.push({ name: 'checks', kind: 'multi', options: checks });
       if (type === 'agent') {
-        out.push({ name: 'executor', kind: 'select', options: f.executors }, { name: 'model', kind: 'text' },
-          { name: 'outcomes', kind: 'list' }, { name: 'starters', kind: 'check', value: true });
+        if (f.roles.length) out.push({ name: 'role', kind: 'select', options: [''].concat(f.roles.map((r) => r.name)) });
+        if (!v.role) out.push({ name: 'executor', kind: 'select', options: f.executors }, { name: 'model', kind: 'text' });
+        out.push({ name: 'outcomes', kind: 'list' }, { name: 'starters', kind: 'check', value: true });
       }
       if (type === 'human') out.push({ name: 'outcomes', kind: 'list' });
       return out;
@@ -394,9 +431,12 @@
     const nodeOp = (v, extra) => {
       const op = Object.assign({ op: 'add', type: v.type || 'script', node: v.node || '' }, extra);
       if ((op.type === 'gate') && (v.checks || []).length) op.checks = v.checks;
-      if (op.type === 'agent') {
+      if (op.type === 'agent' && v.role) op.role = v.role;
+      if (op.type === 'agent' && !v.role) {
         if (v.executor) op.executor = v.executor;
         if (v.model) op.model = v.model;
+      }
+      if (op.type === 'agent') {
         if (v.starters !== false) op.starters = true;
       }
       if ((op.type === 'agent' || op.type === 'human') && v.outcomes) op.outcomes = split(v.outcomes);
@@ -424,11 +464,17 @@
         op: (v) => (v.value || '').trim() ? { op: 'set', node: n.id, field: 'timeout', value: v.value.trim() } : { op: 'unset', node: n.id, field: 'timeout' } });
     }
     if (n.type === 'agent') {
-      const agentFields = ['executor', 'model', 'effort', 'attempts', 'dialogue', 'idle_timeout', 'tools', 'prompt', 'schema'];
-      ops.push({ key: 'agent', fields: (v) => [{ name: 'field', kind: 'select', options: agentFields, value: 'model' },
-        (v.field || 'model') === 'executor' ? { name: 'value', kind: 'select', options: f.executors, value: n.executor } : { name: 'value', kind: 'text', value: current(n, v.field || 'model') }],
+      const agentFields = (n.role ? ['role', 'executor'] : ['executor', 'model', 'effort'].concat(f.roles.length ? ['role'] : []))
+        .concat(['attempts', 'dialogue', 'idle_timeout', 'tools', 'prompt', 'schema']);
+      const first = n.role ? 'role' : 'model';
+      const valueField = (field) => {
+        if (field === 'executor') return { name: 'value', kind: 'select', options: f.executors, value: n.executor };
+        if (field === 'role') return { name: 'value', kind: 'select', options: f.roles.map((r) => r.name), value: n.role };
+        return { name: 'value', kind: 'text', value: current(n, field) };
+      };
+      ops.push({ key: 'agent', fields: (v) => [{ name: 'field', kind: 'select', options: agentFields, value: first }, valueField(v.field || first)],
       op: (v) => {
-        const field = v.field || 'model';
+        const field = v.field || first;
         const value = (v.value === undefined ? current(n, field) : v.value).trim();
         if (!value && f.fields.unset.includes(field)) return { op: 'unset', node: n.id, field: field };
         return { op: 'set', node: n.id, field: field, value: value };
@@ -466,6 +512,7 @@
   function current(n, field) {
     switch (field) {
       case 'executor': return n.executor || '';
+      case 'role': return n.role || '';
       case 'model': return n.model || '';
       case 'effort': return n.effort || '';
       case 'attempts': return n.attempts ? String(n.attempts) : '';
@@ -536,7 +583,7 @@
     switch (fd.kind) {
       case 'select':
         input = h('select', { 'data-fkey': fkey, 'aria-label': label, onchange: (e) => { v[fd.name] = e.target.value; rerender(); } },
-          fd.options.map((o) => h('option', { value: o, selected: (v[fd.name] || '') === o }, o === '' ? t('page.field.main_outcome') : tk('page.field.value.', o))));
+          fd.options.map((o) => h('option', { value: o, selected: (v[fd.name] || '') === o }, o === '' ? t(fd.name === 'via' ? 'page.field.main_outcome' : 'page.field.none') : tk('page.field.value.', o))));
         if (v[fd.name] === undefined && fd.options.length) v[fd.name] = fd.options[0];
         break;
       case 'multi':

@@ -1,0 +1,13 @@
+{
+  "name": "stub-first",
+  "usage": {
+    "five_hour": {"used": 0.7, "resets_in": "3h"},
+    "weekly": {"used": 0.3, "resets_in": "100h"}
+  },
+  "nodes": {
+    "outline": [[{"session": "first-outline"}, {"log": "outlining"}, {"result": {"outcome": "ok", "text": "1. Why rotate. 2. Rename the file. 3. Signal the program. 4. Compress the old file."}}]],
+    "draft": [[{"session": "first-draft"}, {"result": {"outcome": "ok", "text": "Rename the log file, then tell the program to reopen it."}}]],
+    "review": [[{"session": "first-review"}, {"result": {"outcome": "ok", "text": "Say which signal to send."}}]],
+    "polish": [[{"session": "first-polish"}, {"log": "polishing"}, {"error": "limit", "message": "usage limit reached", "retry_in": "1h"}]]
+  }
+}

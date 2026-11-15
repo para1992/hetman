@@ -13,3 +13,4 @@ examples/acceptance/bin/
 examples/acceptance/acceptance/
 examples/foreach/bin/
 examples/dispatch/bin/
+examples/roles/bin/
