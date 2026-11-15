@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -148,9 +149,17 @@ func fenceArgs(st adapter.Step) []string {
 	}
 	// A path behind a symbolic link is denied in both spellings, since the
 	// client may check either.
+	// "/**" covers what lies inside a folder, or a path not there yet.
 	for _, p := range adapter.Fence(st.Protect, st.Writable) {
+		file := false
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			file = true
+		}
 		for _, q := range adapter.Spellings(p) {
-			a = append(a, "--disallowedTools=Edit("+rulePath(q)+")", "--disallowedTools=Edit("+rulePath(q)+"/**)")
+			a = append(a, "--disallowedTools=Edit("+rulePath(q)+")")
+			if !file {
+				a = append(a, "--disallowedTools=Edit("+rulePath(q)+"/**)")
+			}
 		}
 	}
 	return a

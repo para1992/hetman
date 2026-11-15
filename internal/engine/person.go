@@ -255,11 +255,19 @@ func answerIn(ch *chronicle.Chronicle, id int64, r Reply) (chronicle.Event, erro
 	if err != nil {
 		return ev, err
 	}
-	after, err := state(ch, id)
+	// Whether this answer is the one that counts is decided by the events up
+	// to it: the engine may already have used the answer and moved on.
+	events, err := ch.Events(id)
 	if err != nil {
 		return ev, err
 	}
-	if after.Answer == nil || after.Answer.Seq != ev.Seq {
+	for i := range events {
+		if events[i].Seq == ev.Seq {
+			events = events[:i+1]
+			break
+		}
+	}
+	if after := chronicle.Replay(events); after.Answer == nil || after.Answer.Seq != ev.Seq {
 		return ev, fmt.Errorf("campaign %d: the questions of %s were %w by someone else first", id, st.Ask.Node, ErrAnswered)
 	}
 	return ev, nil

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -87,30 +88,41 @@ func stepProblems(o options, st adapter.Step, diag io.Writer) []adapter.CheckPro
 // with "/*" after it covers what lies inside. The client's patterns know
 // only "*" and "?" as wildcards, so a path holding either matches more.
 //
-// Either path may be reached through a symbolic link, and the client may
-// see either spelling (its worktree comes from the resolved working folder,
-// the path from what the model wrote), so every combination is written.
+// Only folders above that hold the path count: a form with ".." would name
+// a path outside the client's worktree, which the client denies as an
+// external directory anyway. "/*" is added for a folder, or a path that
+// does not exist yet, not for a file.
+//
+// A folder reached through a symbolic link (or, on Windows, by a short
+// name) has two spellings. The client resolves its working folder, and so
+// its worktree, and joins relative paths to it, while an absolute path in
+// the other spelling lies outside that folder for it and is denied as
+// external. So the forms are written for the resolved spelling, and for the
+// spelling the step gave in case a client does not resolve, each pair taken
+// in the same spelling.
 func pathForms(workdir, p string) []string {
 	var out []string
 	seen := map[string]bool{}
-	for _, wd := range adapter.Spellings(workdir) {
-		for _, path := range adapter.Spellings(p) {
-			for dir := wd; ; {
-				if rel, err := filepath.Rel(dir, path); err == nil {
-					rel = filepath.ToSlash(rel)
-					for _, f := range []string{rel, rel + "/*"} {
-						if !seen[f] {
-							seen[f] = true
-							out = append(out, f)
-						}
+	inside := "/*"
+	if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+		inside = ""
+	}
+	for _, pair := range [][2]string{{filepath.Clean(workdir), filepath.Clean(p)}, {adapter.Real(workdir), adapter.Real(p)}} {
+		for dir := pair[0]; ; {
+			if rel, err := filepath.Rel(dir, pair[1]); err == nil && filepath.IsLocal(rel) {
+				rel = filepath.ToSlash(rel)
+				for _, f := range []string{rel, rel + inside} {
+					if !seen[f] {
+						seen[f] = true
+						out = append(out, f)
 					}
 				}
-				up := filepath.Dir(dir)
-				if up == dir {
-					break
-				}
-				dir = up
 			}
+			up := filepath.Dir(dir)
+			if up == dir {
+				break
+			}
+			dir = up
 		}
 	}
 	return out

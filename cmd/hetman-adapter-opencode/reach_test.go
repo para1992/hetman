@@ -87,18 +87,31 @@ func TestFenceConfiguration(t *testing.T) {
 	if err := json.Unmarshal([]byte(cfg), &v); err != nil {
 		t.Fatalf("not JSON: %v\n%s", err, cfg)
 	}
-	rel := func(p string) string { r, _ := filepath.Rel(st.Workdir, p); return filepath.ToSlash(r) }
+	// Forms relative to the folder that holds both the working folder and
+	// the protected paths, a candidate worktree of the client.
+	rel := func(p string) string { r, _ := filepath.Rel(root, p); return filepath.ToSlash(r) }
 	deny, allow := `"`+rel(state)+`/*":"deny"`, `"`+rel(work)+`/*":"allow"`
 	if !strings.Contains(cfg, `"edit":{"*":"allow",`) || !strings.Contains(cfg, deny) || strings.Index(cfg, allow) < strings.Index(cfg, deny) {
 		t.Errorf("edit everywhere:\n%s", cfg)
 	}
-	if !strings.Contains(cfg, `"external_directory":{"`+filepath.ToSlash(work)+`":"allow","`+filepath.ToSlash(work)+`/*":"allow"}`) {
-		t.Errorf("external directory:\n%s", cfg)
+	if strings.Contains(cfg, `"../`) {
+		t.Errorf("a form leaves the worktree:\n%s", cfg)
+	}
+	// The work folder is opened in the spelling the step gave, and in its
+	// resolved one where the system's temporary folder has two (macOS,
+	// Windows short names).
+	ext, _ := v["agent"].(map[string]any)["a"].(map[string]any)["permission"].(map[string]any)["external_directory"].(map[string]any)
+	for _, w := range adapter.Spellings(work) {
+		for _, k := range []string{filepath.ToSlash(w), filepath.ToSlash(w) + "/*"} {
+			if ext[k] != "allow" {
+				t.Errorf("external directory lacks %s: %v", k, ext)
+			}
+		}
 	}
 	rules, _ = permissions([]string{"edit(src/*)"})
 	cfg = agentConfig("a", fence(st, rules))
 	if !strings.Contains(cfg, `"src/*":"allow"`) || !strings.Contains(cfg, `"`+rel(filepath.Join(state, "chronicle.db"))+`":"deny"`) ||
-		strings.Contains(cfg, `"`+rel(state)+`/*":"deny"`) || strings.Contains(cfg, rel(work)+`/*":"allow"`) {
+		strings.Contains(cfg, `"`+rel(state)+`/*":"deny"`) || strings.Contains(cfg, `"`+rel(work)+`/*":"allow"`) {
 		t.Errorf("edit patterns:\n%s", cfg)
 	}
 }
@@ -121,11 +134,35 @@ func TestWorkdirBehindALink(t *testing.T) {
 	if got := s.short("wrote " + filepath.Join(resolved, "a.go")); got != "wrote a.go" {
 		t.Errorf("short %q", got)
 	}
-	forms := strings.Join(pathForms(link, filepath.Join(link, "flow", ".hetman")), " ")
-	rel, _ := filepath.Rel("/", filepath.Join(resolved, "flow", ".hetman"))
-	for _, want := range []string{"flow/.hetman/*", filepath.ToSlash(rel) + "/*"} {
-		if !strings.Contains(" "+forms+" ", " "+want+" ") {
-			t.Errorf("forms lack %s: %s", want, forms)
+	// The forms: relative to every folder above the working folder that
+	// holds the path, in the resolved spelling and in the given one, each
+	// pair in one spelling, so never with "..".
+	list := pathForms(link, filepath.Join(link, "flow", ".hetman"))
+	forms := " " + strings.Join(list, " ") + " "
+	var want []string
+	for _, base := range []string{link, resolved} {
+		target := filepath.Join(base, "flow", ".hetman")
+		for d := base; ; d = filepath.Dir(d) {
+			r, _ := filepath.Rel(d, target)
+			want = append(want, filepath.ToSlash(r), filepath.ToSlash(r)+"/*")
+			if filepath.Dir(d) == d {
+				break
+			}
+		}
+	}
+	for _, w := range want {
+		if !strings.Contains(forms, " "+w+" ") {
+			t.Errorf("forms lack %s:%s", w, forms)
+		}
+	}
+	if len(list) > len(want) || strings.Contains(forms, "..") {
+		t.Errorf("more forms than the two spellings need (%d, want at most %d):%s", len(list), len(want), forms)
+	}
+	// A protected file gets no "/*" form.
+	os.WriteFile(filepath.Join(real, "flow", "orders.yaml"), nil, 0o644)
+	for _, f := range pathForms(link, filepath.Join(link, "flow", "orders.yaml")) {
+		if strings.HasSuffix(f, "/*") {
+			t.Errorf("a file got %s", f)
 		}
 	}
 }
