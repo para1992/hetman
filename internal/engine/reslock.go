@@ -106,10 +106,16 @@ func (e *Engine) holder(node string, attempt int) string {
 // readHolder reads who took a lock last. It is only asked while the lock is
 // taken, so the holder it names is the one holding it, except for the moment
 // between a new holder taking the lock and writing its name.
+//
+// The holder writes its name just after taking the lock, so an empty or
+// missing file is looked at again for a moment before giving up.
 func readHolder(dir, name string) string {
-	data, err := os.ReadFile(filepath.Join(dir, name+".holder"))
-	if err != nil || len(data) == 0 {
-		return "another step"
+	for i := 0; i < 20; i++ {
+		data, err := os.ReadFile(filepath.Join(dir, name+".holder"))
+		if s := strings.TrimSpace(string(data)); err == nil && s != "" {
+			return s
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
-	return strings.TrimSpace(string(data))
+	return "another step"
 }

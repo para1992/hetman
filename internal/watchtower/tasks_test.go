@@ -3,15 +3,33 @@ package watchtower_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"hetman/internal/dispatch"
+	"hetman/internal/engine"
+	"hetman/internal/orders"
 	"hetman/internal/watchtower"
 )
+
+// lockFiles lists the files of a campaign folder and of the resource locks,
+// to show what may still be held.
+func lockFiles(dir string, id int64) string {
+	var b strings.Builder
+	for _, pattern := range []string{filepath.Join(dir, ".hetman", "campaigns", strconv.FormatInt(id, 10), "*"), filepath.Join(dir, ".hetman", "locks", "*")} {
+		files, _ := filepath.Glob(pattern)
+		for _, f := range files {
+			fmt.Fprintln(&b, " ", f)
+		}
+	}
+	return b.String()
+}
 
 func TestTasksView(t *testing.T) {
 	w := newWorld(t, `version: 0
@@ -76,10 +94,18 @@ nodes:
 	if err := d.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// Run returns once every drive has let its campaign go, so nothing may
+	// hold the lock of the waiting campaign now. A view the page got while
+	// the dispatcher was still letting go may say driven; the page sees the
+	// lock free at its next look.
+	ro := &orders.Orders{Dir: w.dir}
+	if driven, err := engine.Driven(ro, 2); driven || err != nil {
+		t.Fatalf("the lock of campaign 2 is still held after the dispatcher stopped (%v); lock folder:\n%s", err, lockFiles(w.dir, 2))
+	}
 	data := list.until("tasks", func(d string) bool {
 		var v []dispatch.View
 		json.Unmarshal([]byte(d), &v)
-		return len(v) == 3 && v[1].State == dispatch.StateWaiting && v[2].State == dispatch.StateDone
+		return len(v) == 3 && v[1].State == dispatch.StateWaiting && !v[1].Driven && v[2].State == dispatch.StateDone
 	})
 	var views []dispatch.View
 	json.Unmarshal([]byte(data), &views)
