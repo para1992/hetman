@@ -20,6 +20,7 @@ import (
 	"hetman/internal/cli"
 	"hetman/internal/engine"
 	"hetman/internal/orders"
+	"hetman/internal/stubadapter"
 	"hetman/internal/teststep"
 	"hetman/internal/watchtower"
 )
@@ -34,6 +35,8 @@ func TestMain(m *testing.M) {
 			os.Exit(cli.Main(os.Args[2:], os.Stdout, os.Stderr))
 		case "step":
 			os.Exit(teststep.Main(os.Args[2:]))
+		case "adapter":
+			os.Exit(stubadapter.Main(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 		}
 	}
 	os.Setenv(teststep.EnvHelper, "1")

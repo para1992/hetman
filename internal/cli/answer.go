@@ -23,6 +23,19 @@ import (
 // Stdin is where the interactive answer command reads from.
 var Stdin io.Reader = os.Stdin
 
+// userName is the user name of this computer, without a Windows domain.
+func userName() string {
+	u, err := user.Current()
+	if err != nil {
+		return ""
+	}
+	name := filepath.Base(u.Username) // a Windows name comes as DOMAIN\name
+	if i := strings.LastIndex(name, `\`); i >= 0 {
+		name = name[i+1:]
+	}
+	return name
+}
+
 // pairs collects repeated ID=TEXT flags.
 type pairs map[string]string
 
@@ -79,12 +92,7 @@ func (c *command) answer(id int64, f *answerFlags) int {
 	}
 	r := engine.Reply{Ask: *f.ask, By: *f.by, Via: engine.ViaCommand}
 	if r.By == "" {
-		if u, err := user.Current(); err == nil {
-			r.By = filepath.Base(u.Username) // a Windows name comes as DOMAIN\name
-			if i := strings.LastIndex(r.By, `\`); i >= 0 {
-				r.By = r.By[i+1:]
-			}
-		}
+		r.By = userName()
 	}
 	if len(f.values) > 0 || len(f.comments) > 0 || *f.outcome != "" {
 		r.Given = ask.Given{Values: f.values, Comments: f.comments, Outcome: *f.outcome}

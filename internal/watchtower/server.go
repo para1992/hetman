@@ -1,6 +1,8 @@
 // Package watchtower serves the web page that shows the campaigns of one
 // orders file live, and lets a person halt and resume them and answer the
-// questions a campaign asks.
+// questions a campaign asks. It also starts campaigns, retries and rewinds
+// them, and changes the flow through the operations of the orders editor
+// (control.go).
 //
 // Everything shown is derived from the chronicle, as the command line does.
 // The page is kept current with server-sent events; changes are noticed by
@@ -33,6 +35,7 @@ import (
 	"hetman/internal/i18n"
 	"hetman/internal/language"
 	"hetman/internal/orders"
+	"hetman/internal/scribe"
 )
 
 //go:embed assets
@@ -61,6 +64,13 @@ type Server struct {
 	// Lang is the language the page starts in and the progress lines are
 	// written in; empty for English.
 	Lang string
+	// Language gives the code of the language for the person a campaign
+	// started now gets, as the run command decides it; nil uses the
+	// language key of the orders.
+	Language func(*orders.Orders) (string, error)
+	// NewModel makes the model a sentence to Scribe is sent to; nil asks
+	// the executor and model the orders name for Scribe.
+	NewModel func(*orders.Orders) scribe.Model
 
 	ctx    context.Context
 	drives sync.WaitGroup
@@ -72,6 +82,8 @@ type Server struct {
 	problem string
 
 	hub hub
+
+	others otherOrders // other orders files of the folder, for their campaigns
 }
 
 // New returns a server for orders that were already loaded from their file.
@@ -161,6 +173,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/campaigns/{id}/resume", s.control(s.handleResume))
 	mux.HandleFunc("GET /api/campaigns/{id}/show", s.handleShow)
 	mux.Handle("POST /api/campaigns/{id}/answer", s.control(s.handleAnswer))
+	s.controlRoutes(mux)
 	return s.guard(mux)
 }
 
@@ -294,6 +307,7 @@ func (s *Server) campaign(p *i18n.Printer, id int64) (*Campaign, []chronicle.Eve
 }
 
 func (s *Server) build(o *orders.Orders, k chronicle.Campaign, events []chronicle.Event) *Campaign {
+	o = s.ordersOf(k, o)
 	driven := func() bool {
 		d, _ := engine.Driven(o, k.ID)
 		return d
@@ -455,7 +469,11 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	o, _ := s.currentOrders()
+	o, err := s.campaignOrders(id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	release, _, err := engine.Resume(o, s.Chron, id)
 	if err != nil {
 		writeError(w, err)

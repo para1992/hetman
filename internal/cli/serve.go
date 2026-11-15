@@ -35,6 +35,7 @@ func (c *command) serve(addr string) int {
 	srv := watchtower.New(ctx, c.o, c.chron)
 	srv.Log = c.stdout
 	srv.Lang = c.p.Lang()
+	srv.Language = languageFor
 	if host, _, err := net.SplitHostPort(addr); err == nil && host != "" {
 		srv.Hosts = []string{host}
 	}
