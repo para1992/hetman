@@ -18,6 +18,7 @@ import (
 	"hetman/internal/edit"
 	"hetman/internal/engine"
 	"hetman/internal/explain"
+	"hetman/internal/i18n"
 	"hetman/internal/language"
 	"hetman/internal/orders"
 	"hetman/internal/scribe"
@@ -47,46 +48,35 @@ var opUsage = []struct{ op, form, example string }{
 	{edit.OpUnlanguage, "unlanguage", "hetman scribe unlanguage"},
 }
 
-func scribeUsage() string {
+func scribeUsage(p *i18n.Printer) string {
 	var b strings.Builder
-	b.WriteString(`usage:
-  hetman scribe [-f FILE]                      the wizard: build or change the flow by answering questions
-  hetman scribe [-f FILE] [-yes] "SENTENCE"    one sentence to one operation or question, through the model the orders name
-  hetman scribe OPERATION ARGS [flags]         one operation on the orders file
-  hetman scribe explain [-f FILE] [-c ID] [-kind KIND] [-node NODE]
-                                               explain a campaign in plain words (kinds: ` + strings.Join(explain.Kinds, ", ") + `)
-  hetman scribe skill [-dir DIR] [-force]      write the setup assistant skill for a coding agent
-
-operations:
-`)
+	b.WriteString(p.T("scribe.usage", "kinds", strings.Join(explain.Kinds, ", ")))
 	for _, u := range opUsage {
 		spec, _ := edit.SpecOf(u.op)
-		fmt.Fprintf(&b, "  %s\n      %s\n", u.form, spec.Summary)
+		fmt.Fprintf(&b, "  %s\n      %s\n", u.form, spec.SummaryIn(p))
 	}
-	b.WriteString(`
-node flags (new, add): -run CMD, -timeout D, -checks A,B, -executor NAME, -model M, -effort E,
-  -tools A,B, -attempts N, -prompt FILE, -schema FILE, -outcomes A,B, -on OUTCOME=TARGET (repeat),
-  -starters (create missing prompt and schema files)
-set and unset fields: run, timeout, idle_timeout, executor, model, effort, tools, attempts, dialogue, prompt, schema
-language codes: ` + strings.Join(language.Codes(), ", ") + `
-flags of every operation:
-  -f FILE    orders file (default orders.yaml)
-  -dry-run   show the change and the check, write nothing
-  -force     write even if the result does not pass the check (for a state meant to be finished later)
-`)
+	b.WriteString(p.T("scribe.usage_flags", "codes", strings.Join(language.Codes(), ", ")))
 	return b.String()
+}
+
+// printerFor speaks the person's language for a command on an orders file
+// that may not exist or may not pass the check.
+func printerFor(file string) *i18n.Printer {
+	o, _ := orders.Load(file)
+	return personPrinter(o)
 }
 
 // scribeCmd is the entry to the setup assistant.
 func scribeCmd(args []string, stdout, stderr io.Writer) int {
+	p := personPrinter(nil)
 	if len(args) > 0 {
 		switch args[0] {
 		case "skill":
-			return writeScribe(args[1:], stdout, stderr)
+			return writeScribe(p, args[1:], stdout, stderr)
 		case "explain":
 			return explainCmd(args[1:], stdout, stderr)
 		case "help", "-h", "--help":
-			fmt.Fprint(stdout, scribeUsage())
+			fmt.Fprint(stdout, scribeUsage(p))
 			return exitDone
 		}
 		if _, ok := edit.SpecOf(args[0]); ok {
@@ -95,27 +85,28 @@ func scribeCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	fs := flag.NewFlagSet("hetman scribe", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	file := fs.String("f", orders.DefaultFile, "orders file")
-	yes := fs.Bool("yes", false, "apply a clear operation without asking")
+	file := fs.String("f", orders.DefaultFile, p.T("flag.f"))
+	yes := fs.Bool("yes", false, p.T("flag.yes"))
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return exitUsage
 	}
+	p = printerFor(*file)
 	switch len(pos) {
 	case 0:
 		if *yes {
-			fmt.Fprintln(stderr, "hetman scribe: -yes is for a sentence; the wizard always asks")
+			fmt.Fprintln(stderr, p.T("scribe.yes_for_sentence"))
 			return exitUsage
 		}
-		if err := wizard.Run(*file, Stdin, stdout, !isTerminal(Stdin)); err != nil {
+		if err := wizard.RunIn(p, *file, Stdin, stdout, !isTerminal(Stdin)); err != nil {
 			fmt.Fprintln(stderr, "hetman scribe:", err)
 			return exitFailed
 		}
 		return exitDone
 	case 1:
-		return sentenceCmd(*file, pos[0], *yes, stdout, stderr)
+		return sentenceCmd(p, *file, pos[0], *yes, stdout, stderr)
 	}
-	fmt.Fprintf(stderr, "hetman scribe: %q is not an operation; put a sentence in quotes, or see hetman scribe help\n", pos[0])
+	fmt.Fprintln(stderr, p.T("scribe.not_an_operation", "arg", strconv.Quote(pos[0])))
 	return exitUsage
 }
 
@@ -142,7 +133,7 @@ func (f onFlag) String() string { return "" }
 func (f onFlag) Set(s string) error {
 	k, v, ok := strings.Cut(s, "=")
 	if !ok || k == "" || v == "" {
-		return errors.New("use OUTCOME=TARGET")
+		return errors.New(personPrinter(nil).T("flag.err.on"))
 	}
 	f[k] = v
 	return nil
@@ -154,12 +145,13 @@ func listOf(s string) []string {
 
 // opCmd runs one operation given on the command line.
 func opCmd(name string, args []string, stdout, stderr io.Writer) int {
+	p := personPrinter(nil)
 	spec, _ := edit.SpecOf(name)
 	fs := flag.NewFlagSet("hetman scribe "+name, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	file := fs.String("f", orders.DefaultFile, "orders file")
-	dry := fs.Bool("dry-run", false, "show the change, write nothing")
-	force := fs.Bool("force", false, "write even if the result does not pass the check")
+	file := fs.String("f", orders.DefaultFile, p.T("flag.f"))
+	dry := fs.Bool("dry-run", false, p.T("flag.dry_run"))
+	force := fs.Bool("force", false, p.T("flag.op_force"))
 	strs := map[string]*string{}
 	lists := map[string]*string{}
 	ints := map[string]*int{}
@@ -172,16 +164,16 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 		}
 		switch f {
 		case "run":
-			run = fs.String("run", "", "command: program and arguments")
+			run = fs.String("run", "", p.T("flag.run"))
 		case "checks", "tools", "outcomes", "options":
-			lists[f] = fs.String(f, "", "list, separated by commas")
+			lists[f] = fs.String(f, "", p.T("flag.list"))
 		case "at", "attempts":
-			ints[f] = fs.Int(f, 0, "number")
+			ints[f] = fs.Int(f, 0, p.T("flag.number"))
 		case "starters":
-			starters = fs.Bool("starters", false, "create missing prompt and schema files")
+			starters = fs.Bool("starters", false, p.T("flag.starters"))
 		case "soft":
-			soft = fs.Bool("soft", false, "the check only warns")
-			required = fs.Bool("required", false, "the check blocks the gate")
+			soft = fs.Bool("soft", false, p.T("flag.soft"))
+			required = fs.Bool("required", false, p.T("flag.required"))
 		case "on":
 			fs.Var(on, "on", "OUTCOME=TARGET")
 		default:
@@ -192,10 +184,11 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return exitUsage
 	}
+	p = printerFor(*file)
 	if len(pos) != len(spec.Args) {
 		for _, u := range opUsage {
 			if u.op == name {
-				fmt.Fprintf(stderr, "usage: hetman scribe %s\nexample: %s\n", u.form, u.example)
+				fmt.Fprintln(stderr, p.T("scribe.op_usage", "form", u.form, "example", u.example))
 			}
 		}
 		return exitUsage
@@ -258,7 +251,7 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 		case "at", "attempts":
 			n, err := strconv.Atoi(value)
 			if err != nil {
-				return fmt.Errorf("-%s must be a number", field)
+				return fmt.Errorf("-%s must be a number", field) // i18n: keep (flag parsing has checked it already)
 			}
 			if field == "at" {
 				op.At = n
@@ -298,7 +291,7 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 	if soft != nil {
 		switch {
 		case *soft && *required:
-			fmt.Fprintln(stderr, "hetman scribe: a check is either -soft or -required")
+			fmt.Fprintln(stderr, p.T("scribe.soft_or_required"))
 			return exitUsage
 		case *soft:
 			op.Soft = soft
@@ -316,21 +309,21 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 		return exitFailed
 	}
 	if err := doc.Apply(op); err != nil {
-		fmt.Fprintf(stderr, "hetman scribe %s: %v\nnothing was written\n", name, err)
+		fmt.Fprintf(stderr, "hetman scribe %s: %v\n%s\n", name, err, p.T("scribe.nothing_written"))
 		return exitUsage
 	}
-	fmt.Fprintf(stdout, "%s\n", strings.ToUpper(op.Words()[:1])+op.Words()[1:]+".")
+	fmt.Fprintln(stdout, i18n.Upper(op.WordsIn(p))+".")
 	if !doc.Changed() {
-		fmt.Fprintln(stdout, "The file already says that; nothing to write.")
+		fmt.Fprintln(stdout, p.T("scribe.already_says"))
 		return exitDone
 	}
 	fmt.Fprint(stdout, doc.Diff())
-	for _, n := range doc.Notes() {
-		fmt.Fprintln(stdout, "note:", n)
+	for _, n := range doc.NotesIn(p) {
+		fmt.Fprintln(stdout, p.T("op.note", "note", n))
 	}
 	o, checkErr := doc.Check()
 	if checkErr != nil {
-		fmt.Fprintf(stderr, "%v\nthe result does not pass the orders check\n", checkErr)
+		fmt.Fprintf(stderr, "%v\n%s\n", checkErr, p.T("scribe.does_not_pass"))
 	} else {
 		for _, s := range edit.Warnings(o) {
 			fmt.Fprintln(stderr, "warning:", s)
@@ -338,13 +331,13 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 	}
 	switch {
 	case *dry:
-		fmt.Fprintln(stdout, "Dry run: nothing was written.")
+		fmt.Fprintln(stdout, p.T("scribe.dry_run"))
 		if checkErr != nil {
 			return exitUsage
 		}
 		return exitDone
 	case checkErr != nil && !*force:
-		fmt.Fprintln(stderr, "nothing was written (use -force to write it anyway)")
+		fmt.Fprintln(stderr, p.T("scribe.nothing_written_force"))
 		return exitUsage
 	}
 	if err := doc.Save(*force); err != nil {
@@ -352,13 +345,13 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 		return exitFailed
 	}
 	if checkErr != nil {
-		fmt.Fprintf(stdout, "Wrote %s although it does not pass the check (-force).\n", doc.Path)
+		fmt.Fprintln(stdout, p.T("scribe.wrote_forced", "path", doc.Path))
 	} else {
-		fmt.Fprintf(stdout, "Wrote %s.\n", doc.Path)
+		fmt.Fprintln(stdout, p.T("op.wrote", "path", doc.Path))
 	}
 	for _, f := range doc.Files() {
 		if f.Old == nil {
-			fmt.Fprintf(stdout, "Created %s.\n", f.Path)
+			fmt.Fprintln(stdout, p.T("op.created", "path", f.Path))
 		}
 	}
 	return exitDone
@@ -375,10 +368,10 @@ func readChronicle(o *orders.Orders) (*chronicle.Chronicle, error) {
 }
 
 // explainer answers queries from the chronicle of an orders file.
-func explainer(o *orders.Orders, chron *chronicle.Chronicle) func(scribe.Query) (string, error) {
+func explainer(p *i18n.Printer, o *orders.Orders, chron *chronicle.Chronicle) func(scribe.Query) (string, error) {
 	return func(q scribe.Query) (string, error) {
 		if chron == nil {
-			return "", errors.New("there are no campaigns yet")
+			return "", errors.New(p.T("scribe.no_campaigns"))
 		}
 		var k chronicle.Campaign
 		var err error
@@ -389,9 +382,9 @@ func explainer(o *orders.Orders, chron *chronicle.Chronicle) func(scribe.Query) 
 		}
 		if errors.Is(err, chronicle.ErrNoCampaign) {
 			if q.Campaign == 0 {
-				return "", errors.New("there are no campaigns yet")
+				return "", errors.New(p.T("scribe.no_campaigns"))
 			}
-			return "", fmt.Errorf("there is no campaign %d", q.Campaign)
+			return "", errors.New(p.T("scribe.no_campaign", "id", q.Campaign))
 		}
 		if err != nil {
 			return "", err
@@ -406,29 +399,30 @@ func explainer(o *orders.Orders, chron *chronicle.Chronicle) func(scribe.Query) 
 				found = found || e.Node == q.Node
 			}
 			if !found {
-				return "", fmt.Errorf("campaign %d has no node %s", k.ID, q.Node)
+				return "", errors.New(p.T("scribe.no_node", "id", k.ID, "node", q.Node))
 			}
 		}
-		return explain.Text(explain.Campaign(k, events, q.Kind, q.Node, time.Local)), nil
+		return explain.Text(explain.In(p, k, events, q.Kind, q.Node, time.Local)), nil
 	}
 }
 
 func explainCmd(args []string, stdout, stderr io.Writer) int {
+	p := personPrinter(nil)
 	fs := flag.NewFlagSet("hetman scribe explain", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	file := fs.String("f", orders.DefaultFile, "orders file")
-	id := fs.Int64("c", 0, "campaign id (default: the latest)")
-	kind := fs.String("kind", explain.Summary, "what to explain")
-	node := fs.String("node", "", "only this node")
+	file := fs.String("f", orders.DefaultFile, p.T("flag.f"))
+	id := fs.Int64("c", 0, p.T("flag.explain_c"))
+	kind := fs.String("kind", explain.Summary, p.T("flag.kind"))
+	node := fs.String("node", "", p.T("flag.node"))
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
 	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "hetman scribe explain: unexpected argument %q\n", fs.Arg(0))
+		fmt.Fprintln(stderr, p.T("cli.unexpected_argument", "command", "scribe explain", "arg", strconv.Quote(fs.Arg(0))))
 		return exitUsage
 	}
 	if !contains(explain.Kinds, *kind) {
-		fmt.Fprintf(stderr, "hetman scribe explain: -kind must be one of %s\n", strings.Join(explain.Kinds, ", "))
+		fmt.Fprintln(stderr, p.T("scribe.bad_kind", "kinds", strings.Join(explain.Kinds, ", ")))
 		return exitUsage
 	}
 	// The explanation comes from the chronicle alone, so orders that do not
@@ -439,6 +433,7 @@ func explainCmd(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	o, _ := orders.Load(abs)
+	p = personPrinter(o)
 	if o == nil {
 		o = &orders.Orders{Path: abs, Dir: filepath.Dir(abs)}
 	}
@@ -450,7 +445,7 @@ func explainCmd(args []string, stdout, stderr io.Writer) int {
 	if chron != nil {
 		defer chron.Close()
 	}
-	text, err := explainer(o, chron)(scribe.Query{Kind: *kind, Campaign: *id, Node: *node})
+	text, err := explainer(p, o, chron)(scribe.Query{Kind: *kind, Campaign: *id, Node: *node})
 	if err != nil {
 		fmt.Fprintln(stderr, "hetman scribe explain:", err)
 		return exitFailed
@@ -459,18 +454,14 @@ func explainCmd(args []string, stdout, stderr io.Writer) int {
 	return exitDone
 }
 
-func sentenceCmd(file, sentence string, yes bool, stdout, stderr io.Writer) int {
+func sentenceCmd(p *i18n.Printer, file, sentence string, yes bool, stdout, stderr io.Writer) int {
 	o, err := orders.Load(file)
 	if err != nil {
-		fmt.Fprintf(stderr, "%v\nhetman scribe: the orders do not pass the check; a sentence can only be mapped to an operation on a valid file\n", err)
+		fmt.Fprintf(stderr, "%v\n%s\n", err, p.T("scribe.sentence_invalid"))
 		return exitUsage
 	}
 	if o.Scribe == nil {
-		fmt.Fprintf(stderr, "hetman scribe: %s names no model for Scribe, and there is no default.\n"+
-			"To use one, name a declared executor and a model, for example:\n"+
-			"  hetman scribe assistant EXECUTOR MODEL\n"+
-			"Without a model, the wizard asks fixed questions: hetman scribe\n"+
-			"and every operation is a command: hetman scribe help\n", o.Path)
+		fmt.Fprintln(stderr, p.T("scribe.no_model", "path", o.Path))
 		return exitUsage
 	}
 	chron, err := readChronicle(o)
@@ -490,12 +481,12 @@ func sentenceCmd(file, sentence string, yes bool, stdout, stderr io.Writer) int 
 		for i := len(list) - 1; i >= 0; i-- {
 			campaigns = append(campaigns, list[i].ID)
 		}
-		explainFn = explainer(o, chron)
+		explainFn = explainer(p, o, chron)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	a := &scribe.Assistant{Orders: o, Model: newModel(o), In: bufio.NewReader(Stdin), Out: stdout, Yes: yes, Echo: !isTerminal(Stdin),
-		Campaigns: campaigns, Explain: explainFn}
+		Campaigns: campaigns, Explain: explainFn, Text: p}
 	switch err := a.Handle(ctx, sentence); {
 	case err == nil:
 		return exitDone

@@ -12,10 +12,12 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 
 	"hetman/internal/chronicle"
 	"hetman/internal/engine"
+	"hetman/internal/i18n"
 	"hetman/internal/language"
 	"hetman/internal/orders"
 	"hetman/internal/scribe"
@@ -40,56 +42,15 @@ const (
 	exitInterrupted = 130
 )
 
-const usage = `usage: hetman <command> [flags]
-
-commands:
-  check    check the orders without running anything
-  run      start a new campaign and run it
-  status   show where a campaign is
-  halt     halt a campaign after its current step
-  resume   continue a halted, stopped or interrupted campaign
-  answer   answer the questions a campaign asks a person
-  serve    show every campaign live on a web page (Watchtower)
-  task     queue internal tasks, list, show and cancel them, check the routing
-           file (hetman task help lists it all)
-  dispatch run a campaign of the routed flow for each queued task
-           (hetman dispatch -h lists its flags)
-  scribe   set the flow up: a wizard, operations on the orders file, a
-           sentence through a model, campaigns explained in plain words
-           (hetman scribe help lists it all)
-  version  print the version of hetman
-
-flags (check, run, status, halt, resume, serve):
-  -f FILE  orders file (default orders.yaml)
-flags (run):
-  -input FILE  JSON file with the run input, an object prompt templates can refer to
-flags (status, halt, resume, answer):
-  -c ID    campaign id (default: the latest campaign)
-flags (answer; without -a, -comment and -outcome it asks in the terminal):
-  -a ID=ANSWER       answer one question (yes or no, an option, or text); repeat for each
-  -comment ID=TEXT   comment on one answer; repeat as needed
-  -outcome NAME      the outcome chosen at a human node
-  -ask N             answer only if question #N is still the open one
-  -by NAME           who answers (default: the user name of this computer)
-flags (status):
-  -events  also list every chronicle event
-flags (serve):
-  -addr ADDRESS  where to listen (default 127.0.0.1:8740, reachable only from this computer)
-flags (scribe skill):
-  -dir DIR  folder for the skill file (default .agents/skills/hetman-scribe)
-  -force    replace a different skill file that is already there
-
-environment (check, run):
-  HETMAN_LANGUAGE=CODE  the language for the person, overriding the language key of the orders
-                        for campaigns started now; a campaign keeps the language it started with
-
-exit codes of run and resume: 0 done, 1 failed, 3 halted, 4 error, 5 waiting for a person, 130 interrupted
-`
+// usage is the help of the command line.
+func usage(p *i18n.Printer) string { return p.T("cli.usage") }
 
 // Main runs the command line and returns the process exit code.
 func Main(args []string, stdout, stderr io.Writer) int {
+	// Until the orders are read, only the person's own choice is known.
+	p := personPrinter(nil)
 	if len(args) == 0 {
-		fmt.Fprint(stderr, usage)
+		fmt.Fprint(stderr, usage(p))
 		return exitUsage
 	}
 	cmd, args := args[0], args[1:]
@@ -97,7 +58,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	case "scribe":
 		return scribeCmd(args, stdout, stderr)
 	case "version":
-		return version(args, stdout, stderr)
+		return version(p, args, stdout, stderr)
 	case "task":
 		return taskCmd(args, stdout, stderr)
 	case "dispatch":
@@ -105,7 +66,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	}
 	fs := flag.NewFlagSet("hetman "+cmd, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	file := fs.String("f", orders.DefaultFile, "orders file")
+	file := fs.String("f", orders.DefaultFile, p.T("flag.f"))
 	var campaign *int64
 	var events *bool
 	var addr, input *string
@@ -113,29 +74,29 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	switch cmd {
 	case "check":
 	case "run":
-		input = fs.String("input", "", "JSON file with the run input")
+		input = fs.String("input", "", p.T("flag.input"))
 	case "serve":
-		addr = fs.String("addr", DefaultAddr, "address to listen on")
+		addr = fs.String("addr", DefaultAddr, p.T("flag.addr"))
 	case "status", "halt", "resume", "answer":
-		campaign = fs.Int64("c", 0, "campaign id (default: latest)")
+		campaign = fs.Int64("c", 0, p.T("flag.c"))
 		if cmd == "status" {
-			events = fs.Bool("events", false, "list every chronicle event")
+			events = fs.Bool("events", false, p.T("flag.events"))
 		}
 		if cmd == "answer" {
-			answers = addAnswerFlags(fs)
+			answers = addAnswerFlags(p, fs)
 		}
 	case "help", "-h", "--help":
-		fmt.Fprint(stdout, usage)
+		fmt.Fprint(stdout, usage(p))
 		return exitDone
 	default:
-		fmt.Fprintf(stderr, "hetman: unknown command %q\n\n%s", cmd, usage)
+		fmt.Fprintf(stderr, "%s\n\n%s", p.T("cli.unknown_command", "command", strconv.Quote(cmd)), usage(p))
 		return exitUsage
 	}
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
 	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "hetman %s: unexpected argument %q\n", cmd, fs.Arg(0))
+		fmt.Fprintln(stderr, p.T("cli.unexpected_argument", "command", cmd, "arg", strconv.Quote(fs.Arg(0))))
 		return exitUsage
 	}
 	o, err := orders.Load(*file)
@@ -143,7 +104,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		var ps orders.Problems
 		if errors.As(err, &ps) {
 			fmt.Fprintln(stderr, ps.Error())
-			fmt.Fprintf(stderr, "orders rejected: %d problem(s)\n", len(ps))
+			fmt.Fprintln(stderr, p.T("cli.orders_rejected", "n", len(ps)))
 		} else {
 			fmt.Fprintln(stderr, "hetman:", err)
 		}
@@ -159,10 +120,11 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		}
 		if len(errs) > 0 {
 			fmt.Fprintln(stderr, errs.Error())
-			fmt.Fprintf(stderr, "orders rejected: %d problem(s)\n", len(errs))
+			fmt.Fprintln(stderr, p.T("cli.orders_rejected", "n", len(errs)))
 			return exitUsage
 		}
 	}
+	p = personPrinter(o)
 	var lang string
 	if cmd == "check" || cmd == "run" {
 		if lang, err = languageFor(o); err != nil {
@@ -171,13 +133,13 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if cmd == "check" {
-		fmt.Fprintf(stdout, "%s: ok (flow %s, %d nodes, %d checks%s)\n", o.Path, o.Flow, len(o.Nodes), len(o.Checks), languageNote(lang))
+		fmt.Fprintln(stdout, p.T("cli.check_ok", "path", o.Path, "flow", o.Flow, "nodes", len(o.Nodes), "checks", len(o.Checks), "language", languageNote(p, lang)))
 		return exitDone
 	}
 	var runInput json.RawMessage
 	if input != nil && *input != "" {
-		if runInput, err = readInput(*input); err != nil {
-			fmt.Fprintf(stderr, "hetman run: -input %s: %v\n", *input, err)
+		if runInput, err = readInput(p, *input); err != nil {
+			fmt.Fprintln(stderr, p.T("cli.bad_input", "file", *input, "error", err))
 			return exitUsage
 		}
 	}
@@ -191,7 +153,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		return exitFailed
 	}
 	defer chron.Close()
-	c := &command{o: o, chron: chron, stdout: stdout, stderr: stderr}
+	c := &command{o: o, chron: chron, stdout: stdout, stderr: stderr, p: p}
 	switch cmd {
 	case "run":
 		return c.run(runInput, lang)
@@ -209,37 +171,37 @@ func Main(args []string, stdout, stderr io.Writer) int {
 }
 
 // writeScribe writes the setup assistant skill into a folder.
-func writeScribe(args []string, stdout, stderr io.Writer) int {
+func writeScribe(p *i18n.Printer, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("hetman scribe skill", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dir := fs.String("dir", DefaultScribeDir, "folder for the skill file")
-	force := fs.Bool("force", false, "replace a different skill file")
+	dir := fs.String("dir", DefaultScribeDir, p.T("flag.dir"))
+	force := fs.Bool("force", false, p.T("flag.skill_force"))
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
 	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "hetman scribe skill: unexpected argument %q\n", fs.Arg(0))
+		fmt.Fprintln(stderr, p.T("cli.unexpected_argument", "command", "scribe skill", "arg", strconv.Quote(fs.Arg(0))))
 		return exitUsage
 	}
 	path, changed, err := scribe.Write(filepath.FromSlash(*dir), *force)
 	switch {
 	case errors.Is(err, scribe.ErrExists):
-		fmt.Fprintf(stderr, "hetman scribe skill: %s: a different file already exists; use -force to replace it\n", path)
+		fmt.Fprintln(stderr, p.T("cli.skill_exists", "path", path))
 		return exitFailed
 	case err != nil:
 		fmt.Fprintln(stderr, "hetman scribe skill:", err)
 		return exitFailed
 	case changed:
-		fmt.Fprintf(stdout, "wrote %s\n", path)
+		fmt.Fprintln(stdout, p.T("cli.skill_wrote", "path", path))
 	default:
-		fmt.Fprintf(stdout, "%s is up to date\n", path)
+		fmt.Fprintln(stdout, p.T("cli.skill_up_to_date", "path", path))
 	}
 	return exitDone
 }
 
-func version(args []string, stdout, stderr io.Writer) int {
+func version(p *i18n.Printer, args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 {
-		fmt.Fprintf(stderr, "hetman version: unexpected argument %q\n", args[0])
+		fmt.Fprintln(stderr, p.T("cli.unexpected_argument", "command", "version", "arg", strconv.Quote(args[0])))
 		return exitUsage
 	}
 	fmt.Fprintf(stdout, "hetman %s\n", Version)
@@ -251,6 +213,7 @@ type command struct {
 	chron  *chronicle.Chronicle
 	stdout io.Writer
 	stderr io.Writer
+	p      *i18n.Printer // the language of the person reading
 }
 
 func (c *command) fail(err error) int {
@@ -262,7 +225,7 @@ func (c *command) campaign(id int64) (chronicle.Campaign, error) {
 	if id == 0 {
 		k, err := c.chron.Latest()
 		if errors.Is(err, chronicle.ErrNoCampaign) {
-			return k, errors.New("no campaigns yet; start one with hetman run")
+			return k, errors.New(c.p.T("cli.no_campaigns"))
 		}
 		c.ordersOf(k)
 		return k, err
@@ -283,7 +246,7 @@ func (c *command) ordersOf(k chronicle.Campaign) {
 	}
 	o, err := orders.Load(k.Orders)
 	if err != nil {
-		fmt.Fprintf(c.stderr, "hetman: campaign %d was started from %s, which does not load (%v); using %s\n", k.ID, k.Orders, err, c.o.Path)
+		fmt.Fprintln(c.stderr, c.p.T("cli.orders_of_failed", "id", k.ID, "orders", k.Orders, "error", err, "used", c.o.Path))
 		return
 	}
 	c.o = o
@@ -298,17 +261,17 @@ func (c *command) state(id int64) (chronicle.State, error) {
 }
 
 // readInput reads a run input file: one JSON object.
-func readInput(path string) (json.RawMessage, error) {
+func readInput(p *i18n.Printer, path string) (json.RawMessage, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(data, &obj); err != nil {
-		return nil, fmt.Errorf("must hold one JSON object: %v", err)
+		return nil, errors.New(p.T("cli.input_not_object", "error", err))
 	}
 	if obj == nil {
-		return nil, errors.New("must hold one JSON object, not null")
+		return nil, errors.New(p.T("cli.input_null"))
 	}
 	var compact bytes.Buffer
 	if err := json.Compact(&compact, data); err != nil {
@@ -335,14 +298,25 @@ func languageFor(o *orders.Orders) (string, error) {
 	return code, nil
 }
 
+// personPrinter speaks the person's language: the one in the environment
+// variable, else the one in the orders, else English. An unknown code in
+// the variable is reported by check and run; the interface falls back.
+func personPrinter(o *orders.Orders) *i18n.Printer {
+	var fromOrders string
+	if o != nil {
+		fromOrders = o.Language
+	}
+	return i18n.For(i18n.Resolve(os.Getenv(languageEnv), fromOrders))
+}
+
 // languageNote names a campaign's language for the person after other
 // facts; it is empty when there is none.
-func languageNote(code string) string {
+func languageNote(p *i18n.Printer, code string) string {
 	l, ok := language.Lookup(code)
 	if !ok {
 		return ""
 	}
-	return fmt.Sprintf(", language %s %s", l.Code, l.Label())
+	return p.T("cli.language_note", "code", l.Code, "label", l.Label())
 }
 
 func (c *command) run(input json.RawMessage, lang string) int {
@@ -355,7 +329,7 @@ func (c *command) run(input json.RawMessage, lang string) int {
 		return c.fail(err)
 	}
 	defer release()
-	fmt.Fprintf(c.stdout, "campaign %d started (flow %s%s)\n", id, c.o.Flow, languageNote(lang))
+	fmt.Fprintln(c.stdout, c.p.T("cli.started", "id", id, "flow", c.o.Flow, "language", languageNote(c.p, lang)))
 	return c.drive(id)
 }
 
@@ -363,19 +337,19 @@ func (c *command) drive(id int64) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := engine.ContainChildren(); err != nil {
-		fmt.Fprintf(c.stderr, "hetman: step processes are not tied to this process (%v); they are cleaned up on resume instead\n", err)
+		fmt.Fprintln(c.stderr, c.p.T("cli.not_contained", "error", err))
 	}
-	e := &engine.Engine{Orders: c.o, Chron: c.chron, Campaign: id, Out: c.stdout}
+	e := &engine.Engine{Orders: c.o, Chron: c.chron, Campaign: id, Out: c.stdout, Text: c.p}
 	res, err := e.Drive(ctx)
 	e.WaitHooks()
 	switch {
 	case errors.Is(err, engine.ErrInterrupted):
 		if asked, _, _ := engine.Pending(c.chron, id); asked != nil {
-			fmt.Fprintf(c.stderr, "campaign %d still waits for a person at %s; answer with %s, then continue with %s\n",
-				id, asked.Node, engine.AnswerCommand(c.o, id), engine.ResumeCommand(c.o, id))
+			fmt.Fprintln(c.stderr, c.p.T("cli.interrupted_asking", "id", id, "node", asked.Node,
+				"answer", engine.AnswerCommand(c.o, id), "resume", engine.ResumeCommand(c.o, id)))
 			return exitInterrupted
 		}
-		fmt.Fprintf(c.stderr, "campaign %d interrupted; the current step runs again on hetman resume -c %d\n", id, id)
+		fmt.Fprintln(c.stderr, c.p.T("cli.interrupted", "id", id))
 		return exitInterrupted
 	case err != nil:
 		return c.fail(err)
@@ -386,13 +360,13 @@ func (c *command) drive(id int64) int {
 	case engine.Failed:
 		return exitFailed
 	case engine.Halted:
-		fmt.Fprintf(c.stdout, "campaign %d halted; continue with hetman resume -c %d\n", id, id)
+		fmt.Fprintln(c.stdout, c.p.T("cli.halted", "id", id))
 		return exitHalted
 	case engine.Waiting:
-		fmt.Fprintf(c.stdout, "campaign %d waits for a person; when the cause is gone, run hetman resume -c %d\n", id, id)
+		fmt.Fprintln(c.stdout, c.p.T("cli.waiting", "id", id))
 		return exitWaiting
 	default:
-		fmt.Fprintf(c.stdout, "campaign %d stopped in the error state; fix the cause and run hetman resume -c %d\n", id, id)
+		fmt.Fprintln(c.stdout, c.p.T("cli.error_state", "id", id))
 		return exitError
 	}
 }
@@ -408,11 +382,11 @@ func (c *command) halt(id int64) int {
 	}
 	switch result {
 	case engine.HaltAlready:
-		fmt.Fprintf(c.stdout, "campaign %d is already halted\n", k.ID)
+		fmt.Fprintln(c.stdout, c.p.T("cli.halt_already", "id", k.ID))
 	case engine.HaltPending:
-		fmt.Fprintf(c.stdout, "campaign %d will halt after its current step\n", k.ID)
+		fmt.Fprintln(c.stdout, c.p.T("cli.halt_pending", "id", k.ID))
 	default:
-		fmt.Fprintf(c.stdout, "campaign %d halted at %s\n", k.ID, st.Node)
+		fmt.Fprintln(c.stdout, c.p.T("cli.halt_done", "id", k.ID, "node", st.Node))
 	}
 	return exitDone
 }
@@ -427,10 +401,10 @@ func (c *command) resume(id int64) int {
 		return c.fail(err)
 	}
 	if release == nil {
-		fmt.Fprintf(c.stdout, "campaign %d is being run by another process; it continues there\n", k.ID)
+		fmt.Fprintln(c.stdout, c.p.T("cli.resume_elsewhere", "id", k.ID))
 		return exitDone
 	}
 	defer release()
-	fmt.Fprintf(c.stdout, "campaign %d resumed at %s\n", k.ID, st.Node)
+	fmt.Fprintln(c.stdout, c.p.T("cli.resumed", "id", k.ID, "node", st.Node))
 	return c.drive(k.ID)
 }

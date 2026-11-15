@@ -2,12 +2,12 @@ package dispatch
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 	"time"
 
 	"hetman/internal/chronicle"
 	"hetman/internal/engine"
+	"hetman/internal/i18n"
 	"hetman/internal/orders"
 )
 
@@ -48,7 +48,7 @@ type View struct {
 
 // look derives the view of a campaign from its events. driven reports
 // whether a process holds the campaign's lock.
-func look(v *View, k chronicle.Campaign, events []chronicle.Event, driven bool) {
+func look(p *i18n.Printer, v *View, k chronicle.Campaign, events []chronicle.Event, driven bool) {
 	st := chronicle.Replay(events)
 	v.Flow, v.Orders, v.Node, v.Driven = k.Flow, k.Orders, st.Node, driven
 	o := &orders.Orders{Path: k.Orders}
@@ -58,24 +58,24 @@ func look(v *View, k chronicle.Campaign, events []chronicle.Event, driven bool) 
 	case st.End == orders.Failed:
 		v.State = StateFailed
 	case st.Error != "":
-		v.State, v.Waits, v.Command = StateError, "a person to fix the cause and resume: "+st.Error, engine.ResumeCommand(o, k.ID)
+		v.State, v.Waits, v.Command = StateError, p.T("cli.task.waits.error", "error", st.Error), engine.ResumeCommand(o, k.ID)
 	case st.Halted || (st.HaltRequested && !driven):
-		v.State, v.Waits, v.Command = StateHalted, "a person to resume it", engine.ResumeCommand(o, k.ID)
+		v.State, v.Waits, v.Command = StateHalted, p.T("cli.task.waits.halted"), engine.ResumeCommand(o, k.ID)
 	case st.Asking():
 		v.State, v.Command = StateWaiting, engine.AnswerCommand(o, k.ID)
-		v.Waits = asks(st.Ask)
+		v.Waits = asks(p, st.Ask)
 	case st.Waiting != "" && st.WaitUntil.IsZero():
 		v.State, v.Command = StateWaiting, engine.ResumeCommand(o, k.ID)
-		v.Waits = "a person to resume after the subscription limit was reached at " + st.Node
+		v.Waits = p.T("cli.task.waits.limit", "node", st.Node)
 		if st.Waiting == chronicle.WaitOffline {
-			v.Waits = "a person to resume after connectivity was lost at " + st.Node
+			v.Waits = p.T("cli.task.waits.offline", "node", st.Node)
 		}
 	default:
 		v.State = StateRunning
 		v.busy = driven
 		v.ready = !driven
 		if !st.WaitUntil.IsZero() && st.Waiting != "" {
-			v.Waits = "the subscription limit to reset at " + st.WaitUntil.Local().Format(time.DateTime)
+			v.Waits = p.T("cli.task.waits.limit_reset", "at", st.WaitUntil.Local().Format(time.DateTime))
 		}
 	}
 	if st.End != "" && len(events) > 0 {
@@ -85,23 +85,24 @@ func look(v *View, k chronicle.Campaign, events []chronicle.Event, driven bool) 
 }
 
 // asks says what an open question waits for.
-func asks(ask *chronicle.Event) string {
+func asks(p *i18n.Printer, ask *chronicle.Event) string {
 	switch ask.Reason {
 	case chronicle.ReasonHuman:
-		return fmt.Sprintf("a person to decide at %s (%s)", ask.Node, strings.Join(ask.Outcomes, ", "))
+		return p.T("cli.task.waits.human", "node", ask.Node, "outcomes", strings.Join(ask.Outcomes, ", "))
 	case chronicle.ReasonDialogue:
-		return fmt.Sprintf("a person to answer %d question(s) of agent step %s", len(ask.Questions), ask.Node)
+		return p.T("cli.task.waits.dialogue", "node", ask.Node, "n", len(ask.Questions))
 	default:
-		return fmt.Sprintf("a person to answer %d question(s) of gate %s", len(ask.Questions), ask.Node)
+		return p.T("cli.task.waits.gate", "node", ask.Node, "n", len(ask.Questions))
 	}
 }
 
 // Views returns the views of tasks. dir is the folder of the routing file,
 // which holds the chronicle; chron may be nil when it does not exist yet.
-func Views(tasks []Task, chron *chronicle.Chronicle, dir string) ([]View, error) {
+// What a task waits for is said in the language of p.
+func Views(tasks []Task, chron *chronicle.Chronicle, dir string, p *i18n.Printer) ([]View, error) {
 	out := make([]View, 0, len(tasks))
 	for _, t := range tasks {
-		v, err := viewOf(t, chron, dir)
+		v, err := viewOf(p, t, chron, dir)
 		if err != nil {
 			return nil, err
 		}
@@ -110,7 +111,7 @@ func Views(tasks []Task, chron *chronicle.Chronicle, dir string) ([]View, error)
 	return out, nil
 }
 
-func viewOf(t Task, chron *chronicle.Chronicle, dir string) (View, error) {
+func viewOf(p *i18n.Printer, t Task, chron *chronicle.Chronicle, dir string) (View, error) {
 	v := View{ID: t.ID, Kind: t.Kind, Key: t.Key, Campaign: t.Campaign, Added: t.Added}
 	if !t.Started.IsZero() {
 		s := t.Started
@@ -150,6 +151,6 @@ func viewOf(t Task, chron *chronicle.Chronicle, dir string) (View, error) {
 		return v, err
 	}
 	driven, _ := engine.Driven(&orders.Orders{Dir: dir}, t.Campaign)
-	look(&v, k, events, driven)
+	look(p, &v, k, events, driven)
 	return v, nil
 }

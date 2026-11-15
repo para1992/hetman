@@ -12,11 +12,12 @@ import (
 
 	"hetman/internal/chronicle"
 	"hetman/internal/engine"
+	"hetman/internal/i18n"
 	"hetman/internal/orders"
 )
 
 // ErrBusy is returned when another dispatcher already runs for the folder.
-var ErrBusy = errors.New("another dispatcher runs for this folder")
+var ErrBusy = newError(nil, "cli.dispatch.busy")
 
 // LockFile is the file a running dispatcher holds locked, in .hetman.
 const LockFile = "dispatcher.lock"
@@ -40,6 +41,7 @@ type Dispatcher struct {
 	Once   bool          // return once nothing is queued or running, instead of waiting for new tasks
 	Poll   time.Duration // how often the queue is looked at; zero for a second
 	Out    io.Writer     // progress lines; nil for none
+	Text   *i18n.Printer // the language of the progress lines; nil for English
 	// Language returns the language for the person of a campaign started
 	// now; nil for the language key of the orders.
 	Language func(*orders.Orders) (string, error)
@@ -71,19 +73,19 @@ func (d *Dispatcher) out() io.Writer {
 	return lockedWriter{&d.outMu, d.Out}
 }
 
-func (d *Dispatcher) say(format string, args ...any) {
-	fmt.Fprintf(d.out(), format+"\n", args...)
+func (d *Dispatcher) say(key string, args ...any) {
+	fmt.Fprintln(d.out(), d.Text.T(key, args...))
 }
 
 // sayOnce reports a problem the first time it is seen.
-func (d *Dispatcher) sayOnce(format string, args ...any) {
-	msg := fmt.Sprintf(format, args...)
+func (d *Dispatcher) sayOnce(key string, args ...any) {
+	msg := d.Text.T(key, args...)
 	d.mu.Lock()
 	seen := d.said[msg]
 	d.said[msg] = true
 	d.mu.Unlock()
 	if !seen {
-		d.say("%s", msg)
+		fmt.Fprintln(d.out(), msg)
 	}
 }
 
@@ -175,12 +177,12 @@ func (d *Dispatcher) look(ctx context.Context) (pending bool, err error) {
 		switch t.State {
 		case Queued:
 			if err := d.Routes.Known(t.Kind); err != nil {
-				d.sayOnce("task %d waits: %v", t.ID, err)
+				d.sayOnce("cli.dispatch.waits", "id", t.ID, "error", d.Text.Error(err))
 				continue
 			}
 			queued = append(queued, candidate{task: t, priority: prio})
 		case Started:
-			v, err := viewOf(t, d.Chron, d.Routes.Dir)
+			v, err := viewOf(d.Text, t, d.Chron, d.Routes.Dir)
 			if err != nil {
 				return false, err
 			}
@@ -264,7 +266,7 @@ func (d *Dispatcher) recover(t Task) (Task, error) {
 			if err := d.Queue.link(t.ID, k.ID); err != nil {
 				return t, err
 			}
-			d.say("task %d: campaign %d was created before the last dispatcher stopped; it continues", t.ID, k.ID)
+			d.say("cli.dispatch.recovered", "id", t.ID, "campaign", k.ID)
 			t.State, t.Campaign = Started, k.ID
 			return t, nil
 		}
@@ -281,11 +283,11 @@ func (d *Dispatcher) recover(t Task) (Task, error) {
 func (d *Dispatcher) loadOrders(path string, t Task) *orders.Orders {
 	o, err := orders.Load(path)
 	if err != nil {
-		d.sayOnce("task %d waits: %s is rejected:\n%v", t.ID, path, err)
+		d.sayOnce("cli.dispatch.rejected", "id", t.ID, "path", path, "error", err)
 		return nil
 	}
 	if errs, _ := o.CheckPrograms(); len(errs) > 0 {
-		d.sayOnce("task %d waits: %s is rejected:\n%v", t.ID, path, errs)
+		d.sayOnce("cli.dispatch.rejected", "id", t.ID, "path", path, "error", errs)
 		return nil
 	}
 	return o
@@ -301,7 +303,7 @@ func (d *Dispatcher) start(ctx context.Context, t Task) (bool, error) {
 	if d.Language != nil {
 		var err error
 		if lang, err = d.Language(o); err != nil {
-			d.sayOnce("task %d waits: %v", t.ID, err)
+			d.sayOnce("cli.dispatch.waits", "id", t.ID, "error", d.Text.Error(err))
 			return false, nil
 		}
 	}
@@ -324,7 +326,7 @@ func (d *Dispatcher) start(ctx context.Context, t Task) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	d.say("task %d (%s): campaign %d started (flow %s)", t.ID, t.Kind, id, o.Flow)
+	d.say("cli.dispatch.started", "id", t.ID, "kind", t.Kind, "campaign", id, "flow", o.Flow)
 	t.State, t.Campaign = Started, id
 	d.drive(ctx, o, t, release)
 	return true, nil
@@ -357,12 +359,12 @@ func (d *Dispatcher) resume(ctx context.Context, t Task, ordersPath string) (boo
 		return false, err
 	}
 	var v View
-	look(&v, k, events, false)
+	look(d.Text, &v, k, events, false)
 	if !v.ready {
 		release()
 		return false, nil
 	}
-	d.say("task %d (%s): campaign %d continues at %s", t.ID, t.Kind, t.Campaign, v.Node)
+	d.say("cli.dispatch.continues", "id", t.ID, "kind", t.Kind, "campaign", t.Campaign, "node", v.Node)
 	d.drive(ctx, o, t, release)
 	return true, nil
 }
@@ -377,7 +379,7 @@ func (d *Dispatcher) drive(ctx context.Context, o *orders.Orders, t Task, releas
 	d.drives.Add(1)
 	go func() {
 		defer d.drives.Done()
-		e := &engine.Engine{Orders: o, Chron: d.Chron, Campaign: id, Out: d.out(), StopAtAsk: true}
+		e := &engine.Engine{Orders: o, Chron: d.Chron, Campaign: id, Out: d.out(), Text: d.Text, StopAtAsk: true}
 		res, err := e.Drive(ctx)
 		e.WaitHooks()
 		release()
@@ -390,7 +392,7 @@ func (d *Dispatcher) drive(ctx context.Context, o *orders.Orders, t Task, releas
 		d.report(o, t, res, err)
 		if err == nil && (res == engine.Done || res == engine.Failed) {
 			if err := d.Queue.ended(t.ID, res.String(), time.Now()); err != nil {
-				d.say("task %d: %v", t.ID, err)
+				d.say("cli.dispatch.task_error", "id", t.ID, "error", err)
 			}
 		}
 		select {
@@ -404,19 +406,19 @@ func (d *Dispatcher) report(o *orders.Orders, t Task, res engine.Result, err err
 	id := t.Campaign
 	switch {
 	case errors.Is(err, engine.ErrInterrupted):
-		d.say("task %d: campaign %d interrupted; the next dispatcher continues it", t.ID, id)
+		d.say("cli.dispatch.interrupted", "id", t.ID, "campaign", id)
 	case err != nil:
-		d.say("task %d: campaign %d: %v; tried again in a minute", t.ID, id, err)
+		d.say("cli.dispatch.drive_error", "id", t.ID, "campaign", id, "error", d.Text.Error(err))
 	case res == engine.Asking:
 		asked, _, _ := engine.Pending(d.Chron, id)
-		what := "a person"
+		what := d.Text.T("cli.dispatch.a_person")
 		if asked != nil {
-			what = asks(asked)
+			what = asks(d.Text, asked)
 		}
-		d.say("task %d: campaign %d waits for %s; answer with: %s", t.ID, id, what, engine.AnswerCommand(o, id))
+		d.say("cli.dispatch.asking", "id", t.ID, "campaign", id, "what", what, "command", engine.AnswerCommand(o, id))
 	case res == engine.Halted, res == engine.Errored, res == engine.Waiting:
-		d.say("task %d: campaign %d %s; continue it with: %s", t.ID, id, res, engine.ResumeCommand(o, id))
+		d.say("cli.dispatch.stopped_"+res.String(), "id", t.ID, "campaign", id, "command", engine.ResumeCommand(o, id))
 	default:
-		d.say("task %d: campaign %d %s", t.ID, id, res)
+		d.say("cli.dispatch.ended_"+res.String(), "id", t.ID, "campaign", id)
 	}
 }

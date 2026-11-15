@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -139,13 +140,13 @@ var ErrNotQueued = errors.New("only a queued task can be cancelled")
 func CheckInput(data []byte) (json.RawMessage, error) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(data, &obj); err != nil {
-		return nil, fmt.Errorf("the task input must be one JSON object: %v", err)
+		return nil, newError(nil, "cli.task.input_not_object", "error", err)
 	}
 	if obj == nil {
-		return nil, errors.New("the task input must be one JSON object, not null")
+		return nil, newError(nil, "cli.task.input_null")
 	}
 	if _, ok := obj[engine.TaskField]; ok {
-		return nil, fmt.Errorf("the task input must not have the field %q: hetman sets it to name the task", engine.TaskField)
+		return nil, newError(nil, "cli.task.input_reserved", "field", strconv.Quote(engine.TaskField))
 	}
 	var b bytes.Buffer
 	if err := json.Compact(&b, data); err != nil {
@@ -232,7 +233,7 @@ func (q *Queue) query(where string, args ...any) ([]Task, error) {
 func (q *Queue) Get(id int64) (Task, error) {
 	t, err := scanTask(q.db.QueryRow(`SELECT `+taskColumns+` FROM tasks WHERE id = ?`, id))
 	if errors.Is(err, ErrNoTask) {
-		return t, fmt.Errorf("task %d: %w", id, ErrNoTask)
+		return t, newError(ErrNoTask, "cli.task.no_such_task", "id", id)
 	}
 	return t, err
 }
@@ -259,7 +260,7 @@ func (q *Queue) Cancel(id int64) (Task, error) {
 		return t, err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return t, fmt.Errorf("task %d is %s: %w", id, t.State, ErrNotQueued)
+		return t, newError(ErrNotQueued, "cli.task.not_queued", "id", id, "state", t.State)
 	}
 	return t, nil
 }

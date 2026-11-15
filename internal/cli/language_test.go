@@ -87,6 +87,9 @@ func TestLanguageOverrideAndStatus(t *testing.T) {
 }
 
 func TestScribeLanguageCommands(t *testing.T) {
+	// Once the orders name Ukrainian, the interface would speak it; the
+	// person here reads English.
+	t.Setenv(languageEnv, "en")
 	w := newWorld(t, `  a: {type: script, run: `+arg("exit", "0")+`, on: {ok: done, fail: failed}}
 `)
 	before := readFile(t, w.orders)

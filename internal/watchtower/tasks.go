@@ -8,6 +8,7 @@ import (
 
 	"hetman/internal/chronicle"
 	"hetman/internal/dispatch"
+	"hetman/internal/i18n"
 	"hetman/internal/orders"
 )
 
@@ -56,7 +57,7 @@ func (s *Server) taskStamp() int64 {
 
 // taskViews returns the rows of the tasks view, newest first; nil when the
 // folder has no queue.
-func (s *Server) taskViews() ([]dispatch.View, error) {
+func (s *Server) taskViews(p *i18n.Printer) ([]dispatch.View, error) {
 	q := s.queue()
 	if q == nil {
 		return nil, nil
@@ -65,7 +66,7 @@ func (s *Server) taskViews() ([]dispatch.View, error) {
 	if err != nil {
 		return nil, err
 	}
-	views, err := dispatch.Views(list, s.Chron, filepath.Dir(s.OrdersPath))
+	views, err := dispatch.Views(list, s.Chron, filepath.Dir(s.OrdersPath), p)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +77,7 @@ func (s *Server) taskViews() ([]dispatch.View, error) {
 }
 
 func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
-	views, err := s.taskViews()
+	views, err := s.taskViews(s.printer(r))
 	if err != nil {
 		writeError(w, err)
 		return

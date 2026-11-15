@@ -421,8 +421,8 @@ A person can choose another language for themselves without editing the shared f
 variable is no override, an unknown code is an error and starts nothing). The language
 in effect is recorded in the chronicle when the campaign starts and stays the same on
 `hetman resume`, whatever the file or the variable say by then. `hetman status` and
-the campaign page show it. Hetman's own messages, its page and the wizard stay
-English.
+the campaign page show it. The language Hetman's own messages are written in is a
+separate matter; see Interface language.
 
 **Attempts.** Each node visit has `max_attempts` attempts. An attempt fails when the
 answer does not match the schema, the adapter reports a transient error, the adapter
@@ -762,7 +762,8 @@ hetman version                          print the version of hetman
 - `-r FILE` is the routing file of `task` and `dispatch`, `routes.yaml` in the current
   folder by default.
 - `HETMAN_LANGUAGE=CODE` in the environment of `check` and `run` overrides the
-  `language` key of the orders (see Language for the person).
+  `language` key of the orders (see Language for the person). For every command it
+  is also the language of Hetman's own messages (see Interface language).
 - `-dir DIR` is the folder `scribe skill` writes `SKILL.md` into,
   `.agents/skills/hetman-scribe` in the current folder by default. `-force` replaces
   a different `SKILL.md` that is already there.
@@ -993,6 +994,62 @@ Watchtower shows the tasks of its folder under a Tasks tab next to the campaigns
 kind, state, campaign, age and what a waiting task waits for. Campaign commands
 (`status`, `halt`, `resume`, `answer`) given `-f` with another orders file of the same
 folder use the orders file the campaign was started from.
+
+## Interface language
+
+Hetman's own messages (the command line, the wizard, campaigns in plain words and the
+Watchtower page) come in the language of the person reading them: the one in
+`HETMAN_LANGUAGE`, else the orders' `language` key, else English. For a command about
+a campaign the person's language still wins over the language the campaign recorded:
+the interface speaks to whoever is looking, while the campaign's language is for what
+the flow produces. Any of the six codes can be chosen; a language without a translation
+shows English. English and Ukrainian are translated now.
+
+```sh
+$ HETMAN_LANGUAGE=uk hetman halt
+похід 3 стане на привал після поточного кроку
+```
+
+Watchtower starts in the language of the `hetman serve` process, chosen by the same
+rule. A switcher in the page header offers all six languages and remembers the choice
+in that browser; the plain-words tab follows it too.
+
+What stays English in every language, because tools, agents and models read it: the
+keys and values of the orders file; node, check and outcome names; the
+`FILE:LINE:COL: message` problems of the orders check (and the `warning:` lines made
+of them); chronicle event kinds and the `status -events` dump; log files; the adapter
+protocol; everything sent to a model (prompts, the Scribe request, the language
+instruction); environment variable names; the payload of the notification hook;
+error messages that come from the operating system, a library, the orders editor or
+the engine; the `FILE:LINE:COL` problems of the routing file; the state names
+`hetman task list -state` takes (`queued`, `running`, `waiting`, ...), although the
+STATE column shows them translated, as `hetman status` shows its states; and the error
+bodies of the page's API. `hetman task` and `hetman dispatch` speak the language in
+`HETMAN_LANGUAGE`, else English, since a routing file names several orders files. Durations printed by the command
+line keep Go's form, such as `1.2s`.
+
+**Translations.** The texts live in one file per language,
+`internal/i18n/catalogue/CODE.yaml`, embedded in the binary. Each entry maps a key to a
+message; names in braces, such as `{node}`, are filled in by the program. A message
+that depends on a number has a form per plural category of the language, and the
+number is always `{n}`:
+
+```yaml
+page.attempts:
+  one: "{n} спроба"
+  few: "{n} спроби"
+  many: "{n} спроб"
+```
+
+The forms each language needs: Chinese `other`; English, Spanish and Hindi `one` and
+`other`; Ukrainian `one`, `few` and `many`; Arabic `zero`, `one`, `two`, `few`, `many`
+and `other`. `en.yaml` is the source and has every key. To fix a text, edit its
+entry; to add a language, create its file with the keys translated so far: a missing
+key shows the English text. The test of `scripts/verify.sh` fails on a key or a
+`{name}` that English does not have and on a missing plural form, and lists the keys
+each language has not translated yet; the Ukrainian file must be complete. Another
+test reads the code that prints for a person and fails on English text written there
+instead of in the catalogue.
 
 ## Setup assistant
 

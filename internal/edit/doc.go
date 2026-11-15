@@ -24,6 +24,7 @@ import (
 	"sort"
 	"strings"
 
+	"hetman/internal/i18n"
 	"hetman/internal/orders"
 )
 
@@ -37,7 +38,7 @@ type Doc struct {
 	orig   []byte // the file as read, with LF line ends
 	text   []byte // the file as changed
 	files  map[string]*File
-	notes  []string
+	notes  []string // operations that rewrote the whole file
 }
 
 // File is another file an operation creates or changes: a starter prompt
@@ -89,7 +90,16 @@ func (d *Doc) Files() []*File {
 }
 
 // Notes are remarks about how the changes were made.
-func (d *Doc) Notes() []string { return d.notes }
+func (d *Doc) Notes() []string { return d.NotesIn(nil) }
+
+// NotesIn are the notes in the language of p.
+func (d *Doc) NotesIn(p *i18n.Printer) []string {
+	out := make([]string, len(d.notes))
+	for i, op := range d.notes {
+		out[i] = p.T("op.note.rewritten", "op", op)
+	}
+	return out
+}
 
 // Changed reports whether anything differs from the files on disk.
 func (d *Doc) Changed() bool {
@@ -148,8 +158,7 @@ func (d *Doc) Apply(op Op) error {
 			return err
 		}
 		if !inPlace {
-			c.notes = append(c.notes, fmt.Sprintf("%s could not be changed in place, so the whole file was written out again: "+
-				"comments and key order are kept, blank lines, alignment and quoting are not", op.Op))
+			c.notes = append(c.notes, op.Op)
 		}
 		c.text = out
 	}

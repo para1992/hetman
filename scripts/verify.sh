@@ -39,6 +39,11 @@ go build ./...
 echo "== go test"
 go test -count=1 ./...
 
+echo "== translations"
+# The catalogue test runs with the others above; here it reports, per
+# language, the keys that are not translated yet.
+go test -count=1 -run '^TestCatalogues$' -v ./internal/i18n | grep 'translation ' | sed 's/^ *[a-z0-9_]*\.go:[0-9]*: //'
+
 echo "== cross-build"
 out=$(mktemp -d)
 trap 'rm -rf "$out"' EXIT

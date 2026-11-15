@@ -15,6 +15,7 @@ import (
 	"hetman/internal/edit"
 	"hetman/internal/engine"
 	"hetman/internal/explain"
+	"hetman/internal/i18n"
 	"hetman/internal/language"
 	"hetman/internal/orders"
 	"hetman/internal/schema"
@@ -63,24 +64,23 @@ type Query struct {
 }
 
 // Words describes a query in plain words.
-func (q Query) Words() string {
-	which := "the latest campaign"
+func (q Query) Words() string { return q.WordsIn(nil) }
+
+// WordsIn describes the query in plain words in the language of p.
+func (q Query) WordsIn(p *i18n.Printer) string {
+	which := p.T("query.latest")
 	if q.Campaign > 0 {
-		which = fmt.Sprintf("campaign %d", q.Campaign)
+		which = p.T("query.campaign", "id", q.Campaign)
 	}
-	s := map[string]string{
-		explain.Summary:  "explain " + which,
-		explain.Where:    "say where " + which + " is and what it waits for",
-		explain.History:  "list what ran in " + which,
-		explain.Rework:   "say why " + which + " went back for rework",
-		explain.Failures: "list what failed in " + which,
-		explain.Warnings: "list the soft checks that warned in " + which,
-	}[q.Kind]
-	if s == "" {
-		s = q.Kind + " of " + which
+	var s string
+	switch q.Kind {
+	case explain.Summary, explain.Where, explain.History, explain.Rework, explain.Failures, explain.Warnings:
+		s = p.T("query."+q.Kind, "which", which)
+	default:
+		s = p.T("query.other", "kind", q.Kind, "which", which)
 	}
 	if q.Node != "" {
-		s += ", at " + q.Node
+		s += p.T("query.at_node", "node", q.Node)
 	}
 	return s
 }
@@ -457,13 +457,15 @@ type Assistant struct {
 	// Explain answers a query, or returns an error for a campaign or node
 	// that does not exist.
 	Explain func(Query) (string, error)
+	// Text is the language of what the person reads; nil for English.
+	Text *i18n.Printer
 }
 
 // Handle maps a sentence to an operation or a query and carries it out.
 func (a *Assistant) Handle(ctx context.Context, sentence string) error {
 	ans, err := Interpret(ctx, a.Model, sentence, a.Orders, a.Campaigns)
 	if err != nil {
-		fmt.Fprintf(a.Out, "Scribe could not use the model's answer: %v\nNothing was changed. The wizard works without a model: hetman scribe\n", err)
+		fmt.Fprintln(a.Out, a.Text.T("assist.unusable", "error", err))
 		return err
 	}
 	switch ans.Outcome {
@@ -472,26 +474,27 @@ func (a *Assistant) Handle(ctx context.Context, sentence string) error {
 	case AnswerQuery:
 		return a.query(*ans.Query)
 	}
-	fmt.Fprintln(a.Out, "The sentence can mean more than one thing. Did you mean:")
+	p := a.Text
+	fmt.Fprintln(a.Out, p.T("assist.unclear"))
 	for i, c := range ans.Choices {
 		what := ""
 		if c.Operation != nil {
-			what = c.Operation.Words()
+			what = c.Operation.WordsIn(p)
 		} else {
-			what = c.Query.Words()
+			what = c.Query.WordsIn(p)
 		}
 		fmt.Fprintf(a.Out, "  %d) %s\n     (%s)\n", i+1, strings.TrimSpace(c.Question), what)
 	}
-	fmt.Fprintln(a.Out, "  0) none of these")
+	fmt.Fprintln(a.Out, "  0) "+p.T("assist.none"))
 	if a.Yes {
-		fmt.Fprintln(a.Out, "Nothing was changed: choosing needs an answer, so run it again without -yes, or say it more precisely.")
+		fmt.Fprintln(a.Out, p.T("assist.needs_choice"))
 		return ErrUnclear
 	}
-	fmt.Fprintf(a.Out, "Choice [0-%d]: ", len(ans.Choices))
+	fmt.Fprint(a.Out, p.T("assist.choice", "max", len(ans.Choices))+" ")
 	line := a.read()
 	n, err := strconv.Atoi(strings.TrimSpace(line))
 	if err != nil || n < 1 || n > len(ans.Choices) {
-		fmt.Fprintln(a.Out, "Nothing was changed.")
+		fmt.Fprintln(a.Out, p.T("assist.nothing_changed"))
 		return ErrUnclear
 	}
 	c := ans.Choices[n-1]
@@ -502,35 +505,36 @@ func (a *Assistant) Handle(ctx context.Context, sentence string) error {
 }
 
 func (a *Assistant) operation(op edit.Op) error {
-	fmt.Fprintf(a.Out, "Scribe proposes: %s.\n", op.Words())
+	p := a.Text
+	fmt.Fprintln(a.Out, p.T("assist.proposes", "words", op.WordsIn(p)))
 	doc, err := edit.Open(a.Orders.Path)
 	if err != nil {
 		return err
 	}
 	if err := doc.Apply(op); err != nil {
-		fmt.Fprintf(a.Out, "It cannot be applied: %v\nNothing was changed.\n", err)
+		fmt.Fprintln(a.Out, p.T("assist.cannot_apply", "error", err))
 		return ErrRejected
 	}
 	if _, err := doc.Check(); err != nil {
-		fmt.Fprintf(a.Out, "The result would not pass the orders check:\n%v\nNothing was changed.\n", err)
+		fmt.Fprintln(a.Out, p.T("assist.check_fails", "problems", err))
 		return ErrRejected
 	}
 	fmt.Fprint(a.Out, doc.Diff())
-	for _, n := range doc.Notes() {
-		fmt.Fprintln(a.Out, "note:", n)
+	for _, n := range doc.NotesIn(p) {
+		fmt.Fprintln(a.Out, p.T("op.note", "note", n))
 	}
 	if !a.Yes {
-		fmt.Fprint(a.Out, "Apply this change? [y/N] ")
+		fmt.Fprint(a.Out, p.T("assist.apply")+" ")
 		line := a.read()
-		if s := strings.ToLower(strings.TrimSpace(line)); s != "y" && s != "yes" {
-			fmt.Fprintln(a.Out, "Nothing was changed.")
+		if !i18n.IsYes(p, line) {
+			fmt.Fprintln(a.Out, p.T("assist.nothing_changed"))
 			return ErrDeclined
 		}
 	}
 	if err := doc.Save(false); err != nil {
 		return err
 	}
-	fmt.Fprintf(a.Out, "Wrote %s.\n", doc.Path)
+	fmt.Fprintln(a.Out, p.T("op.wrote", "path", doc.Path))
 	return nil
 }
 
@@ -545,12 +549,12 @@ func (a *Assistant) read() string {
 
 func (a *Assistant) query(q Query) error {
 	if a.Explain == nil {
-		fmt.Fprintln(a.Out, "There are no campaigns to ask about yet.")
+		fmt.Fprintln(a.Out, a.Text.T("assist.no_campaigns"))
 		return ErrRejected
 	}
 	text, err := a.Explain(q)
 	if err != nil {
-		fmt.Fprintf(a.Out, "Scribe understood: %s. %v\n", q.Words(), err)
+		fmt.Fprintln(a.Out, a.Text.T("assist.understood", "words", q.WordsIn(a.Text), "error", err))
 		return ErrRejected
 	}
 	fmt.Fprint(a.Out, text)

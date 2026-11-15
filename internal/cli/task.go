@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -19,58 +20,42 @@ import (
 	"hetman/internal/chronicle"
 	"hetman/internal/dispatch"
 	"hetman/internal/engine"
+	"hetman/internal/i18n"
 	"hetman/internal/orders"
 )
-
-const taskUsage = `usage: hetman task <command> [flags]
-
-commands:
-  add     queue a task: hetman task add -kind KIND [-key KEY] [-input FILE] [-force]
-  list    list the tasks with their states
-  show    show one task and its campaign: hetman task show ID
-  cancel  cancel a queued task: hetman task cancel ID
-  check   check the routing file and every orders file it routes to
-
-flags:
-  -r FILE      routing file (default routes.yaml)
-  -kind KIND   the kind of the task; the routing file names the flow that handles it
-  -key KEY     de-duplication key: nothing is added while a task with this key exists
-               that was not cancelled, whatever its state
-  -force       add the task even when its key is taken
-  -input FILE  JSON file with the task input, one object; - reads standard input;
-               without it the input is {}
-  -state S     list only tasks in this state
-`
 
 // Stdin of task add -input -.
 var taskStdin io.Reader = os.Stdin
 
-// taskCmd runs hetman task.
+// taskCmd runs hetman task. Its texts are in the person's language: the
+// one in HETMAN_LANGUAGE, else English, since a routing file names several
+// orders files.
 func taskCmd(args []string, stdout, stderr io.Writer) int {
+	p := personPrinter(nil)
 	if len(args) == 0 {
-		fmt.Fprint(stderr, taskUsage)
+		fmt.Fprint(stderr, p.T("cli.task.usage"))
 		return exitUsage
 	}
 	sub, args := args[0], args[1:]
 	fs := flag.NewFlagSet("hetman task "+sub, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	file := fs.String("r", dispatch.DefaultRoutesFile, "routing file")
+	file := fs.String("r", dispatch.DefaultRoutesFile, p.T("flag.task_r"))
 	var kind, key, input, state *string
 	var force *bool
 	switch sub {
 	case "add":
-		kind = fs.String("kind", "", "kind of the task")
-		key = fs.String("key", "", "de-duplication key")
-		input = fs.String("input", "", "JSON file with the task input; - for standard input")
-		force = fs.Bool("force", false, "add the task even when its key is taken")
+		kind = fs.String("kind", "", p.T("flag.task_kind"))
+		key = fs.String("key", "", p.T("flag.task_key"))
+		input = fs.String("input", "", p.T("flag.task_input"))
+		force = fs.Bool("force", false, p.T("flag.task_force"))
 	case "list":
-		state = fs.String("state", "", "list only tasks in this state")
+		state = fs.String("state", "", p.T("flag.task_state"))
 	case "show", "cancel", "check":
 	case "help", "-h", "--help":
-		fmt.Fprint(stdout, taskUsage)
+		fmt.Fprint(stdout, p.T("cli.task.usage"))
 		return exitDone
 	default:
-		fmt.Fprintf(stderr, "hetman task: unknown command %q\n\n%s", sub, taskUsage)
+		fmt.Fprintf(stderr, "%s\n\n%s", p.T("cli.task.unknown_command", "command", strconv.Quote(sub)), p.T("cli.task.usage"))
 		return exitUsage
 	}
 	pos, ok := parseMixed(fs, args)
@@ -81,28 +66,28 @@ func taskCmd(args []string, stdout, stderr io.Writer) int {
 	switch {
 	case sub == "show" || sub == "cancel":
 		if len(pos) != 1 {
-			fmt.Fprintf(stderr, "hetman task %s: give one task id, as in hetman task %s 3\n", sub, sub)
+			fmt.Fprintln(stderr, p.T("cli.task.need_id", "command", sub))
 			return exitUsage
 		}
 		n, err := strconv.ParseInt(pos[0], 10, 64)
 		if err != nil || n <= 0 {
-			fmt.Fprintf(stderr, "hetman task %s: %q is not a task id\n", sub, pos[0])
+			fmt.Fprintln(stderr, p.T("cli.task.bad_id", "command", sub, "arg", strconv.Quote(pos[0])))
 			return exitUsage
 		}
 		id = n
 	case len(pos) > 0:
-		fmt.Fprintf(stderr, "hetman task %s: unexpected argument %q\n", sub, pos[0])
+		fmt.Fprintln(stderr, p.T("cli.task.unexpected_argument", "command", sub, "arg", strconv.Quote(pos[0])))
 		return exitUsage
 	}
-	routes, code := loadRoutes(*file, stderr)
+	routes, code := loadRoutes(p, *file, stderr)
 	if routes == nil {
 		return code
 	}
 	if sub == "check" {
-		fmt.Fprintf(stdout, "%s: ok (%d route(s), up to %d campaign(s) at once)\n", routes.Path, len(routes.Kinds), routes.Limit)
+		fmt.Fprintln(stdout, p.T("cli.task.check_ok", "path", routes.Path, "n", len(routes.Kinds), "limit", routes.Limit))
 		for _, k := range routes.Kinds {
 			r := routes.Routes[k]
-			fmt.Fprintf(stdout, "  %s -> %s%s\n", k, filepath.Base(r.Orders), routeNote(r))
+			fmt.Fprintln(stdout, p.T("cli.task.route", "kind", k, "file", filepath.Base(r.Orders), "note", routeNote(p, r)))
 		}
 		return exitDone
 	}
@@ -112,7 +97,7 @@ func taskCmd(args []string, stdout, stderr io.Writer) int {
 		return exitFailed
 	}
 	defer t.close()
-	t.stdout, t.stderr = stdout, stderr
+	t.stdout, t.stderr, t.p = stdout, stderr, p
 	switch sub {
 	case "add":
 		return t.add(*kind, *key, *input, *force)
@@ -141,22 +126,23 @@ func parseMixed(fs *flag.FlagSet, args []string) ([]string, bool) {
 	}
 }
 
-func routeNote(r *dispatch.Route) string {
-	s := ""
+func routeNote(p *i18n.Printer, r *dispatch.Route) string {
+	var parts []string
 	if r.Priority != 0 {
-		s += fmt.Sprintf(", priority %d", r.Priority)
+		parts = append(parts, p.T("cli.task.route_priority", "priority", r.Priority))
 	}
 	if r.Limit > 0 {
-		s += fmt.Sprintf(", at most %d at once", r.Limit)
+		parts = append(parts, p.T("cli.task.route_limit", "limit", r.Limit))
 	}
-	if s != "" {
-		s = " (" + s[2:] + ")"
+	if len(parts) == 0 {
+		return ""
 	}
-	return s
+	return " (" + strings.Join(parts, ", ") + ")"
 }
 
-// loadRoutes loads and checks a routing file, printing its problems.
-func loadRoutes(path string, stderr io.Writer) (*dispatch.Routes, int) {
+// loadRoutes loads and checks a routing file, printing its problems. The
+// problems themselves stay English, as those of the orders check do.
+func loadRoutes(p *i18n.Printer, path string, stderr io.Writer) (*dispatch.Routes, int) {
 	routes, warnings, err := dispatch.LoadRoutes(path)
 	if len(warnings) > 0 {
 		fmt.Fprintln(stderr, warnings.Error())
@@ -165,7 +151,7 @@ func loadRoutes(path string, stderr io.Writer) (*dispatch.Routes, int) {
 		var ps orders.Problems
 		if errors.As(err, &ps) {
 			fmt.Fprintln(stderr, ps.Error())
-			fmt.Fprintf(stderr, "routing file rejected: %d problem(s)\n", len(ps))
+			fmt.Fprintln(stderr, p.T("cli.task.routes_rejected", "n", len(ps)))
 		} else {
 			fmt.Fprintln(stderr, "hetman:", err)
 		}
@@ -180,6 +166,7 @@ type tasks struct {
 	chron  *chronicle.Chronicle
 	stdout io.Writer
 	stderr io.Writer
+	p      *i18n.Printer
 }
 
 func openTasks(routes *dispatch.Routes) (*tasks, error) {
@@ -204,18 +191,21 @@ func (t *tasks) close() {
 }
 
 func (t *tasks) fail(err error) int {
-	fmt.Fprintln(t.stderr, "hetman:", err)
+	fmt.Fprintln(t.stderr, "hetman:", t.p.Error(err))
 	return exitFailed
 }
 
+// state is the shown name of a task state.
+func (t *tasks) state(s string) string { return t.p.T("cli.task.state." + s) }
+
 func (t *tasks) add(kind, key, inputFile string, force bool) int {
 	if kind == "" {
-		fmt.Fprintln(t.stderr, "hetman task add: -kind is required")
+		fmt.Fprintln(t.stderr, t.p.T("cli.task.kind_required"))
 		return exitUsage
 	}
 	if err := t.routes.Known(kind); err != nil {
-		fmt.Fprintln(t.stderr, "hetman task add:", err)
-		fmt.Fprintln(t.stderr, "nothing was added")
+		fmt.Fprintln(t.stderr, "hetman task add:", t.p.Error(err))
+		fmt.Fprintln(t.stderr, t.p.T("cli.task.nothing_added"))
 		return exitUsage
 	}
 	data := []byte("{}")
@@ -228,12 +218,12 @@ func (t *tasks) add(kind, key, inputFile string, force bool) int {
 		data, err = os.ReadFile(inputFile)
 	}
 	if err != nil {
-		fmt.Fprintf(t.stderr, "hetman task add: -input %s: %v\n", inputFile, err)
+		fmt.Fprintln(t.stderr, t.p.T("cli.task.bad_input", "file", inputFile, "error", err))
 		return exitUsage
 	}
 	input, err := dispatch.CheckInput(data)
 	if err != nil {
-		fmt.Fprintln(t.stderr, "hetman task add:", err)
+		fmt.Fprintln(t.stderr, "hetman task add:", t.p.Error(err))
 		return exitUsage
 	}
 	task, added, err := t.queue.Add(kind, input, key, force)
@@ -241,31 +231,34 @@ func (t *tasks) add(kind, key, inputFile string, force bool) int {
 		return t.fail(err)
 	}
 	if !added {
-		v, err := dispatch.Views([]dispatch.Task{task}, t.chron, t.routes.Dir)
+		v, err := dispatch.Views([]dispatch.Task{task}, t.chron, t.routes.Dir, t.p)
 		if err != nil {
 			return t.fail(err)
 		}
-		fmt.Fprintf(t.stdout, "task %d already has the key %q and is %s; nothing added (-force adds it again)\n", task.ID, key, v[0].State)
+		fmt.Fprintln(t.stdout, t.p.T("cli.task.duplicate", "id", task.ID, "key", strconv.Quote(key), "state", t.state(v[0].State)))
 		return exitDone
 	}
-	fmt.Fprintf(t.stdout, "task %d queued (kind %s)\n", task.ID, kind)
+	fmt.Fprintln(t.stdout, t.p.T("cli.task.queued", "id", task.ID, "kind", kind))
 	return exitDone
 }
 
 // taskListLimit is how many tasks list shows, newest first.
 const taskListLimit = 1000
 
+// list prints the tasks. The -state filter takes the English state
+// identifiers in every language; the STATE column shows them in the
+// person's language, as status shows the state of its nodes.
 func (t *tasks) list(state string) int {
 	list, err := t.queue.List(taskListLimit)
 	if err != nil {
 		return t.fail(err)
 	}
-	views, err := dispatch.Views(list, t.chron, t.routes.Dir)
+	views, err := dispatch.Views(list, t.chron, t.routes.Dir, t.p)
 	if err != nil {
 		return t.fail(err)
 	}
 	tw := tabwriter.NewWriter(t.stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "TASK\tKIND\tSTATE\tCAMPAIGN\tAGE\tKEY\tWAITS FOR")
+	fmt.Fprintln(tw, t.p.T("cli.task.list_header"))
 	shown := 0
 	for _, v := range views {
 		if state != "" && v.State != state {
@@ -276,27 +269,28 @@ func (t *tasks) list(state string) int {
 		if v.Campaign != 0 {
 			campaign = strconv.FormatInt(v.Campaign, 10)
 		}
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n", v.ID, v.Kind, v.State, campaign, age(v.Added), v.Key, v.Waits)
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n", v.ID, v.Kind, t.state(v.State), campaign, age(v.Added), v.Key, v.Waits)
 	}
 	tw.Flush()
 	if shown == 0 {
-		fmt.Fprintln(t.stdout, "no tasks")
+		fmt.Fprintln(t.stdout, t.p.T("cli.task.no_tasks"))
 	}
 	return exitDone
 }
 
-// age is how long ago a task was added, roughly.
+// age is how long ago a task was added, roughly, in the units of a Go
+// duration.
 func age(at time.Time) string {
 	d := time.Since(at)
 	switch {
 	case d < time.Minute:
-		return fmt.Sprintf("%ds", int(d.Seconds()))
+		return strconv.Itoa(int(d.Seconds())) + "s"
 	case d < time.Hour:
-		return fmt.Sprintf("%dm", int(d.Minutes()))
+		return strconv.Itoa(int(d.Minutes())) + "m"
 	case d < 48*time.Hour:
-		return fmt.Sprintf("%dh", int(d.Hours()))
+		return strconv.Itoa(int(d.Hours())) + "h"
 	}
-	return fmt.Sprintf("%dd", int(d.Hours()/24))
+	return strconv.Itoa(int(d.Hours()/24)) + "d"
 }
 
 func (t *tasks) show(id int64) int {
@@ -304,32 +298,33 @@ func (t *tasks) show(id int64) int {
 	if err != nil {
 		return t.fail(err)
 	}
-	views, err := dispatch.Views([]dispatch.Task{task}, t.chron, t.routes.Dir)
+	views, err := dispatch.Views([]dispatch.Task{task}, t.chron, t.routes.Dir, t.p)
 	if err != nil {
 		return t.fail(err)
 	}
 	v := views[0]
-	w := t.stdout
-	fmt.Fprintf(w, "task %d  kind %s", v.ID, v.Kind)
+	w, p := t.stdout, t.p
+	head := p.T("cli.task.show.head", "id", v.ID, "kind", v.Kind)
 	if v.Key != "" {
-		fmt.Fprintf(w, "  key %s", v.Key)
+		head += p.T("cli.task.show.key", "key", v.Key)
 	}
-	fmt.Fprintf(w, "\nstate: %s\n", v.State)
+	fmt.Fprintln(w, head)
+	fmt.Fprintln(w, p.T("cli.task.show.state", "state", t.state(v.State)))
 	if v.Waits != "" {
-		fmt.Fprintf(w, "waits for %s\n", v.Waits)
+		fmt.Fprintln(w, p.T("cli.task.show.waits", "waits", v.Waits))
 	}
-	fmt.Fprintf(w, "added %s\n", v.Added.Local().Format(time.DateTime))
+	fmt.Fprintln(w, p.T("cli.task.show.added", "at", v.Added.Local().Format(time.DateTime)))
 	if v.Started != nil {
-		fmt.Fprintf(w, "started %s\n", v.Started.Local().Format(time.DateTime))
+		fmt.Fprintln(w, p.T("cli.task.show.started", "at", v.Started.Local().Format(time.DateTime)))
 	}
 	if v.Ended != nil {
-		fmt.Fprintf(w, "ended %s\n", v.Ended.Local().Format(time.DateTime))
+		fmt.Fprintln(w, p.T("cli.task.show.ended", "at", v.Ended.Local().Format(time.DateTime)))
 	}
 	if v.Campaign != 0 {
-		fmt.Fprintf(w, "campaign %d (flow %s, %s)\n", v.Campaign, v.Flow, v.Orders)
-		fmt.Fprintf(w, "  status: hetman status -f %s -c %d\n", v.Orders, v.Campaign)
+		fmt.Fprintln(w, p.T("cli.task.show.campaign", "id", v.Campaign, "flow", v.Flow, "orders", v.Orders))
+		fmt.Fprintln(w, p.T("cli.task.show.status", "command", "hetman status -f "+v.Orders+" -c "+strconv.FormatInt(v.Campaign, 10)))
 		if v.Command != "" {
-			fmt.Fprintf(w, "  next: %s\n", v.Command)
+			fmt.Fprintln(w, p.T("cli.task.show.next", "command", v.Command))
 		}
 	}
 	input, err := task.RunInput()
@@ -338,7 +333,8 @@ func (t *tasks) show(id int64) int {
 	}
 	var b bytes.Buffer
 	if json.Indent(&b, input, "", "  ") == nil {
-		fmt.Fprintf(w, "input:\n%s\n", b.String())
+		fmt.Fprintln(w, p.T("cli.task.show.input"))
+		fmt.Fprintln(w, b.String())
 	}
 	return exitDone
 }
@@ -348,45 +344,32 @@ func (t *tasks) cancel(id int64) int {
 	if err != nil {
 		return t.fail(err)
 	}
-	fmt.Fprintf(t.stdout, "task %d cancelled (kind %s)\n", task.ID, task.Kind)
+	fmt.Fprintln(t.stdout, t.p.T("cli.task.cancelled", "id", task.ID, "kind", task.Kind))
 	return exitDone
 }
 
-const dispatchUsage = `usage: hetman dispatch [-r FILE] [-once] [-limit N]
-
-Starts a campaign of the routed flow for each queued task, by priority and
-then age, and keeps going. Campaigns that nobody drives and that can go on
-without a person, such as those cut off when a dispatcher stopped, are
-continued first.
-
-flags:
-  -r FILE   routing file (default routes.yaml)
-  -once     stop once nothing is queued or running, instead of waiting for new tasks
-  -limit N  campaigns running at once (default: the limit of the routing file, else 1)
-  -poll D   how often the queue is looked at for new tasks (default 1s)
-`
-
 // dispatchCmd runs hetman dispatch.
 func dispatchCmd(args []string, stdout, stderr io.Writer) int {
+	p := personPrinter(nil)
 	fs := flag.NewFlagSet("hetman dispatch", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() { fmt.Fprint(stderr, dispatchUsage) }
-	file := fs.String("r", dispatch.DefaultRoutesFile, "routing file")
-	once := fs.Bool("once", false, "stop once nothing is queued or running")
-	limit := fs.Int("limit", 0, "campaigns running at once")
-	poll := fs.Duration("poll", 0, "how often the queue is looked at")
+	fs.Usage = func() { fmt.Fprint(stderr, p.T("cli.dispatch.usage")) }
+	file := fs.String("r", dispatch.DefaultRoutesFile, p.T("flag.task_r"))
+	once := fs.Bool("once", false, p.T("flag.task_once"))
+	limit := fs.Int("limit", 0, p.T("flag.task_limit"))
+	poll := fs.Duration("poll", 0, p.T("flag.task_poll"))
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
 	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "hetman dispatch: unexpected argument %q\n", fs.Arg(0))
+		fmt.Fprintln(stderr, p.T("cli.dispatch.unexpected_argument", "arg", strconv.Quote(fs.Arg(0))))
 		return exitUsage
 	}
 	if *limit < 0 {
-		fmt.Fprintln(stderr, "hetman dispatch: -limit must be at least 1")
+		fmt.Fprintln(stderr, p.T("cli.dispatch.bad_limit"))
 		return exitUsage
 	}
-	routes, code := loadRoutes(*file, stderr)
+	routes, code := loadRoutes(p, *file, stderr)
 	if routes == nil {
 		return code
 	}
@@ -396,34 +379,35 @@ func dispatchCmd(args []string, stdout, stderr io.Writer) int {
 		return exitFailed
 	}
 	defer t.close()
+	t.p = p
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := engine.ContainChildren(); err != nil {
-		fmt.Fprintf(stderr, "hetman: step processes are not tied to this process (%v); they are cleaned up when a campaign continues instead\n", err)
+		fmt.Fprintln(stderr, p.T("cli.dispatch.not_contained", "error", err))
 	}
 	d := &dispatch.Dispatcher{Routes: routes, Queue: t.queue, Chron: t.chron, Limit: *limit, Once: *once, Poll: *poll,
-		Out: stdout, Language: languageFor}
+		Out: stdout, Text: p, Language: languageFor}
 	n := *limit
 	if n == 0 {
 		n = routes.Limit
 	}
-	mode := "Ctrl+C to stop"
+	mode := p.T("cli.dispatch.mode_stay")
 	if *once {
-		mode = "until nothing is queued or running"
+		mode = p.T("cli.dispatch.mode_once")
 	}
-	fmt.Fprintf(stdout, "dispatching tasks of %s: %d route(s), up to %d campaign(s) at once (%s)\n", routes.Path, len(routes.Kinds), n, mode)
+	fmt.Fprintln(stdout, p.T("cli.dispatch.start", "path", routes.Path, "n", len(routes.Kinds), "limit", n, "mode", mode))
 	if err := d.Run(ctx); err != nil {
-		fmt.Fprintln(stderr, "hetman dispatch:", err)
+		fmt.Fprintln(stderr, "hetman dispatch:", p.Error(err))
 		return exitFailed
 	}
 	if ctx.Err() != nil {
-		fmt.Fprintln(stdout, "dispatcher stopped")
+		fmt.Fprintln(stdout, p.T("cli.dispatch.stopped"))
 		return exitInterrupted
 	}
 	if waiting := t.waiting(); waiting > 0 {
-		fmt.Fprintf(stdout, "nothing left to start; %d task(s) wait for a person (hetman task list)\n", waiting)
+		fmt.Fprintln(stdout, p.T("cli.dispatch.left_waiting", "n", waiting))
 	} else {
-		fmt.Fprintln(stdout, "nothing left to start")
+		fmt.Fprintln(stdout, p.T("cli.dispatch.left"))
 	}
 	return exitDone
 }
@@ -434,7 +418,7 @@ func (t *tasks) waiting() int {
 	if err != nil {
 		return 0
 	}
-	views, err := dispatch.Views(list, t.chron, t.routes.Dir)
+	views, err := dispatch.Views(list, t.chron, t.routes.Dir, t.p)
 	if err != nil {
 		return 0
 	}

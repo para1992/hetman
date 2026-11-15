@@ -1,0 +1,954 @@
+# Українські повідомлення інтерфейсу Hetman.
+#
+# Ключі ті самі, що в en.yaml; параметри у фігурних дужках не
+# перекладаються. Множинні форми: one (1, 21, 31…), few (2–4, 22–24…),
+# many (0, 5–20, 25–30…). Назви кроків, перевірок і підсумків, команди та
+# імена файлів лишаються латиницею, як їх пише людина.
+
+# ---- похід простими словами (hetman scribe explain, вкладка «Словами»)
+
+explain.title.where: "Де похід зараз"
+explain.title.history: "Що виконано"
+explain.title.rework: "Повернення на доопрацювання"
+explain.title.failures: "Що не вдалося"
+explain.title.warnings: "Попередження"
+explain.who: "людина"
+explain.via.page: " на сторінці"
+explain.via.command: " з командного рядка"
+explain.either: "{list} або {last}"
+explain.where.no_events: "У поході {id} немає жодної події."
+explain.where.started: "Похід {id} потоку {flow} розпочато {at} з кроку {node}."
+explain.where.done: "Похід завершено: {at} крок {node} дав підсумок {outcome}, а він веде до done."
+explain.where.failed: "Похід провалено: {at} крок {node} дав підсумок {outcome}, а він веде до failed."
+explain.where.error: "Похід зупинився з помилкою на кроці {node} ({at}): {error}."
+explain.where.halted: "Похід на привалі перед кроком {node} з {at}."
+explain.where.human: "З {at} похід чекає на людину: крок {node} просить вибрати {outcomes}."
+explain.where.human_questions:
+  one: "З {at} похід чекає на людину: крок {node} просить вибрати {outcomes} і відповісти на {n} запитання: {questions}."
+  few: "З {at} похід чекає на людину: крок {node} просить вибрати {outcomes} і відповісти на {n} запитання: {questions}."
+  many: "З {at} похід чекає на людину: крок {node} просить вибрати {outcomes} і відповісти на {n} запитань: {questions}."
+explain.where.dialogue:
+  one: "З {at} похід чекає на людину: агентський крок {node} у раунді {round} ставить {n} запитання: {questions}."
+  few: "З {at} похід чекає на людину: агентський крок {node} у раунді {round} ставить {n} запитання: {questions}."
+  many: "З {at} похід чекає на людину: агентський крок {node} у раунді {round} ставить {n} запитань: {questions}."
+explain.where.gate:
+  one: "З {at} похід чекає на людину: застава {node} ставить {n} запитання: {questions}."
+  few: "З {at} похід чекає на людину: застава {node} ставить {n} запитання: {questions}."
+  many: "З {at} похід чекає на людину: застава {node} ставить {n} запитань: {questions}."
+explain.where.answered: "Відповіді на запитання кроку {node} отримано {at} ({who}); відтоді крок {node} ще не завершився."
+explain.where.limit_until: "Похід чекає на кроці {node}: спроба {attempt} вперлася в ліміт підписки ({at}; {error}); крок запуститься знову {until}. Ця спроба не зараховується."
+explain.where.limit: "Похід стоїть на кроці {node} з {at}: спроба {attempt} вперлася в ліміт підписки ({error}), а часу для повтору не вказано. Спроба не зараховується; крок запуститься знову, коли похід продовжать."
+explain.where.offline: "Похід стоїть на кроці {node} з {at}: спроба {attempt} втратила зв'язок ({error}). Спроба не зараховується; крок запуститься знову, коли похід продовжать."
+explain.where.running: "Крок {node}, спроба {attempt}, почався {at} і ще триває."
+explain.where.interrupted: "Крок {node}, спроба {attempt}, перервано {at}; крок запуститься знову, коли похід продовжать."
+explain.where.moved: "{at} похід перейшов до кроку {node}; відтоді крок {node} ще не починався."
+explain.where.not_started: "Крок {node} ще не починався."
+explain.where.halt_requested: "{at} попросили стати на привал; він почнеться після поточного кроку."
+explain.check.error: "{check} не вдалося запустити: {error}"
+explain.check.soft: "{check} {outcome} (м'яка, лише попередження)"
+explain.check.ok: "{check} {outcome}"
+explain.answer_comment: " (коментар {comment})"
+explain.cut_off: "Крок {node}, спробу {attempt}, обірвано ({failure}): {error}; вона не зараховується."
+explain.attempt_failed: "Крок {node}, спроба {attempt}, не вдалася ({failure}): {error}."
+explain.its_outcome: " Її підсумок — {outcome}."
+explain.could_not_finish: "Крок {node}, спроба {attempt}, не змогла завершитися: {error}."
+explain.finished: "Крок {node}, спроба {attempt}, завершився з підсумком {outcome} за {took}."
+explain.finished_checks: "Крок {node}, спроба {attempt}, завершився з підсумком {outcome} за {took}; перевірки: {checks}."
+explain.went_to: " Потік перейшов до {to}."
+explain.asked_choose: "Крок {node} попросив людину вибрати {outcomes}."
+explain.asked_choose_answer: "Крок {node} попросив людину вибрати {outcomes} і відповісти: {questions}."
+explain.asked: "Крок {node} запитав людину: {questions}."
+explain.answered: "Кроку {node} відповіли{via} ({who})."
+explain.answered_answers: "Кроку {node} відповіли{via} ({who}): {answers}."
+explain.answered_chose: "Кроку {node} відповіли{via} ({who}) і вибрали {outcome}."
+explain.answered_answers_chose: "Кроку {node} відповіли{via} ({who}): {answers}; вибрано {outcome}."
+explain.interrupted: "Крок {node}, спробу {attempt}, перервано."
+explain.stopped: "Похід зупинився з помилкою на кроці {node}: {error}."
+explain.halt_requested: "Попросили стати на привал."
+explain.halted: "Похід став на привал перед кроком {node}."
+explain.resumed: "Похід продовжили."
+explain.nothing_ran_at: "На кроці {node} нічого не виконувалося."
+explain.nothing_ran: "Поки що нічого не виконувалося."
+explain.never_back_to: "Потік жодного разу не повертався до {node}."
+explain.never_back: "Потік жодного разу не повертався до попередніх кроків."
+explain.back_count: "Потік повертався до {node} {times}."
+explain.back: "Крок {node} дав підсумок {outcome} і повернув потік до {to}."
+explain.back_why: "Крок {node} дав підсумок {outcome} і повернув потік до {to} ({why})."
+explain.once: "один раз"
+explain.twice: "двічі"
+explain.times:
+  one: "{n} раз"
+  few: "{n} рази"
+  many: "{n} разів"
+explain.required_check: "обов'язкова перевірка {check} повідомила {outcome}"
+explain.why.no: "{who}: «ні» на {ids}"
+explain.why.chose: "{who}: вибрано {outcome}"
+explain.why.output: "його вихід: {output}"
+explain.exit_code: " (код виходу {code})"
+explain.finished_failing: "Крок {node}, спроба {attempt}, завершився з підсумком {outcome}{exit}{checks}."
+explain.check_error: "Перевірку {check} кроку {node}, спроба {attempt}, не вдалося запустити: {error}."
+explain.nothing_failed_at: "На кроці {node} нічого не провалилося."
+explain.nothing_failed: "Нічого не провалилося."
+explain.soft_warned: "М'яка перевірка {check} кроку {node} повідомила {outcome} у спробі {attempt}; це лише попередження."
+explain.no_warnings: "Жодна м'яка перевірка не попередила."
+
+# ---- операція над файлом наказу простими словами (майстер, Писар)
+
+op.words.new: "створити новий потік, перший крок якого — вузол {type} {node}{more}"
+op.words.new_named: "створити новий потік {flow}, перший крок якого — вузол {type} {node}{more}"
+op.words.add_before: "додати вузол {type} {node} перед {before}{more}"
+op.words.add_after: "додати вузол {type} {node} після {after}{more}"
+op.words.add_after_via: "додати вузол {type} {node} після {after} (на його підсумку {via}){more}"
+op.words.remove: "вилучити крок {node} і спрямувати все, що вело до нього, туди, куди вів його основний підсумок"
+op.words.rename: "перейменувати крок {node} на {name} скрізь, де на нього посилаються"
+op.words.link: "спрямувати підсумок {outcome} кроку {node} до {target}"
+op.words.unlink: "вилучити перехід кроку {node} за підсумком {outcome}"
+op.words.set: "встановити {field} кроку {node}: {value}"
+op.words.unset: "вилучити {field} з кроку {node}"
+op.words.running: "запускає {run}"
+op.words.with_timeout: "з обмеженням часу {timeout}"
+op.words.soft: "м'яка (лише попереджає)"
+op.words.required: "обов'язкова (блокує заставу)"
+op.words.check: "оголосити або змінити перевірку {name}{more}"
+op.words.executor: "оголосити або змінити виконавця {name}, що запускає {run}"
+op.words.gate_add: "додати перевірку {check} в кінець застави {node}"
+op.words.gate_add_at: "додати перевірку {check} до застави {node} на позицію {at}"
+op.words.gate_remove: "вилучити перевірку {check} із застави {node}"
+op.words.ask: "додати запитання {id} типу {kind} до кроку {node}: {question}"
+op.words.ask_options: "додати запитання {id} типу {kind} до кроку {node}: {question} (варіанти {options})"
+op.words.language: "писати людині мовою {language}, код {code}"
+op.words.language_code: "писати людині мовою з кодом {code}"
+op.words.unlanguage: "вилучити мову для людини: потік писатиме англійською і не додаватиме вказівки щодо мови"
+op.words.assistant: "дозволити Писарю звертатися до моделі {model} через виконавця {executor}"
+op.words.assistant_effort: "дозволити Писарю звертатися до моделі {model} через виконавця {executor} із зусиллям {effort}"
+op.words.with_checks: "з перевірками {checks}"
+op.words.through_executor: "через виконавця {executor}"
+op.words.model: "модель {model}"
+op.words.effort: "зусилля {effort}"
+op.words.outcomes: "підсумки {outcomes}"
+op.words.timeout: "обмеження часу {timeout}"
+op.words.on: "переходи {on}"
+op.note.rewritten: "{op} не вдалося змінити на місці, тож файл переписано повністю: коментарі й порядок ключів збережено, порожні рядки, вирівнювання й лапки — ні"
+op.summary.new: "створити файл наказу з першим вузлом, основний підсумок якого веде до done"
+op.summary.add: "додати вузол після вузла (на його основному підсумку або на підсумку via) чи перед вузлом; потік перебудовується через новий вузол"
+op.summary.remove: "вилучити вузол; усе, що вело до нього, веде туди, куди вів його основний підсумок"
+op.summary.rename: "перейменувати вузол у start, у кожному переході й у кожному заповнювачі шаблонів промптів"
+op.summary.link: "спрямувати підсумок вузла до вузла, done або failed"
+op.summary.unlink: "вилучити перехід за підсумком вузла"
+op.summary.set: "встановити поле вузла: {fields}"
+op.summary.unset: "вилучити поле вузла: {fields}"
+op.summary.check: "оголосити перевірку або змінити команду, обмеження часу чи м'якість оголошеної (м'яка лише попереджає, обов'язкова блокує заставу)"
+op.summary.executor: "оголосити виконавця (програму адаптера з аргументами) або змінити його команду"
+op.summary.gate-add: "додати оголошену перевірку до застави на позицію, рахуючи з 1 (без позиції — в кінець)"
+op.summary.gate-remove: "вилучити перевірку із застави"
+op.summary.ask: "додати запитання до застави (так чи ні) або до вузла human (yesno, choice з варіантами чи text)"
+op.summary.assistant: "назвати виконавця й модель, до яких Писар може звертатися, щоб перетворити речення на одну операцію"
+op.summary.language: "писати людині (запитання, підсумки, плани) мовою з цим кодом; код і репозиторій лишаються англійською"
+op.summary.unlanguage: "вилучити мову для людини: потік пише англійською і не додає вказівки щодо мови"
+
+# ---- що не так із відповідями (hetman answer, форма на сторінці)
+
+ask.invalid: "неприйнятні відповіді: {problems}"
+ask.no_answer: "на запитання {id} немає відповіді"
+ask.yes_or_no: "запитання {id}: відповідайте yes або no, а не {value}"
+ask.choose_option: "запитання {id}: виберіть один із варіантів {options}, а не {value}"
+ask.no_question: "запитання {id} немає"
+ask.no_question_comment: "коментар до {id}: запитання {id} немає"
+ask.no_outcome_taken: "цей крок не приймає підсумку: він випливає з відповідей"
+ask.choose_outcome: "виберіть підсумок: {outcomes}"
+ask.unknown_outcome: "підсумку {outcome} немає серед {outcomes}"
+
+# ---- рядки поступу run, resume і ведення походу зі сторінки
+
+engine.error: "помилка: {error}"
+engine.done: "похід завершено"
+engine.failed: "похід провалено"
+engine.halted: "привал перед кроком {node}"
+engine.wait_limit: "{node} чекає на людину: вичерпано ліміт підписки; hetman resume запустить крок знову"
+engine.wait_offline: "{node} чекає на людину: зник зв'язок; hetman resume запустить крок знову"
+engine.interrupted: "{node}, спробу {attempt} перервано; запускаю знову"
+engine.no_process: "процес {node}, спроба {attempt}, не записано; перевіряти нічого"
+engine.cleanup: "процес {pid} кроку {node}, спроба {attempt}: {result}"
+engine.transition: "{node} -> {target}"
+engine.started: "{node}: спроба {attempt} почалася"
+engine.finished: "{node} завершено: {outcome} ({took})"
+engine.check_ok: "  перевірка {check}: ok"
+engine.check_soft: "  перевірка {check}: {outcome} (м'яка, попередження)"
+engine.check_required: "  перевірка {check}: {outcome} (обов'язкова, застава заблокована)"
+engine.cannot_record_process: "не вдалося записати процес {pid} кроку {node}: {error}"
+engine.limit_wait: "{node} чекає, доки скинеться ліміт підписки; знову запуститься {until}"
+engine.agent_started: "{node}: спроба {attempt} почалася (виконавець {executor})"
+engine.agent_started_session: "{node}: спроба {attempt} почалася (виконавець {executor}, продовжує сесію {session})"
+engine.session: "  {node}: сесія {session}"
+engine.dialogue:
+  one: "{node} ставить людині {n} запитання, раунд {round} із щонайбільше {rounds} ({took})"
+  few: "{node} ставить людині {n} запитання, раунд {round} із щонайбільше {rounds} ({took})"
+  many: "{node} ставить людині {n} запитань, раунд {round} із щонайбільше {rounds} ({took})"
+engine.failed_permanent: "{node}, спроба {attempt} не вдалася (остаточно): {error}; без повтору"
+engine.limit_hit: "{node}, спроба {attempt} вперлася в ліміт підписки ({error}); не зараховується"
+engine.limit_hit_no_retry: "{node}, спроба {attempt} вперлася в ліміт підписки ({error}), часу для повтору немає; чекає на людину"
+engine.offline: "{node}, спробу {attempt} втрачено: немає зв'язку ({error}); чекає на людину"
+engine.failed_all: "{node}, спроба {attempt} не вдалася ({failure}): {error}; усі спроби ({n}) використано"
+engine.failed_left:
+  one: "{node}, спроба {attempt} не вдалася ({failure}): {error}; лишилася {n} спроба з {max}"
+  few: "{node}, спроба {attempt} не вдалася ({failure}): {error}; лишилося {n} спроби з {max}"
+  many: "{node}, спроба {attempt} не вдалася ({failure}): {error}; лишилося {n} спроб з {max}"
+engine.asks:
+  one: "{node} чекає на людину ({n} запитання); відповісти: {command}"
+  few: "{node} чекає на людину ({n} запитання); відповісти: {command}"
+  many: "{node} чекає на людину ({n} запитань); відповісти: {command}"
+engine.asks_decision: "{node} чекає на людину (потрібне рішення); відповісти: {command}"
+engine.asks_decision_questions:
+  one: "{node} чекає на людину (рішення і {n} запитання); відповісти: {command}"
+  few: "{node} чекає на людину (рішення і {n} запитання); відповісти: {command}"
+  many: "{node} чекає на людину (рішення і {n} запитань); відповісти: {command}"
+engine.cannot_write_answers: "не вдалося записати відповіді кроку {node} у робочу теку: {error}"
+engine.answered: "{node}: відповідь отримано, {outcome}"
+engine.answered_by: "{node}: відповідь від {by}, {outcome}"
+engine.hook: "хук сповіщення для {node}: {outcome} {error} (журнал {log})"
+engine.cannot_record_hook: "не вдалося записати хук сповіщення: {error}"
+
+# ---- командний рядок
+
+cli.usage: |
+  використання: hetman <команда> [прапорці]
+
+  команди:
+    check    перевірити наказ, нічого не запускаючи
+    run      почати новий похід і вести його
+    status   показати, де зараз похід
+    halt     стати на привал після поточного кроку походу
+    resume   продовжити похід, що стоїть на привалі, зупинився чи був перерваний
+    answer   відповісти на запитання, які похід ставить людині
+    serve    показувати всі походи наживо на вебсторінці (Вежа)
+    task     ставити внутрішні завдання в чергу, перелічувати, показувати й
+             скасовувати їх, перевіряти файл маршрутів (усе перелічує hetman task help)
+    dispatch починати похід потоку з маршруту для кожного завдання в черзі
+             (прапорці перелічує hetman dispatch -h)
+    scribe   налаштувати потік: майстер, операції над файлом наказу,
+             речення через модель, походи простими словами
+             (усе перелічує hetman scribe help)
+    version  показати версію hetman
+
+  прапорці (check, run, status, halt, resume, serve):
+    -f FILE  файл наказу (типово orders.yaml)
+  прапорці (run):
+    -input FILE  JSON-файл із вхідними даними походу: об'єкт, на який можуть посилатися шаблони промптів
+  прапорці (status, halt, resume, answer):
+    -c ID    номер походу (типово останній)
+  прапорці (answer; без -a, -comment і -outcome питає в терміналі):
+    -a ID=ANSWER       відповідь на одне запитання (yes чи no, варіант або текст); повторіть для кожного
+    -comment ID=TEXT   коментар до однієї відповіді; повторюйте за потреби
+    -outcome NAME      підсумок, вибраний на вузлі human
+    -ask N             відповісти, лише якщо запитання #N досі відкрите
+    -by NAME           хто відповідає (типово ім'я користувача цього комп'ютера)
+  прапорці (status):
+    -events  також перелічити всі події літопису
+  прапорці (serve):
+    -addr ADDRESS  де слухати (типово 127.0.0.1:8740, доступно лише з цього комп'ютера)
+  прапорці (scribe skill):
+    -dir DIR  тека для файлу навички (типово .agents/skills/hetman-scribe)
+    -force    замінити наявний файл навички, якщо він інший
+
+  середовище:
+    HETMAN_LANGUAGE=CODE  ваша мова: нею говорить інтерфейс; для походів, які починаються зараз
+                          (check, run), вона також замінює ключ language наказу; похід зберігає
+                          мову, з якою почався
+
+  коди виходу run і resume: 0 done, 1 failed, 3 привал, 4 помилка, 5 чекає на людину, 130 перервано
+cli.unknown_command: "hetman: невідома команда {command}"
+cli.unexpected_argument: "hetman {command}: зайвий аргумент {arg}"
+cli.orders_rejected:
+  one: "наказ відхилено: {n} проблема"
+  few: "наказ відхилено: {n} проблеми"
+  many: "наказ відхилено: {n} проблем"
+cli.check_ok: "{path}: ok (потік {flow}, вузлів: {nodes}, перевірок: {checks}{language})"
+cli.language_note: ", мова {code} {label}"
+cli.bad_input: "hetman run: -input {file}: {error}"
+cli.input_not_object: "файл має містити один об'єкт JSON: {error}"
+cli.input_null: "файл має містити один об'єкт JSON, а не null"
+cli.skill_exists: "hetman scribe skill: {path}: тут уже є інший файл; щоб замінити його, додайте -force"
+cli.skill_wrote: "записано {path}"
+cli.skill_up_to_date: "{path} уже актуальний"
+cli.no_campaigns: "походів ще немає; почніть перший командою hetman run"
+cli.started: "похід {id} розпочато (потік {flow}{language})"
+cli.not_contained: "hetman: процеси кроків не прив'язані до цього процесу ({error}); їх приберуть під час продовження"
+cli.interrupted_asking: "похід {id} досі чекає на людину на кроці {node}; відповідайте командою {answer}, потім продовжте командою {resume}"
+cli.interrupted: "похід {id} перервано; поточний крок запуститься знову після hetman resume -c {id}"
+cli.halted: "похід {id} на привалі; продовжити: hetman resume -c {id}"
+cli.waiting: "похід {id} чекає на людину; коли причину усунуто, запустіть hetman resume -c {id}"
+cli.error_state: "похід {id} зупинився з помилкою; усуньте причину й запустіть hetman resume -c {id}"
+cli.halt_already: "похід {id} уже на привалі"
+cli.halt_pending: "похід {id} стане на привал після поточного кроку"
+cli.halt_done: "похід {id} на привалі на кроці {node}"
+cli.resume_elsewhere: "похід {id} веде інший процес; він і продовжить"
+cli.resumed: "похід {id} продовжено з кроку {node}"
+cli.serving: "Вежа для {path} на {url} (Ctrl+C, щоб зупинити)"
+cli.serve_stopped: "Вежу зупинено"
+serve.shutdown: "перервано зупинкою сервера; поточний крок запуститься знову під час продовження"
+serve.stopped: "зупинено: {result}"
+flag.f: "файл наказу"
+flag.input: "JSON-файл із вхідними даними походу"
+flag.addr: "адреса, на якій слухати"
+flag.c: "номер походу (типово останній)"
+flag.events: "перелічити всі події літопису"
+flag.dir: "тека для файлу навички"
+flag.skill_force: "замінити наявний інший файл навички"
+flag.err.pair: "пишіть ID=TEXT"
+flag.err.twice: "{id} задано двічі"
+flag.err.on: "пишіть OUTCOME=TARGET"
+
+# ---- hetman answer
+
+flag.ask: "відповісти, лише якщо це запитання (номер показано поруч із ним) досі відкрите"
+flag.a: "ID=ANSWER для одного запитання; повторіть для кожного"
+flag.comment: "ID=TEXT, коментар до однієї відповіді; повторюйте за потреби"
+flag.outcome: "підсумок, вибраний на вузлі human"
+flag.by: "хто відповідає (типово ім'я користувача цього комп'ютера)"
+answer.ended: "похід {id} завершився ({end}); він нічого не питає"
+answer.already: "похід {id}: на запитання кроку {node} вже відповіли"
+answer.nothing_asked: "похід {id} зараз нічого не питає (він на кроці {node})"
+answer.nothing_recorded: "нічого не записано"
+answer.recorded: "відповіді записано: похід {id}, крок {node}"
+answer.driven: "процес hetman, що веде похід {id}, продовжить його"
+answer.not_driven: "похід {id} не веде жоден процес hetman; продовжте його командою: {command}"
+answer.no_answer: "відповіді немає; нічого не записано"
+answer.comment_prompt: "коментар (Enter — без коментаря)"
+answer.choose_outcome: "Виберіть підсумок: {outcomes}"
+answer.outcome_prompt: "підсумок"
+answer.expect_text: "текст"
+answer.asks.gate: "застава {node} питає (запитання #{seq}, {at}):"
+answer.asks.human: "вузол human {node} питає (запитання #{seq}, {at}):"
+answer.asks.dialogue: "агентський крок {node} питає (раунд {round}, запитання #{seq}, {at}):"
+answer.not_found: "{path} (не знайдено)"
+answer.look_at: "  перегляньте: {path}"
+answer.outcome_one_of: "  підсумок, один із: {outcomes}"
+answer.answer_with: "  відповісти: {command}"
+answer.or: "         або: {command}"
+answer.by: " від {by}"
+answer.via.command: "командний рядок"
+answer.via.page: "сторінка"
+answer.answers_at: "відповіді на кроці {node}{by}{via}, {at}:"
+answer.outcome: "  підсумок: {outcome}"
+
+# ---- hetman status
+
+status.head: "похід {id}  потік {flow}  розпочато {started}"
+status.language: "мова для людини: {language}"
+status.state: "стан: {state}"
+status.header: "  КРОК\tТИП\tСТАН\tПІДСУМОК\tСПРОБИ\tЧАС\t"
+status.st.pending: "очікує"
+status.st.finished: "завершено"
+status.st.asking: "питає"
+status.st.running: "виконується"
+status.st.interrupted: "перервано"
+status.st.error: "помилка"
+status.st.waiting: "чекає"
+status.st.attempt_failed: "спроба не вдалася"
+status.st.not_run: "не запускалася"
+status.waits_for_person: "чекає на людину"
+status.interrupted_count:
+  one: " ({n} перервана)"
+  few: " ({n} перервані)"
+  many: " ({n} перерваних)"
+status.check_row: "    перевірка {check}"
+status.kind.required: "обов'язкова"
+status.kind.soft: "м'яка"
+status.check_warning: "{outcome} (попередження)"
+status.check_blocked: "{outcome} (заблокувала заставу)"
+status.artifacts: "артефакти кроку {node}: {files}"
+status.soft_warning: "м'яка перевірка {check} кроку {node} (спроба {attempt}): {outcome}"
+status.warning: "попередження: {warning}"
+status.agent: "агентський крок {node}:"
+status.fact.executor: "виконавець {executor}"
+status.fact.model: "модель {model}"
+status.fact.effort: "зусилля {effort}"
+status.agent.limit_retry: "ліміт підписки, повтор {at} (не зараховується): {error}"
+status.agent.waits: "{failure}, чекає на людину (не зараховується): {error}"
+status.agent.failed_outcome: "не вдалася ({failure}): {error} -> підсумок {outcome}"
+status.agent.failed: "не вдалася ({failure}): {error}"
+status.agent.asked:
+  one: "поставила людині {n} запитання"
+  few: "поставила людині {n} запитання"
+  many: "поставила людині {n} запитань"
+status.agent.outcome: "підсумок {outcome}"
+status.agent.attempt: "  спроба {n}  {status}  [{facts}]"
+status.agent.prompt: "    промпт   {file}"
+status.agent.continued: "    продовжена сесія {session}"
+status.agent.session: "    сесія    {session}"
+status.agent.output: "    вихід    {output}"
+status.d.error: "помилка: {error} (усуньте причину, потім hetman resume)"
+status.d.asking_driven: "чекає на людину на кроці {node}: hetman answer (запущений процес hetman продовжить, щойно буде відповідь)"
+status.d.asking: "чекає на людину на кроці {node}: hetman answer (жоден процес hetman його не веде: після відповіді продовжить hetman resume)"
+status.d.answered: "відповідь на кроці {node} є, але жоден процес hetman похід не веде (продовжити: hetman resume)"
+status.d.at: "на кроці {node}"
+status.d.running: "виконується {node} (спроба {attempt})"
+status.d.halted: "на привалі перед кроком {node} (продовжити: hetman resume)"
+status.d.limit_wait: "чекає на кроці {node}, доки скинеться ліміт підписки; знову запуститься {until}"
+status.d.limit_wait_undriven: "чекає на кроці {node} на ліміт підписки до {until}, але жоден процес hetman похід не веде (продовжити: hetman resume; він чекатиме до того часу)"
+status.d.limit: "зупинився на кроці {node}: вичерпано ліміт підписки, а часу для повтору не вказано (hetman resume запустить крок знову)"
+status.d.offline: "зупинився на кроці {node}: зник зв'язок (hetman resume запустить крок знову)"
+status.d.halt_requested: "{where}, попрошено привал: стане після поточного кроку"
+status.d.interrupted: "{where}, але жоден процес hetman похід не веде: перервано (продовжити: hetman resume)"
+status.d.undriven: "{where}, жоден процес hetman похід не веде (продовжити: hetman resume)"
+
+# ---- Писар із моделлю: одне речення — одна операція або запитання
+
+query.latest: "останній похід"
+query.campaign: "похід {id}"
+query.summary: "пояснити {which}"
+query.where: "сказати, де {which} і на що він чекає"
+query.history: "перелічити, що виконано в поході ({which})"
+query.rework: "пояснити, чому {which} повертався на доопрацювання"
+query.failures: "перелічити, що не вдалося в поході ({which})"
+query.warnings: "перелічити м'які перевірки, що попередили в поході ({which})"
+query.other: "{kind}: {which}"
+query.at_node: ", на кроці {node}"
+assist.unusable: "Писар не зміг використати відповідь моделі: {error}\nНічого не змінено. Майстер працює без моделі: hetman scribe"
+assist.unclear: "Речення можна зрозуміти по-різному. Ви мали на увазі:"
+assist.none: "нічого з цього"
+assist.needs_choice: "Нічого не змінено: тут треба вибрати, тож запустіть знову без -yes або скажіть точніше."
+assist.choice: "Вибір [0-{max}]:"
+assist.nothing_changed: "Нічого не змінено."
+assist.proposes: "Писар пропонує: {words}."
+assist.cannot_apply: "Цього не можна застосувати: {error}\nНічого не змінено."
+assist.check_fails: "Результат не пройде перевірку наказу:\n{problems}\nНічого не змінено."
+assist.apply: "Застосувати цю зміну? [т/Н]"
+assist.no_campaigns: "Походів, про які можна спитати, ще немає."
+assist.understood: "Писар зрозумів: {words}. {error}"
+op.note: "примітка: {note}"
+op.wrote: "Записано {path}."
+op.created: "Створено {path}."
+yes.words: "т, так, y, yes"
+no.words: "н, ні, n, no"
+
+# ---- hetman scribe
+
+scribe.usage: |
+  використання:
+    hetman scribe [-f FILE]                      майстер: створити чи змінити потік, відповідаючи на запитання
+    hetman scribe [-f FILE] [-yes] "SENTENCE"    одне речення — одна операція або запитання, через модель, названу в наказі
+    hetman scribe OPERATION ARGS [flags]         одна операція над файлом наказу
+    hetman scribe explain [-f FILE] [-c ID] [-kind KIND] [-node NODE]
+                                                 пояснити похід простими словами (види: {kinds})
+    hetman scribe skill [-dir DIR] [-force]      записати навичку помічника налаштування для агента програміста
+
+  операції:
+scribe.usage_flags: |
+
+  прапорці вузла (new, add): -run CMD, -timeout D, -checks A,B, -executor NAME, -model M, -effort E,
+    -tools A,B, -attempts N, -prompt FILE, -schema FILE, -outcomes A,B, -on OUTCOME=TARGET (повторюваний),
+    -starters (створити відсутні файли промпту й схеми)
+  поля для set і unset: run, timeout, idle_timeout, executor, model, effort, tools, attempts, dialogue, prompt, schema
+  коди мов: {codes}
+  прапорці кожної операції:
+    -f FILE    файл наказу (типово orders.yaml)
+    -dry-run   показати зміну й перевірку, нічого не записуючи
+    -force     записати, навіть якщо результат не проходить перевірку (для стану, який доробите пізніше)
+flag.yes: "застосувати однозначну операцію без запитання"
+flag.dry_run: "показати зміну, нічого не записуючи"
+flag.op_force: "записати, навіть якщо результат не проходить перевірку"
+flag.run: "команда: програма й аргументи"
+flag.list: "список через кому"
+flag.number: "число"
+flag.starters: "створити відсутні файли промпту й схеми"
+flag.soft: "перевірка лише попереджає"
+flag.required: "перевірка блокує заставу"
+flag.explain_c: "номер походу (типово останній)"
+flag.kind: "що пояснити"
+flag.node: "лише цей крок"
+scribe.yes_for_sentence: "hetman scribe: -yes стосується речення; майстер завжди питає"
+scribe.not_an_operation: "hetman scribe: {arg} — не операція; візьміть речення в лапки або дивіться hetman scribe help"
+scribe.op_usage: "використання: hetman scribe {form}\nприклад: {example}"
+scribe.soft_or_required: "hetman scribe: перевірка або -soft, або -required"
+scribe.nothing_written: "нічого не записано"
+scribe.already_says: "У файлі вже так написано; записувати нічого."
+scribe.does_not_pass: "результат не проходить перевірку наказу"
+scribe.dry_run: "Пробний запуск: нічого не записано."
+scribe.nothing_written_force: "нічого не записано (щоб записати попри це, додайте -force)"
+scribe.wrote_forced: "Записано {path}, хоча він не проходить перевірку (-force)."
+scribe.no_campaigns: "походів ще немає"
+scribe.no_campaign: "походу {id} немає"
+scribe.no_node: "у поході {id} немає кроку {node}"
+scribe.bad_kind: "hetman scribe explain: -kind має бути одним із {kinds}"
+scribe.sentence_invalid: "hetman scribe: наказ не проходить перевірку; речення можна перетворити на операцію лише для правильного файлу"
+scribe.no_model: |-
+  hetman scribe: {path} не називає моделі для Писаря, а типової немає.
+  Щоб її задати, назвіть оголошеного виконавця й модель, наприклад:
+    hetman scribe assistant EXECUTOR MODEL
+  Без моделі майстер ставить сталі запитання: hetman scribe
+  а кожна операція — це команда: hetman scribe help
+
+# ---- майстер (hetman scribe)
+
+wizard.title: "Майстер Писаря для {path}. Модель не використовується."
+wizard.hint: "Enter бере пропозицію в [дужках]; номер вибирає зі списку."
+wizard.new_file: "{file} ще не існує, тож починаємо новий потік."
+wizard.what_next: "Що далі?"
+wizard.action.add_step: "додати крок"
+wizard.action.add_gate: "додати заставу"
+wizard.action.remove_step: "вилучити крок"
+wizard.action.rename_step: "перейменувати крок"
+wizard.action.change_transition: "змінити перехід"
+wizard.action.timeout: "задати або зняти обмеження часу"
+wizard.action.change_agent: "змінити агентський крок (виконавець, модель, зусилля, інструменти, спроби)"
+wizard.action.declare_check: "оголосити або змінити перевірку"
+wizard.action.declare_executor: "оголосити виконавця"
+wizard.action.add_question: "додати запитання до застави або кроку human"
+wizard.action.quit: "вийти"
+wizard.place.after: "після кроку"
+wizard.place.before: "перед кроком"
+wizard.type.script: "script (запускає команду)"
+wizard.type.agent: "agent (роботу виконує модель)"
+wizard.type.human: "human (вирішує людина)"
+wizard.kind.required: "обов'язкова (блокує заставу)"
+wizard.kind.soft: "м'яка (лише попереджає)"
+wizard.another_outcome: "інший підсумок"
+wizard.orders_invalid: "наказ не проходить перевірку, тож майстер не може продовжити:"
+wizard.cannot: "Не вдається {words}: {error}\nНічого не змінено."
+wizard.the_change: "Зміна:"
+wizard.write_it: "Записати?"
+wizard.need_answer: "Тут потрібна відповідь."
+wizard.bad_name: "Використовуйте латинські літери, цифри, «_», «-» і «.», починаючи з літери чи цифри; імена done і failed зайняті."
+wizard.name_taken: "Крок {name} уже є."
+wizard.choice: "Вибір"
+wizard.pick_number: "Виберіть номер від {from} до {to}."
+wizard.yes_short: "т"
+wizard.no_short: "н"
+wizard.yes_no: "(т/н)"
+wizard.answer_yes_no: "Відповідайте «т» або «н»."
+wizard.flow_name: "Назва потоку"
+wizard.first_step: "Перший крок потоку."
+wizard.language.question: "Якою мовою потік має звертатися до людини (запитання, підсумки, плани)?"
+wizard.language.note: "Код, коментарі в коді й усе, що записується в репозиторій, лишаються англійською."
+wizard.language.skip: "{skip}, лишити англійську"
+wizard.language.prompt: "Мова: номер, код або назва"
+wizard.language.unknown: "У списку немає мови {name}; введіть номер, код або назву зі списку."
+wizard.language.ambiguous: "Підходить кілька мов: {names}. Введіть код."
+wizard.where: "Куди його поставити?"
+wizard.after_which: "Після якого кроку?"
+wizard.before_which: "Перед яким кроком?"
+wizard.step_kind: "Який це крок?"
+wizard.step_name: "Назва кроку (латинські літери, цифри, - _ .)"
+wizard.command: "Команда для запуску (програма й аргументи)"
+wizard.time_limit: "Обмеження часу, наприклад {example} (Enter — без обмеження)"
+wizard.time_limit_none: "Обмеження часу, наприклад {example} («none» знімає його)"
+wizard.if_fails: "Якщо не вдасться, перейти до"
+wizard.which_executor: "Який виконавець його запускає?"
+wizard.no_executor: "Виконавця ще не оголошено; оголосіть адаптер, що запускає агентські кроки."
+wizard.model: "Модель, передається адаптеру як є (Enter — без моделі)"
+wizard.effort: "Зусилля, передається адаптеру як є (Enter — без зусилля)"
+wizard.outcomes: "Підсумки, які може повідомити модель, через кому"
+wizard.if_outcome: "Якщо підсумок {outcome}, перейти до"
+wizard.if_step_fails: "Якщо крок не вдасться, перейти до"
+wizard.starters: "Створити заготовки промпту й схеми, де їх немає?"
+wizard.human_choices: "Варіанти, з яких вибирає людина, через кому"
+wizard.if_person_chooses: "Якщо людина вибере {outcome}, перейти до"
+wizard.gate_name: "Назва застави"
+wizard.declared_checks: "Оголошені перевірки: {checks}"
+wizard.declared_checks_change: "Оголошені перевірки: {checks} (оголошена назва змінює ту перевірку)"
+wizard.gate_checks: "Перевірки для запуску по порядку, через кому («new» оголошує нові)"
+wizard.declare_gate_checks: "Оголосіть перевірки застави, від найдешевшої."
+wizard.another_check: "Оголосити ще одну перевірку для цієї застави?"
+wizard.if_blocks: "Якщо застава заблокує, перейти до"
+wizard.check_name: "Назва перевірки"
+wizard.check_kind: "Якщо перевірка не пройде, застава має блокувати чи лише попереджати?"
+wizard.executor_name: "Назва виконавця"
+wizard.adapter_command: "Команда адаптера (програма й аргументи)"
+wizard.which_step: "Який крок?"
+wizard.new_name: "Нова назва"
+wizard.which_outcome: "Який підсумок?"
+wizard.outcome_name: "Назва підсумку"
+wizard.lead_where: "Куди він має вести?"
+wizard.no_agent_step: "агентських кроків немає"
+wizard.which_agent_step: "Який агентський крок?"
+wizard.what_to_change: "Що змінити?"
+wizard.new_value: "Нове значення («none» знімає його)"
+wizard.no_ask_target: "немає ні застави, ні кроку human, звідки можна питати"
+wizard.which_ask_target: "Яка застава чи крок human?"
+wizard.question_id: "Ідентифікатор запитання (латинські літери, цифри, - _ .)"
+wizard.question: "Запитання"
+wizard.answer_kind: "Тип відповіді?"
+wizard.options: "Варіанти, через кому"
+
+# ---- вебсторінка (Вежа)
+
+page.brand: "Вежа"
+page.noscript: "Щоб показувати походи, Вежі потрібен JavaScript."
+page.loading: "Завантаження…"
+page.orders_not_loading: "файл наказу не завантажується, тож показано останню справну версію: {error}"
+page.lang.label: "Мова сторінки"
+page.lang.english_only: "англійські тексти"
+page.live.connecting: "з'єднання"
+page.live.live: "наживо"
+page.live.lost: "немає з'єднання"
+page.live.reconnecting: "відновлення з'єднання"
+page.status.passed: "пройдено"
+page.status.running: "виконується"
+page.status.waiting: "чекає"
+page.status.failed: "не вдалося"
+page.status.warning: "м'яка перевірка не пройшла"
+page.status.notrun: "не запускався"
+page.status.interrupted: "перервано"
+page.status.limit: "вичерпано ліміт підписки"
+page.status.offline: "зник зв'язок"
+page.status.asking: "чекає на людину"
+page.state.running: "триває"
+page.state.halted: "на привалі"
+page.state.done: "завершено"
+page.state.failed: "провалено"
+page.state.error: "помилка"
+page.state.interrupted: "перервано"
+page.state.waiting: "чекає"
+page.state.limit: "ліміт"
+page.state.offline: "без зв'язку"
+page.state.asking: "питає"
+page.badge.waiting: "чекає на ліміт"
+page.badge.limit: "ліміт вичерпано"
+page.badge.offline: "без зв'язку"
+page.badge.asking: "чекає на людину"
+page.failure.invalid_output: "вихід не відповідає схемі"
+page.failure.transient: "адаптер повідомив про тимчасову помилку"
+page.failure.permanent: "адаптер повідомив про остаточну помилку; без повтору"
+page.failure.crash: "адаптер завершився без належного результату"
+page.failure.protocol: "адаптер порушив протокол"
+page.failure.timeout: "спроба перевищила обмеження часу"
+page.failure.idle_timeout: "адаптер мовчав довше, ніж дозволяє обмеження простою"
+page.failure.limit: "вичерпано ліміт підписки; спроба не зараховується"
+page.failure.offline: "зник зв'язок; спроба не зараховується"
+page.cleanup.gone: "від старого дерева процесів нічого не лишилося"
+page.cleanup.killed: "старе дерево процесів іще працювало, його зупинено"
+page.cleanup.reused: "номер процесу тепер належить сторонньому процесу, його не чіпали"
+page.cleanup.unverified: "час запуску старого процесу не вдалося прочитати, тож його не чіпали"
+page.cleanup.unrecorded: "процес спроби так і не записали; перевіряти не було чого"
+page.cleanup.title: "Прибирання процесів"
+page.cleanup.process: "процес {pid}"
+page.cleanup.process_check: "процес {pid} перевірки {check}"
+page.cleanup.started: ", запущений {ident}"
+page.dur.sec: "{v} с"
+page.dur.min: "{m} хв {s} с"
+page.dur.hour: "{h} год {m} хв"
+page.tick.sec: "{s} с"
+page.tick.min: "{m} хв"
+page.tick.min_sec: "{m} хв {s} с"
+page.tick.hour: "{h} год"
+page.tick.hour_min: "{h} год {m} хв"
+page.not_found: "Похід {id} не знайдено."
+page.all_campaigns: "Усі походи"
+page.list.title: "Походи"
+page.list.empty: "Походів ще немає. Почніть перший командою {command}."
+page.list.col.campaign: "Похід"
+page.list.col.flow: "Потік"
+page.list.col.state: "Стан"
+page.list.col.started: "Розпочато"
+page.list.col.duration: "Тривалість"
+page.list.col.steps: "Кроки"
+page.list.steps_label: "кроки"
+page.halt_requested: "попрошено привал"
+page.halt_requested_long: "попрошено привал: стане після поточного кроку"
+page.pos.running: "виконується {node} (спроба {attempt})"
+page.pos.halted: "на привалі перед {node}"
+page.pos.asking: "на кроці {node} чекає відповіді людини"
+page.pos.waiting: "на кроці {node} чекає, доки скинеться ліміт підписки; знову запуститься {at} (через {left})"
+page.pos.limit: "зупинився на {node}: вичерпано ліміт підписки"
+page.pos.offline: "зупинився на {node}: зник зв'язок"
+page.pos.interrupted: "зупинився на {node}, жоден процес його не веде"
+page.pos.at: "на кроці {node}"
+page.campaign.title: "Похід #{id}"
+page.halt: "Привал"
+page.halt.title: "Стати на привал після поточного кроку"
+page.resume: "Продовжити"
+page.resume.title: "Продовжити із записаного місця"
+page.fact.started: "розпочато {time}"
+page.fact.duration: "триває {time}"
+page.fact.language: "мова {language}{code}"
+page.fact.language_title: "Цією мовою пишуться тексти для людини"
+page.error_state: "Зупинився з помилкою:"
+page.error_fix: "Усуньте причину, потім продовжте."
+page.tab.pipeline: "Конвеєр"
+page.tab.timeline: "Хронологія"
+page.tab.chronicle: "Літопис"
+page.tab.words: "Словами"
+page.ask.waiting: "Чекає на людину."
+page.ask.reason.gate: "Питає застава {node}."
+page.ask.reason.human: "Тут вирішує людина: крок {node}."
+page.ask.reason.dialogue: "Питає агентський крок {node}."
+page.ask.answer_below: "Відповідайте нижче або в терміналі: {command}."
+page.ask.answer_card: "{link} або в терміналі: {command}"
+page.ask.answer_card_link: "Відповісти на картці кроку"
+page.ask.undriven: "Зараз похід не веде жоден процес: відповідь, дана тут, продовжить його з цього сервера; після відповіді в терміналі продовжте його."
+page.wait.limit: "Вичерпано ліміт підписки."
+page.wait.limit_text: "Адаптер не вказав часу для повтору, тож похід чекає на людину. «Продовжити» запустить {node} знову; втрачена спроба не зараховується."
+page.wait.offline: "Зник зв'язок."
+page.wait.offline_text: "Спробу кроку {node} втрачено, вона не зараховується. «Продовжити» запустить крок знову, щойно з'явиться з'єднання."
+page.wait.reset: "Чекає, доки скинеться ліміт підписки."
+page.wait.reset_text: "{node} сам запуститься знову {at}."
+page.wait.undriven: "Зараз похід не веде жоден процес; продовжте його, і він чекатиме до того часу."
+page.toast.halt.already: "Привал уже діє."
+page.toast.halt.pending: "Похід стане на привал після поточного кроку."
+page.toast.halt.halted: "Привал."
+page.toast.resume.driving: "Продовжено. Тепер похід веде цей сервер."
+page.toast.resume.elsewhere: "Продовжено. Його веде інший процес, він і продовжить."
+page.toast.halt_failed: "привал не вдався: {error}"
+page.toast.resume_failed: "продовжити не вдалося: {error}"
+page.toast.answer.driving: "Відповіді записано. Тепер похід веде цей сервер."
+page.toast.answer.elsewhere: "Відповіді записано. Процес, що веде похід, продовжить його."
+page.toast.answer.recorded: "Відповіді записано. Похід на привалі або зупинився; продовжте його."
+page.toast.answer.other: "Відповіді записано."
+page.pipeline.start: "старт"
+page.not_in_orders: "немає в наказі"
+page.exit.taken:
+  one: "пройдено {n} раз"
+  few: "пройдено {n} рази"
+  many: "пройдено {n} разів"
+page.exit.not_taken: "не пройдено"
+page.now: "зараз"
+page.off_main_line: "поза основною лінією"
+page.check.soft: "м'яка"
+page.check.required: "обов'язкова"
+page.tile.needs_answer: "потрібна відповідь"
+page.tile.limit_again: "ліміт, знову {at}"
+page.tile.limit: "ліміт вичерпано"
+page.tile.offline: "без зв'язку"
+page.tile.halted_here: "привал тут"
+page.tile.next: "наступний"
+page.attempts:
+  one: "{n} спроба"
+  few: "{n} спроби"
+  many: "{n} спроб"
+page.legend: "легенда"
+page.card.transitions: "Переходи"
+page.card.taken: "(пройдено ×{n})"
+page.card.attempts:
+  one: "{n} спроба, новіші вгорі"
+  few: "{n} спроби, новіші вгорі"
+  many: "{n} спроб, новіші вгорі"
+page.card.attempt: "Спроба"
+page.card.attempt_n: "Спроба {n}"
+page.card.not_run: "У цьому поході цей крок не запускався."
+page.card.label: "крок {node}"
+page.card.executor: "виконавець"
+page.card.model: "модель"
+page.card.effort: "зусилля"
+page.card.effort_value: "зусилля {effort}"
+page.card.close: "Закрити"
+page.card.checks: "Перевірки"
+page.card.log_files: "журнал і файли"
+page.card.result_file: "Файл результату"
+page.card.exit: "код {code}"
+page.card.prompt: "Промпт"
+page.card.log: "Журнал"
+page.card.log_live: "Журнал (наживо)"
+page.card.stderr: "діагностика адаптера (стандартний потік помилок)"
+page.card.output: "Вихід (перевірений)"
+page.card.rejected_output: "Відхилений вихід"
+page.card.artifacts: "Артефакти"
+page.kv.status: "Стан"
+page.kv.outcome: "Підсумок"
+page.kv.started: "Почато"
+page.kv.finished: "Завершено"
+page.kv.duration: "Тривалість"
+page.kv.exit: "Код виходу"
+page.kv.executor: "Виконавець"
+page.kv.model: "Модель"
+page.kv.effort: "Зусилля"
+page.kv.continued: "Продовжено"
+page.kv.continued_session: "сесію {session}"
+page.kv.session: "Сесія"
+page.kv.why_failed: "Чому не вдалося"
+page.kv.retry_at: "Повтор"
+page.kv.details: "Подробиці"
+page.kv.error: "Помилка"
+page.kv.went_to: "Перехід до"
+page.file.loading: "завантаження…"
+page.file.cannot_read: "не вдалося прочитати: {error}"
+page.askblock.gate: "Запитання до людини (#{seq}, поставлено {at})"
+page.askblock.human: "Рішення людини (#{seq}, запитано {at})"
+page.askblock.dialogue: "Запитання агента, раунд {round} (#{seq}, поставлено {at})"
+page.askblock.look_at: "Перегляньте"
+page.answers.none: "Відповіді немає."
+page.answers.answered: "Відповідь"
+page.answers.by: "від {by}"
+page.answers.via_page: "на цій сторінці"
+page.answers.via_command: "з командного рядка"
+page.answers.at: "о {at}"
+page.form.yes: "так"
+page.form.no: "ні"
+page.form.kind.yesno: "так чи ні"
+page.form.kind.choice: "один із варіантів"
+page.form.kind.text: "текст"
+page.form.comment: "коментар (необов'язково)"
+page.form.comment_on: "коментар до {id}"
+page.form.question_id: "ідентифікатор запитання"
+page.form.outcome: "Підсумок: куди потік піде далі"
+page.form.goes_on: "Потік продовжиться з підсумком {outcome}."
+page.form.your_name: "ваше ім'я (необов'язково)"
+page.form.answered_by: "Відповідає"
+page.form.answered_by_label: "хто відповідає"
+page.form.recording: "Записую…"
+page.form.record: "Записати відповіді"
+page.form.terminal: "Те саме з термінала: {command}"
+page.form.terminal_flags: "або без запитань: {command}"
+page.form.nothing_recorded: "Нічого не записано: {problem}"
+page.log.skipped: "попередні байти ({n}) не показано"
+page.log.empty: "(порожньо)"
+page.log.cannot_read: "не вдалося прочитати журнал: {error}"
+page.timeline.empty: "Поки що нічого не виконувалося."
+page.chronicle.col.seq: "#"
+page.chronicle.col.time: "Час"
+page.chronicle.col.event: "Подія"
+page.chronicle.col.node: "Крок"
+page.chronicle.col.check: "Перевірка"
+page.chronicle.col.attempt: "Спроба"
+page.chronicle.col.outcome: "Підсумок"
+page.chronicle.col.details: "Подробиці"
+
+# ---- завдання і диспетчер (hetman task, hetman dispatch, вкладка «Завдання»)
+
+status.task: "завдання {id} (вид {kind}), розпочате диспетчером"
+cli.orders_of_failed: "hetman: похід {id} розпочато з наказу {orders}, який не завантажується ({error}); використовую {used}"
+flag.task_r: файл маршрутів
+flag.task_kind: вид завдання
+flag.task_key: ключ для відсіювання повторів
+flag.task_input: "JSON-файл із вхідними даними завдання; - читає стандартний вхід"
+flag.task_force: додати завдання, навіть коли його ключ уже зайнятий
+flag.task_state: показати лише завдання в цьому стані
+flag.task_once: зупинитися, коли в черзі нічого немає і нічого не виконується
+flag.task_limit: скільки походів виконується одночасно
+flag.task_poll: як часто переглядати чергу
+cli.task.usage: |
+  використання: hetman task <команда> [прапорці]
+
+  команди:
+    add     поставити завдання в чергу: hetman task add -kind KIND [-key KEY] [-input FILE] [-force]
+    list    перелічити завдання з їхніми станами
+    show    показати одне завдання і його похід: hetman task show ID
+    cancel  скасувати завдання з черги: hetman task cancel ID
+    check   перевірити файл маршрутів і кожен наказ, на який він веде
+
+  прапорці:
+    -r FILE      файл маршрутів (типово routes.yaml)
+    -kind KIND   вид завдання; файл маршрутів називає потік, що його виконує
+    -key KEY     ключ для відсіювання повторів: нічого не додається, поки існує
+                 нескасоване завдання з цим ключем, у будь-якому стані
+    -force       додати завдання, навіть коли його ключ уже зайнятий
+    -input FILE  JSON-файл із вхідними даними завдання, один об'єкт; - читає стандартний
+                 вхід; без нього вхідні дані — {}
+    -state S     показати лише завдання в цьому стані (назва стану англійською: queued,
+                 cancelled, running, waiting, done, failed, halted, error)
+cli.task.unknown_command: "hetman task: невідома команда {command}"
+cli.task.need_id: "hetman task {command}: укажіть один номер завдання, наприклад hetman task {command} 3"
+cli.task.bad_id: "hetman task {command}: {arg} не є номером завдання"
+cli.task.unexpected_argument: "hetman task {command}: зайвий аргумент {arg}"
+cli.task.check_ok: "{path}: ok (маршрутів: {n}, походів одночасно: не більше {limit})"
+cli.task.route: "  {kind} -> {file}{note}"
+cli.task.route_priority: "пріоритет {priority}"
+cli.task.route_limit: "одночасно не більше {limit}"
+cli.task.routes_rejected:
+  one: "файл маршрутів відхилено: {n} проблема"
+  few: "файл маршрутів відхилено: {n} проблеми"
+  many: "файл маршрутів відхилено: {n} проблем"
+cli.task.kind_required: "hetman task add: потрібен прапорець -kind"
+cli.task.unknown_kind: "для виду завдання {kind} немає маршруту в {path} (види з маршрутами: {kinds})"
+cli.task.nothing_added: нічого не додано
+cli.task.bad_input: "hetman task add: -input {file}: {error}"
+cli.task.input_not_object: "вхідні дані завдання мають бути одним об'єктом JSON: {error}"
+cli.task.input_null: "вхідні дані завдання мають бути одним об'єктом JSON, а не null"
+cli.task.input_reserved: "вхідні дані завдання не можуть мати поля {field}: hetman задає його сам, щоб назвати завдання"
+cli.task.duplicate: "завдання {id} уже має ключ {key} (стан: {state}); нічого не додано (-force додасть його ще раз)"
+cli.task.queued: "завдання {id} поставлено в чергу (вид {kind})"
+cli.task.list_header: "ЗАВДАННЯ\tВИД\tСТАН\tПОХІД\tВІК\tКЛЮЧ\tЧЕКАЄ НА"
+cli.task.no_tasks: завдань немає
+cli.task.state.queued: у черзі
+cli.task.state.cancelled: скасовано
+cli.task.state.running: виконується
+cli.task.state.waiting: чекає на людину
+cli.task.state.done: завершено
+cli.task.state.failed: провалено
+cli.task.state.halted: на привалі
+cli.task.state.error: помилка
+cli.task.show.head: "завдання {id}  вид {kind}"
+cli.task.show.key: "  ключ {key}"
+cli.task.show.state: "стан: {state}"
+cli.task.show.waits: "чекає на {waits}"
+cli.task.show.added: "додано {at}"
+cli.task.show.started: "розпочато {at}"
+cli.task.show.ended: "завершено {at}"
+cli.task.show.campaign: "похід {id} (потік {flow}, {orders})"
+cli.task.show.status: "  стан: {command}"
+cli.task.show.next: "  далі: {command}"
+cli.task.show.input: "вхідні дані:"
+cli.task.cancelled: "завдання {id} скасовано (вид {kind})"
+cli.task.no_such_task: "завдання {id}: такого завдання немає"
+cli.task.not_queued: "завдання {id} має стан {state}: скасувати можна лише завдання, що стоїть у черзі"
+cli.task.waits.error: "людину, яка усуне причину й продовжить похід: {error}"
+cli.task.waits.halted: людину, яка продовжить похід
+cli.task.waits.human: "рішення людини на {node} ({outcomes})"
+cli.task.waits.dialogue:
+  one: "відповідь людини на {n} запитання агентного кроку {node}"
+  few: "відповідь людини на {n} запитання агентного кроку {node}"
+  many: "відповідь людини на {n} запитань агентного кроку {node}"
+cli.task.waits.gate:
+  one: "відповідь людини на {n} запитання застави {node}"
+  few: "відповідь людини на {n} запитання застави {node}"
+  many: "відповідь людини на {n} запитань застави {node}"
+cli.task.waits.limit: людину, яка продовжить похід після вичерпання ліміту підписки на {node}
+cli.task.waits.offline: людину, яка продовжить похід після втрати зв'язку на {node}
+cli.task.waits.limit_reset: скидання ліміту підписки о {at}
+cli.dispatch.usage: |
+  використання: hetman dispatch [-r FILE] [-once] [-limit N]
+
+  Починає похід потоку з маршруту для кожного завдання в черзі, за пріоритетом,
+  а тоді за віком, і працює далі. Спершу продовжує походи, які ніхто не веде і
+  які можуть іти без людини, наприклад перервані, коли диспетчер зупинився.
+
+  прапорці:
+    -r FILE   файл маршрутів (типово routes.yaml)
+    -once     зупинитися, коли в черзі нічого немає і нічого не виконується, а не чекати нових завдань
+    -limit N  скільки походів виконується одночасно (типово ліміт файлу маршрутів, інакше 1)
+    -poll D   як часто переглядати чергу на нові завдання (типово 1s)
+cli.dispatch.unexpected_argument: "hetman dispatch: зайвий аргумент {arg}"
+cli.dispatch.bad_limit: "hetman dispatch: -limit має бути не менше 1"
+cli.dispatch.not_contained: "hetman: процеси кроків не прив'язані до цього процесу ({error}); їх приберуть, коли похід продовжиться"
+cli.dispatch.start: "диспетчер завдань {path}: маршрутів: {n}, походів одночасно: не більше {limit} ({mode})"
+cli.dispatch.mode_stay: Ctrl+C зупиняє
+cli.dispatch.mode_once: поки в черзі є завдання або щось виконується
+cli.dispatch.stopped: диспетчер зупинено
+cli.dispatch.left_waiting:
+  one: "більше нічого починати; {n} завдання чекає на людину (hetman task list)"
+  few: "більше нічого починати; {n} завдання чекають на людину (hetman task list)"
+  many: "більше нічого починати; {n} завдань чекають на людину (hetman task list)"
+cli.dispatch.left: більше нічого починати
+cli.dispatch.busy: для цієї теки вже працює інший диспетчер
+cli.dispatch.waits: "завдання {id} чекає: {error}"
+cli.dispatch.recovered: "завдання {id}: похід {campaign} було створено до того, як попередній диспетчер зупинився; він продовжується"
+cli.dispatch.rejected: "завдання {id} чекає: наказ {path} відхилено:\n{error}"
+cli.dispatch.started: "завдання {id} ({kind}): похід {campaign} розпочато (потік {flow})"
+cli.dispatch.continues: "завдання {id} ({kind}): похід {campaign} продовжується з {node}"
+cli.dispatch.task_error: "завдання {id}: {error}"
+cli.dispatch.interrupted: "завдання {id}: похід {campaign} перервано; наступний диспетчер його продовжить"
+cli.dispatch.drive_error: "завдання {id}: похід {campaign}: {error}; повтор за хвилину"
+cli.dispatch.a_person: людину
+cli.dispatch.asking: "завдання {id}: похід {campaign} чекає на {what}; відповісти: {command}"
+cli.dispatch.stopped_halted: "завдання {id}: похід {campaign} на привалі; продовжити: {command}"
+cli.dispatch.stopped_error: "завдання {id}: похід {campaign} зупинився з помилкою; продовжити: {command}"
+cli.dispatch.stopped_waiting: "завдання {id}: похід {campaign} чекає на людину; продовжити: {command}"
+cli.dispatch.ended_done: "завдання {id}: похід {campaign} завершено"
+cli.dispatch.ended_failed: "завдання {id}: похід {campaign} провалено"
+page.tasks.title: Завдання
+page.tasks.no_queue: "У цій теці немає черги завдань. Додайте завдання командою {command}."
+page.tasks.empty: Завдань ще немає.
+page.tasks.col.task: Завдання
+page.tasks.col.kind: Вид
+page.tasks.col.state: Стан
+page.tasks.col.campaign: Похід
+page.tasks.col.age: Вік
+page.tasks.col.waits: Чекає на
+page.tasks.state.queued: у черзі
+page.tasks.state.cancelled: скасовано
+page.tasks.state.running: триває
+page.tasks.state.waiting: чекає на людину
+page.tasks.state.done: завершено
+page.tasks.state.failed: провалено
+page.tasks.state.halted: на привалі
+page.tasks.state.error: помилка

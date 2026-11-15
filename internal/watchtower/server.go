@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"io/fs"
 	"net"
@@ -30,6 +31,8 @@ import (
 	"hetman/internal/dispatch"
 	"hetman/internal/engine"
 	"hetman/internal/explain"
+	"hetman/internal/i18n"
+	"hetman/internal/language"
 	"hetman/internal/orders"
 )
 
@@ -56,6 +59,9 @@ type Server struct {
 	Hosts []string
 	// Log receives the progress lines of campaigns this server drives.
 	Log io.Writer
+	// Lang is the language the page starts in and the progress lines are
+	// written in; empty for English.
+	Lang string
 
 	ctx    context.Context
 	drives sync.WaitGroup
@@ -108,11 +114,29 @@ func (s *Server) currentOrders() (*orders.Orders, string) {
 	s.stamp, s.size = fi.ModTime(), fi.Size()
 	o, err := orders.Load(s.OrdersPath)
 	if err != nil {
-		s.problem = "the orders file does not load, so the last good version is shown: " + err.Error()
+		s.problem = loadProblem + err.Error()
 		return s.orders, s.problem
 	}
 	s.orders, s.problem = o, ""
 	return o, ""
+}
+
+// loadProblem marks a problem that the orders file does not load; the page
+// says so in the reader's language.
+const loadProblem = "\x00load\x00"
+
+// problemIn says a problem of the orders file in the language of p.
+func problemIn(p *i18n.Printer, problem string) string {
+	if rest, ok := strings.CutPrefix(problem, loadProblem); ok {
+		return p.T("page.orders_not_loading", "error", rest)
+	}
+	return problem
+}
+
+// printer speaks the language a request asks for in its lang parameter,
+// else the server's.
+func (s *Server) printer(r *http.Request) *i18n.Printer {
+	return i18n.For(i18n.Resolve(r.URL.Query().Get("lang"), s.Lang))
 }
 
 // Handler returns the HTTP handler of the page and its API.
@@ -120,11 +144,16 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	static, _ := fs.Sub(assets, "assets")
 	files := http.FileServerFS(static)
+	page := template.Must(template.ParseFS(assets, "assets/index.html"))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		p := s.printer(r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
-		http.ServeFileFS(w, r, static, "index.html")
+		page.Execute(w, map[string]string{"Lang": p.Lang(), "Title": p.T("page.brand"),
+			"Connecting": p.T("page.live.connecting"), "NoScript": p.T("page.noscript")})
 	})
 	mux.Handle("GET /assets/", http.StripPrefix("/assets/", noCache(files)))
+	mux.HandleFunc("GET /api/texts", s.handleTexts)
 	mux.HandleFunc("GET /api/campaigns", s.handleList)
 	mux.HandleFunc("GET /api/campaigns/{id}", s.handleCampaign)
 	mux.HandleFunc("GET /api/campaigns/{id}/events", s.handleEvents)
@@ -219,9 +248,9 @@ func writeError(w http.ResponseWriter, err error) {
 }
 
 var (
-	errBadID     = errors.New("no such campaign")
-	errBadPath   = errors.New("path must name a file under logs, results, prompts or work of the campaign")
-	errBadAnswer = errors.New("the answer must be a JSON object")
+	errBadID     = errors.New("no such campaign")                                                           // i18n: keep (API error)
+	errBadPath   = errors.New("path must name a file under logs, results, prompts or work of the campaign") // i18n: keep (API error)
+	errBadAnswer = errors.New("the answer must be a JSON object")                                           // i18n: keep (API error)
 )
 
 func campaignID(r *http.Request) (int64, error) {
@@ -250,8 +279,9 @@ func (s *Server) summaries() ([]Summary, error) {
 	return out, nil
 }
 
-// campaign returns the view of one campaign and its events.
-func (s *Server) campaign(id int64) (*Campaign, []chronicle.Event, error) {
+// campaign returns the view of one campaign and its events, its words in
+// the language of p.
+func (s *Server) campaign(p *i18n.Printer, id int64) (*Campaign, []chronicle.Event, error) {
 	k, err := s.Chron.Campaign(id)
 	if err != nil {
 		return nil, nil, err
@@ -262,8 +292,8 @@ func (s *Server) campaign(id int64) (*Campaign, []chronicle.Event, error) {
 	}
 	o, problem := s.ordersOf(k)
 	c := s.build(o, k, events)
-	c.OrdersProblem = problem
-	c.Words = explain.Campaign(k, events, explain.Summary, "", time.Local)
+	c.OrdersProblem = problemIn(p, problem)
+	c.Words = explain.In(p, k, events, explain.Summary, "", time.Local)
 	return c, events, nil
 }
 
@@ -273,6 +303,31 @@ func (s *Server) build(o *orders.Orders, k chronicle.Campaign, events []chronicl
 		return d
 	}
 	return build(k, events, o, engine.CampaignDir(o, k.ID), driven)
+}
+
+// LanguageInfo is one language the page offers.
+type LanguageInfo struct {
+	Code       string `json:"code"`
+	English    string `json:"english"`
+	Native     string `json:"native"`
+	Translated bool   `json:"translated"` // it has a catalogue; else the page shows English
+}
+
+// Texts is what the page needs to speak a language.
+type Texts struct {
+	Lang      string         `json:"lang"`    // the language of the texts
+	Default   string         `json:"default"` // the server's language
+	Languages []LanguageInfo `json:"languages"`
+	Texts     map[string]any `json:"texts"`
+}
+
+func (s *Server) handleTexts(w http.ResponseWriter, r *http.Request) {
+	p := s.printer(r)
+	t := Texts{Lang: p.Lang(), Default: i18n.Resolve(s.Lang), Texts: i18n.Texts(p.Lang(), "page.")}
+	for _, l := range language.List {
+		t.Languages = append(t.Languages, LanguageInfo{Code: l.Code, English: l.English, Native: l.Native, Translated: i18n.Has(l.Code)})
+	}
+	writeJSON(w, http.StatusOK, t)
 }
 
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
@@ -290,7 +345,7 @@ func (s *Server) handleCampaign(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	c, _, err := s.campaign(id)
+	c, _, err := s.campaign(s.printer(r), id)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -361,7 +416,7 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		http.Error(w, "no such file", http.StatusNotFound)
+		http.Error(w, "no such file", http.StatusNotFound) // i18n: keep (API error)
 		return
 	}
 	defer f.Close()
@@ -425,7 +480,8 @@ func (s *Server) drive(o *orders.Orders, id int64, release func()) {
 	go func() {
 		defer s.drives.Done()
 		defer release()
-		e := &engine.Engine{Orders: o, Chron: s.Chron, Campaign: id, Out: s.Log}
+		p := i18n.For(s.Lang)
+		e := &engine.Engine{Orders: o, Chron: s.Chron, Campaign: id, Out: s.Log, Text: p}
 		res, err := e.Drive(s.ctx)
 		e.WaitHooks()
 		if s.Log == nil {
@@ -433,11 +489,11 @@ func (s *Server) drive(o *orders.Orders, id int64, release func()) {
 		}
 		switch {
 		case errors.Is(err, engine.ErrInterrupted):
-			fmt.Fprintf(s.Log, "[%d] interrupted by shutdown; the current step runs again on resume\n", id)
+			fmt.Fprintf(s.Log, "[%d] %s\n", id, p.T("serve.shutdown"))
 		case err != nil:
 			fmt.Fprintf(s.Log, "[%d] %v\n", id, err)
 		default:
-			fmt.Fprintf(s.Log, "[%d] stopped: %s\n", id, res)
+			fmt.Fprintf(s.Log, "[%d] %s\n", id, p.T("serve.stopped", "result", res))
 		}
 	}()
 }

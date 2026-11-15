@@ -199,7 +199,7 @@ func (e *env) views() map[int64]dispatch.View {
 	if err != nil {
 		e.w.t.Fatal(err)
 	}
-	views, err := dispatch.Views(list, e.chron, e.w.dir)
+	views, err := dispatch.Views(list, e.chron, e.w.dir, nil)
 	if err != nil {
 		e.w.t.Fatal(err)
 	}
@@ -739,6 +739,35 @@ func TestRoutingCheck(t *testing.T) {
 	w.write(dispatch.DefaultRoutesFile, "version: 0\nlimit: 3\nroutes:\n  finding: {orders: fix.yaml, priority: 2, limit: 1}\n")
 	out := w.hetman(0, "", "task", "check")
 	if !strings.Contains(out, "ok (1 route(s), up to 3 campaign(s) at once)") || !strings.Contains(out, "finding -> fix.yaml (priority 2, at most 1 at once)") {
+		t.Fatalf("check said:\n%s", out)
+	}
+}
+
+func TestUkrainianInterface(t *testing.T) {
+	w := newWorld(t)
+	w.flow("fix.yaml", "a", quick("exit", "0"))
+	w.write(dispatch.DefaultRoutesFile, "version: 0\nroutes:\n  finding: {orders: fix.yaml}\n")
+	t.Setenv("HETMAN_LANGUAGE", "uk")
+	if out := w.hetman(0, "", "task", "add", "-kind", "finding", "-key", "k"); strings.TrimSpace(out) != "завдання 1 поставлено в чергу (вид finding)" {
+		t.Fatalf("add said:\n%s", out)
+	}
+	out := w.hetman(0, "", "task", "add", "-kind", "finding", "-key", "k")
+	if !strings.Contains(out, `завдання 1 уже має ключ "k" (стан: у черзі); нічого не додано`) {
+		t.Fatalf("duplicate said:\n%s", out)
+	}
+	out = w.hetman(0, "", "dispatch", "-once", "-poll", "30ms")
+	if !strings.Contains(out, "завдання 1: похід 1 завершено") || !strings.Contains(out, "більше нічого починати") {
+		t.Fatalf("dispatch said:\n%s", out)
+	}
+	// The STATE column is interface text; the -state filter takes the
+	// English identifier in every language.
+	out = w.hetman(0, "", "task", "list", "-state", "done")
+	if !strings.Contains(out, "ЗАВДАННЯ") || !strings.Contains(out, "завершено") {
+		t.Fatalf("list said:\n%s", out)
+	}
+	w.write(dispatch.DefaultRoutesFile, "version: 0\nroutes:\n  finding: {orders: fix.yaml}\n  other: {orders: nope.yaml}\n")
+	out = w.hetman(2, "", "task", "check")
+	if !strings.Contains(out, `orders file "nope.yaml" does not exist`) || !strings.Contains(out, "файл маршрутів відхилено: 1 проблема") {
 		t.Fatalf("check said:\n%s", out)
 	}
 }

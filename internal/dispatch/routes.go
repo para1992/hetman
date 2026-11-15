@@ -52,7 +52,7 @@ func (r *Routes) Known(kind string) error {
 	if r.Routes[kind] != nil {
 		return nil
 	}
-	return fmt.Errorf("no route for task kind %q in %s (routed kinds: %s)", kind, r.Path, strings.Join(r.Kinds, ", "))
+	return newError(nil, "cli.task.unknown_kind", "kind", strconv.Quote(kind), "path", r.Path, "kinds", strings.Join(r.Kinds, ", "))
 }
 
 var kindPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
