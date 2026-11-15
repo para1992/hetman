@@ -369,3 +369,9 @@ dl.kv.answers { grid-template-columns: minmax(8em, 1.3fr) 1fr; }
 .words { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 4px 16px 10px; box-shadow: var(--shadow); max-width: 70em; }
 .words h3 { margin: 14px 0 6px; font-size: 14px; }
 .words p { margin: 0 0 4px; line-height: 1.45; overflow-wrap: anywhere; }
+
+.lang {
+  flex: none; max-width: 14em;
+  font: inherit; font-size: 12px; color: var(--muted);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 2px 4px;
+}

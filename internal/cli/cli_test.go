@@ -34,6 +34,9 @@ func TestMain(m *testing.M) {
 		}
 	}
 	os.Setenv(teststep.EnvHelper, "1")
+	// The interface language of the person running the tests is not the
+	// one the tests expect.
+	os.Unsetenv(languageEnv)
 	os.Exit(m.Run())
 }
 

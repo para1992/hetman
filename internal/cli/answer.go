@@ -16,6 +16,7 @@ import (
 	"hetman/internal/ask"
 	"hetman/internal/chronicle"
 	"hetman/internal/engine"
+	"hetman/internal/i18n"
 	"hetman/internal/orders"
 )
 
@@ -30,10 +31,10 @@ func (p pairs) String() string { return "" }
 func (p pairs) Set(s string) error {
 	k, v, ok := strings.Cut(s, "=")
 	if !ok || k == "" {
-		return errors.New("use ID=TEXT")
+		return errors.New(personPrinter(nil).T("flag.err.pair"))
 	}
 	if _, dup := p[k]; dup {
-		return fmt.Errorf("%s is given twice", k)
+		return errors.New(personPrinter(nil).T("flag.err.twice", "id", k))
 	}
 	p[k] = v
 	return nil
@@ -48,13 +49,13 @@ type answerFlags struct {
 	by       *string
 }
 
-func addAnswerFlags(fs *flag.FlagSet) *answerFlags {
+func addAnswerFlags(p *i18n.Printer, fs *flag.FlagSet) *answerFlags {
 	f := &answerFlags{values: pairs{}, comments: pairs{}}
-	f.ask = fs.Int64("ask", 0, "answer only if this question (the number shown with it) is still open")
-	fs.Var(f.values, "a", "ID=ANSWER for one question; repeat for each")
-	fs.Var(f.comments, "comment", "ID=TEXT, a comment on one answer; repeat as needed")
-	f.outcome = fs.String("outcome", "", "the outcome chosen at a human node")
-	f.by = fs.String("by", "", "who answers (default: the user name of this computer)")
+	f.ask = fs.Int64("ask", 0, p.T("flag.ask"))
+	fs.Var(f.values, "a", p.T("flag.a"))
+	fs.Var(f.comments, "comment", p.T("flag.comment"))
+	f.outcome = fs.String("outcome", "", p.T("flag.outcome"))
+	f.by = fs.String("by", "", p.T("flag.by"))
 	return f
 }
 
@@ -70,11 +71,11 @@ func (c *command) answer(id int64, f *answerFlags) int {
 	if asked == nil {
 		switch {
 		case st.End != "":
-			return c.fail(fmt.Errorf("campaign %d has ended (%s); it asks nothing", k.ID, st.End))
+			return c.fail(errors.New(c.p.T("answer.ended", "id", k.ID, "end", st.End)))
 		case st.Ask != nil:
-			return c.fail(fmt.Errorf("campaign %d: the questions of %s are already answered", k.ID, st.Ask.Node))
+			return c.fail(errors.New(c.p.T("answer.already", "id", k.ID, "node", st.Ask.Node)))
 		}
-		return c.fail(fmt.Errorf("campaign %d asks nothing now (it is at %s)", k.ID, st.Node))
+		return c.fail(errors.New(c.p.T("answer.nothing_asked", "id", k.ID, "node", st.Node)))
 	}
 	r := engine.Reply{Ask: *f.ask, By: *f.by, Via: engine.ViaCommand}
 	if r.By == "" {
@@ -88,25 +89,25 @@ func (c *command) answer(id int64, f *answerFlags) int {
 	if len(f.values) > 0 || len(f.comments) > 0 || *f.outcome != "" {
 		r.Given = ask.Given{Values: f.values, Comments: f.comments, Outcome: *f.outcome}
 	} else {
-		printAsked(c.stdout, c.o, k.ID, asked, false)
+		printAsked(c.p, c.stdout, c.o, k.ID, asked, false)
 		r.Ask = asked.Seq
 		if r.Given, err = c.interview(asked); err != nil {
 			return c.fail(err)
 		}
 	}
 	if _, err := engine.Answer(c.chron, k.ID, r); err != nil {
-		fmt.Fprintln(c.stderr, "hetman answer:", err)
+		fmt.Fprintln(c.stderr, "hetman answer:", c.p.Error(err))
 		if errors.Is(err, ask.ErrInvalid) {
-			fmt.Fprintln(c.stderr, "nothing was recorded")
+			fmt.Fprintln(c.stderr, c.p.T("answer.nothing_recorded"))
 			return exitUsage
 		}
 		return exitFailed
 	}
-	fmt.Fprintf(c.stdout, "answers recorded for campaign %d at %s\n", k.ID, asked.Node)
+	fmt.Fprintln(c.stdout, c.p.T("answer.recorded", "id", k.ID, "node", asked.Node))
 	if alive, _ := engine.Driven(c.o, k.ID); alive {
-		fmt.Fprintf(c.stdout, "the hetman process that drives campaign %d continues it\n", k.ID)
+		fmt.Fprintln(c.stdout, c.p.T("answer.driven", "id", k.ID))
 	} else {
-		fmt.Fprintf(c.stdout, "no hetman process drives campaign %d; continue it with: %s\n", k.ID, engine.ResumeCommand(c.o, k.ID))
+		fmt.Fprintln(c.stdout, c.p.T("answer.not_driven", "id", k.ID, "command", engine.ResumeCommand(c.o, k.ID)))
 	}
 	return exitDone
 }
@@ -120,14 +121,14 @@ func (c *command) interview(asked *chronicle.Event) (ask.Given, error) {
 		fmt.Fprint(c.stdout, prompt)
 		if !in.Scan() {
 			fmt.Fprintln(c.stdout)
-			return "", errors.New("no answer given; nothing was recorded")
+			return "", errors.New(c.p.T("answer.no_answer"))
 		}
 		return strings.TrimSpace(in.Text()), nil
 	}
 	for i, q := range asked.Questions {
 		fmt.Fprintf(c.stdout, "\n%d/%d %s\n", i+1, len(asked.Questions), q.Question)
 		for {
-			v, err := read(fmt.Sprintf("    [%s] > ", q.Expect()))
+			v, err := read(fmt.Sprintf("    [%s] > ", expect(c.p, q)))
 			if err != nil {
 				return g, err
 			}
@@ -138,14 +139,14 @@ func (c *command) interview(asked *chronicle.Event) (ask.Given, error) {
 			}
 			one := []ask.Question{q}
 			if _, _, err := ask.Check(one, nil, ask.Given{Values: map[string]string{q.ID: v}}); err != nil {
-				fmt.Fprintf(c.stdout, "    %s\n", strings.TrimPrefix(err.Error(), ask.ErrInvalid.Error()+": "))
+				fmt.Fprintf(c.stdout, "    %s\n", problem(c.p, err))
 				continue
 			}
 			g.Values[q.ID] = v
 			break
 		}
 		if q.Kind != ask.Text {
-			v, err := read("    comment (Enter for none) > ")
+			v, err := read("    " + c.p.T("answer.comment_prompt") + " > ")
 			if err != nil {
 				return g, err
 			}
@@ -155,9 +156,9 @@ func (c *command) interview(asked *chronicle.Event) (ask.Given, error) {
 		}
 	}
 	if len(asked.Outcomes) > 1 {
-		fmt.Fprintf(c.stdout, "\nChoose the outcome: %s\n", strings.Join(asked.Outcomes, ", "))
+		fmt.Fprintf(c.stdout, "\n%s\n", c.p.T("answer.choose_outcome", "outcomes", strings.Join(asked.Outcomes, ", ")))
 		for {
-			v, err := read("    [outcome] > ")
+			v, err := read("    [" + c.p.T("answer.outcome_prompt") + "] > ")
 			if err != nil {
 				return g, err
 			}
@@ -165,7 +166,7 @@ func (c *command) interview(asked *chronicle.Event) (ask.Given, error) {
 				v = asked.Outcomes[n-1]
 			}
 			if _, _, err := ask.Check(nil, asked.Outcomes, ask.Given{Outcome: v}); err != nil {
-				fmt.Fprintf(c.stdout, "    %s\n", strings.TrimPrefix(err.Error(), ask.ErrInvalid.Error()+": "))
+				fmt.Fprintf(c.stdout, "    %s\n", problem(c.p, err))
 				continue
 			}
 			g.Outcome = v
@@ -175,21 +176,37 @@ func (c *command) interview(asked *chronicle.Event) (ask.Given, error) {
 	return g, nil
 }
 
+// expect says what kind of answer a question takes.
+func expect(p *i18n.Printer, q ask.Question) string {
+	if q.Kind == ask.Text {
+		return p.T("answer.expect_text")
+	}
+	return q.Expect()
+}
+
+// problem says what is wrong with an answer, without the lead.
+func problem(p *i18n.Printer, err error) string {
+	var inv *ask.Invalid
+	if errors.As(err, &inv) {
+		return inv.Problem(p)
+	}
+	return err.Error()
+}
+
 // printAsked shows an open question: what is asked, what to look at, and
 // how to answer it.
-func printAsked(w io.Writer, o *orders.Orders, id int64, asked *chronicle.Event, commands bool) {
-	what := map[string]string{chronicle.ReasonGate: "gate", chronicle.ReasonHuman: "human node",
-		chronicle.ReasonDialogue: fmt.Sprintf("agent step (round %d)", asked.Round)}[asked.Reason]
-	fmt.Fprintf(w, "%s %s asks (question #%d, %s):\n", what, asked.Node, asked.Seq, asked.At.Local().Format("2006-01-02 15:04:05"))
+func printAsked(p *i18n.Printer, w io.Writer, o *orders.Orders, id int64, asked *chronicle.Event, commands bool) {
+	at := asked.At.Local().Format("2006-01-02 15:04:05")
+	fmt.Fprintln(w, p.T("answer.asks."+asked.Reason, "node", asked.Node, "seq", asked.Seq, "at", at, "round", asked.Round))
 	for _, s := range asked.Show {
-		p := filepath.Join(o.Dir, filepath.FromSlash(s))
-		if _, err := os.Stat(p); err != nil {
-			p += " (not found)"
+		path := filepath.Join(o.Dir, filepath.FromSlash(s))
+		if _, err := os.Stat(path); err != nil {
+			path = p.T("answer.not_found", "path", path)
 		}
-		fmt.Fprintf(w, "  look at: %s\n", p)
+		fmt.Fprintln(w, p.T("answer.look_at", "path", path))
 	}
 	for i, q := range asked.Questions {
-		fmt.Fprintf(w, "  %d. %s  [%s: %s]\n", i+1, q.Question, q.ID, q.Expect())
+		fmt.Fprintf(w, "  %d. %s  [%s: %s]\n", i+1, q.Question, q.ID, expect(p, q))
 	}
 	if len(asked.Outcomes) > 0 {
 		var opts []string
@@ -200,13 +217,13 @@ func printAsked(w io.Writer, o *orders.Orders, id int64, asked *chronicle.Event,
 			}
 			opts = append(opts, out)
 		}
-		fmt.Fprintf(w, "  outcome, one of: %s\n", strings.Join(opts, ", "))
+		fmt.Fprintln(w, p.T("answer.outcome_one_of", "outcomes", strings.Join(opts, ", ")))
 	}
 	if !commands {
 		return
 	}
 	cmd := engine.AnswerCommand(o, id)
-	fmt.Fprintf(w, "  answer: %s\n", cmd)
+	fmt.Fprintln(w, p.T("answer.answer_with", "command", cmd))
 	var flags []string
 	for _, q := range asked.Questions {
 		v := "TEXT"
@@ -221,20 +238,20 @@ func printAsked(w io.Writer, o *orders.Orders, id int64, asked *chronicle.Event,
 	if len(asked.Outcomes) > 1 {
 		flags = append(flags, "-outcome "+asked.Outcomes[0])
 	}
-	fmt.Fprintf(w, "      or: %s -ask %d %s\n", cmd, asked.Seq, strings.Join(flags, " "))
+	fmt.Fprintln(w, p.T("answer.or", "command", fmt.Sprintf("%s -ask %d %s", cmd, asked.Seq, strings.Join(flags, " "))))
 }
 
 // printAnswered shows one recorded answer.
-func printAnswered(w io.Writer, asked, answer *chronicle.Event) {
+func printAnswered(p *i18n.Printer, w io.Writer, asked, answer *chronicle.Event) {
 	by := ""
 	if answer.By != "" {
-		by = " by " + answer.By
+		by = p.T("answer.by", "by", answer.By)
 	}
 	via := ""
 	if answer.Via != "" {
-		via = " (" + answer.Via + ")"
+		via = " (" + p.T("answer.via."+answer.Via) + ")"
 	}
-	fmt.Fprintf(w, "answers at %s%s%s, %s:\n", answer.Node, by, via, answer.At.Local().Format(time.DateTime))
+	fmt.Fprintln(w, p.T("answer.answers_at", "node", answer.Node, "by", by, "via", via, "at", answer.At.Local().Format(time.DateTime)))
 	byID := map[string]ask.Answer{}
 	for _, a := range answer.Answers {
 		byID[a.ID] = a
@@ -248,6 +265,6 @@ func printAnswered(w io.Writer, asked, answer *chronicle.Event) {
 		fmt.Fprintln(w, line)
 	}
 	if answer.Outcome != "" && asked.Reason == chronicle.ReasonHuman {
-		fmt.Fprintf(w, "  outcome: %s\n", answer.Outcome)
+		fmt.Fprintln(w, p.T("answer.outcome", "outcome", answer.Outcome))
 	}
 }

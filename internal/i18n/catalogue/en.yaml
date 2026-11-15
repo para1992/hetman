@@ -1,0 +1,761 @@
+# English messages of Hetman's interface: the source of every translation.
+#
+# Each key maps to a message, or, for a message that depends on a number,
+# to its plural forms by CLDR category. Parameters are written in braces,
+# such as {node}; the number that picks a plural form is always {n}.
+# Node, check and outcome names, commands and file names are parameters or
+# stay literal, in Latin letters.
+
+# ---- plain-words explanation of a campaign (hetman scribe explain, the
+# "In words" tab)
+
+explain.title.where: Where it is
+explain.title.history: What ran
+explain.title.rework: Rework
+explain.title.failures: What failed
+explain.title.warnings: Warnings
+explain.who: A person
+explain.via.page: " on the page"
+explain.via.command: " from the command line"
+explain.either: "{list} or {last}"
+explain.where.no_events: Campaign {id} has no events.
+explain.where.started: Campaign {id} of flow {flow} started at {at} at {node}.
+explain.where.done: "It is done: {node} finished with {outcome} at {at}, which leads to done."
+explain.where.failed: "It failed: {node} finished with {outcome} at {at}, which leads to failed."
+explain.where.error: "It stopped in the error state at {node} at {at}: {error}."
+explain.where.halted: It is halted before {node} since {at}.
+explain.where.human: "It has been waiting for a person since {at}: {node} asks for a decision between {outcomes}."
+explain.where.human_questions: "It has been waiting for a person since {at}: {node} asks for a decision between {outcomes} and {n} question(s): {questions}."
+explain.where.dialogue: "It has been waiting for a person since {at}: the agent step {node} asks {n} question(s) in round {round}: {questions}."
+explain.where.gate: "It has been waiting for a person since {at}: the gate {node} asks {n} question(s): {questions}."
+explain.where.answered: "{who} answered the questions of {node} at {at}; {node} has not finished since."
+explain.where.limit_until: "It is waiting at {node}: attempt {attempt} hit the subscription limit at {at} ({error}); the step is due to run again at {until}. The attempt does not count."
+explain.where.limit: "It has been stopped at {node} since {at}: attempt {attempt} hit the subscription limit ({error}) and no time to retry was given. The attempt does not count; the step runs again when the campaign is resumed."
+explain.where.offline: "It has been stopped at {node} since {at}: attempt {attempt} lost connectivity ({error}). The attempt does not count; the step runs again when the campaign is resumed."
+explain.where.running: "{node} attempt {attempt} started at {at} and has not finished."
+explain.where.interrupted: "{node} attempt {attempt} was interrupted at {at}; the step runs again when the campaign is resumed."
+explain.where.moved: "It moved to {node} at {at}; {node} has not started since."
+explain.where.not_started: "{node} has not started yet."
+explain.where.halt_requested: "A halt was requested at {at}; it takes effect after the current step."
+explain.check.error: "{check} could not run: {error}"
+explain.check.soft: "{check} {outcome} (soft, a warning)"
+explain.check.ok: "{check} {outcome}"
+explain.answer_comment: " (comment {comment})"
+explain.cut_off: "{node} attempt {attempt} was cut off ({failure}): {error}; it does not count."
+explain.attempt_failed: "{node} attempt {attempt} failed ({failure}): {error}."
+explain.its_outcome: " Its outcome is {outcome}."
+explain.could_not_finish: "{node} attempt {attempt} could not finish: {error}."
+explain.finished: "{node} attempt {attempt} finished with {outcome} after {took}."
+explain.finished_checks: "{node} attempt {attempt} finished with {outcome} after {took}; checks: {checks}."
+explain.went_to: " The flow went to {to}."
+explain.asked_choose: "{node} asked a person to choose {outcomes}."
+explain.asked_choose_answer: "{node} asked a person to choose {outcomes} and to answer {questions}."
+explain.asked: "{node} asked a person: {questions}."
+explain.answered: "{who} answered {node}{via}."
+explain.answered_answers: "{who} answered {node}{via}: {answers}."
+explain.answered_chose: "{who} answered {node}{via}; chose {outcome}."
+explain.answered_answers_chose: "{who} answered {node}{via}: {answers}; chose {outcome}."
+explain.interrupted: "{node} attempt {attempt} was interrupted."
+explain.stopped: "The campaign stopped in the error state at {node}: {error}."
+explain.halt_requested: A halt was requested.
+explain.halted: The campaign halted before {node}.
+explain.resumed: The campaign was resumed.
+explain.nothing_ran_at: Nothing ran at {node}.
+explain.nothing_ran: Nothing has run yet.
+explain.never_back_to: The flow never went back to {node}.
+explain.never_back: The flow never went back to an earlier step.
+explain.back_count: The flow went back to {node} {times}.
+explain.back: "{node} finished with {outcome} and sent the flow back to {to}."
+explain.back_why: "{node} finished with {outcome} and sent the flow back to {to} ({why})."
+explain.once: once
+explain.twice: twice
+explain.times:
+  one: "{n} time"
+  other: "{n} times"
+explain.required_check: required check {check} reported {outcome}
+explain.why.no: "{who} answered no to {ids}"
+explain.why.chose: "{who} chose {outcome}"
+explain.why.output: "its output: {output}"
+explain.exit_code: " (exit code {code})"
+explain.finished_failing: "{node} attempt {attempt} finished with {outcome}{exit}{checks}."
+explain.check_error: "Check {check} of {node} attempt {attempt} could not run: {error}."
+explain.nothing_failed_at: Nothing failed at {node}.
+explain.nothing_failed: Nothing failed.
+explain.soft_warned: "The soft check {check} of {node} reported {outcome} in attempt {attempt}; it only warned."
+explain.no_warnings: No soft check warned.
+
+# ---- an operation on the orders file in plain words (wizard, scribe)
+
+op.words.new: create a new flow whose first step is the {type} node {node}{more}
+op.words.new_named: create a new flow named {flow} whose first step is the {type} node {node}{more}
+op.words.add_before: add the {type} node {node} before {before}{more}
+op.words.add_after: add the {type} node {node} after {after}{more}
+op.words.add_after_via: add the {type} node {node} after {after} (on its outcome {via}){more}
+op.words.remove: remove the node {node} and lead whatever led to it where its main outcome led
+op.words.rename: rename the node {node} to {name} everywhere it is referenced
+op.words.link: make the outcome {outcome} of {node} lead to {target}
+op.words.unlink: remove the transition of {node} on the outcome {outcome}
+op.words.set: set {field} of {node} to {value}
+op.words.unset: remove {field} from {node}
+op.words.running: running {run}
+op.words.with_timeout: with the timeout {timeout}
+op.words.soft: soft (it only warns)
+op.words.required: required (it blocks the gate)
+op.words.check: declare or change the check {name}{more}
+op.words.executor: declare or change the executor {name}, running {run}
+op.words.gate_add: add the check {check} to the gate {node} at the end
+op.words.gate_add_at: add the check {check} to the gate {node} at position {at}
+op.words.gate_remove: remove the check {check} from the gate {node}
+op.words.ask: "add the {kind} question {id} to {node}: {question}"
+op.words.ask_options: "add the {kind} question {id} to {node}: {question} (options {options})"
+op.words.language: write what the flow addresses to a person in {language}, code {code}
+op.words.language_code: write what the flow addresses to a person in the language {code}
+op.words.unlanguage: remove the language for the person, so that the flow uses English and adds no language instruction
+op.words.assistant: let Scribe ask the model {model} through the executor {executor}
+op.words.assistant_effort: let Scribe ask the model {model} through the executor {executor} with the effort {effort}
+op.words.with_checks: with the checks {checks}
+op.words.through_executor: through the executor {executor}
+op.words.model: model {model}
+op.words.effort: effort {effort}
+op.words.outcomes: outcomes {outcomes}
+op.words.timeout: timeout {timeout}
+op.words.on: on {on}
+op.note.rewritten: "{op} could not be changed in place, so the whole file was written out again: comments and key order are kept, blank lines, alignment and quoting are not"
+op.summary.new: create the orders file with its first node, whose main outcome leads to done
+op.summary.add: add a node after a node (on its main outcome, or the outcome via) or before a node; the flow is rewired through it
+op.summary.remove: remove a node; whatever led to it then leads where its main outcome led
+op.summary.rename: rename a node in the start, every transition and every prompt template placeholder
+op.summary.link: make an outcome of a node lead to a node, done or failed
+op.summary.unlink: remove the transition of an outcome of a node
+op.summary.set: "set a field of a node: {fields}"
+op.summary.unset: "remove a field of a node: {fields}"
+op.summary.check: declare a check, or change the command, timeout or soft flag of a declared one (soft only warns; required blocks the gate)
+op.summary.executor: declare an executor (an adapter program and its arguments), or change its command
+op.summary.gate-add: add a declared check to a gate, at a position from 1 (the end when not given)
+op.summary.gate-remove: remove a check from a gate
+op.summary.ask: add a question to a gate (yes or no) or a human node (yesno, choice with options, or text)
+op.summary.assistant: name the executor and model Scribe may ask to turn a sentence into one operation
+op.summary.language: write what the flow addresses to a person (questions, summaries, plans) in this language, given by its code; code and the repository stay English
+op.summary.unlanguage: "remove the language for the person: the flow uses English and adds no language instruction"
+
+# ---- problems with answers to questions (hetman answer, the answer form)
+
+ask.invalid: "invalid answers: {problems}"
+ask.no_answer: question {id} has no answer
+ask.yes_or_no: "question {id}: answer yes or no, not {value}"
+ask.choose_option: "question {id}: choose one of {options}, not {value}"
+ask.no_question: there is no question {id}
+ask.no_question_comment: "comment for {id}: there is no question {id}"
+ask.no_outcome_taken: this step takes no outcome; it follows from the answers
+ask.choose_outcome: "choose an outcome: {outcomes}"
+ask.unknown_outcome: outcome {outcome} is not one of {outcomes}
+
+# ---- progress lines of run, resume and the page's driver
+
+engine.error: "error: {error}"
+engine.done: campaign done
+engine.failed: campaign failed
+engine.halted: halted before {node}
+engine.wait_limit: "{node} waits for a person: the subscription limit was reached; hetman resume runs it again"
+engine.wait_offline: "{node} waits for a person: connectivity was lost; hetman resume runs it again"
+engine.interrupted: "{node} attempt {attempt} was interrupted; running it again"
+engine.no_process: "no process of {node} attempt {attempt} was recorded; nothing to check"
+engine.cleanup: "process {pid} of {node} attempt {attempt}: {result}"
+engine.transition: "{node} -> {target}"
+engine.started: "{node} attempt {attempt} started"
+engine.finished: "{node} finished: {outcome} ({took})"
+engine.check_ok: "  check {check}: ok"
+engine.check_soft: "  check {check}: {outcome} (soft, warning)"
+engine.check_required: "  check {check}: {outcome} (required, gate blocked)"
+engine.cannot_record_process: "cannot record process {pid} of {node}: {error}"
+engine.limit_wait: "{node} waits for the subscription limit to reset; runs again at {until}"
+engine.agent_started: "{node} attempt {attempt} started (executor {executor})"
+engine.agent_started_session: "{node} attempt {attempt} started (executor {executor}, continuing session {session})"
+engine.session: "  {node} session {session}"
+engine.dialogue: "{node} asks the person {n} question(s), round {round} of at most {rounds} ({took})"
+engine.failed_permanent: "{node} attempt {attempt} failed (permanent): {error}; no retry"
+engine.limit_hit: "{node} attempt {attempt} hit the subscription limit ({error}); it does not count"
+engine.limit_hit_no_retry: "{node} attempt {attempt} hit the subscription limit ({error}) with no time to retry; waiting for a person"
+engine.offline: "{node} attempt {attempt} lost: no connectivity ({error}); waiting for a person"
+engine.failed_all: "{node} attempt {attempt} failed ({failure}): {error}; all {n} attempts used"
+engine.failed_left: "{node} attempt {attempt} failed ({failure}): {error}; {n} of {max} attempts left"
+engine.asks: "{node} waits for a person ({n} question(s)); answer with: {command}"
+engine.asks_decision: "{node} waits for a person (a decision); answer with: {command}"
+engine.asks_decision_questions: "{node} waits for a person (a decision and {n} question(s)); answer with: {command}"
+engine.cannot_write_answers: "cannot write the answers of {node} to the work folder: {error}"
+engine.answered: "{node} answered: {outcome}"
+engine.answered_by: "{node} answered by {by}: {outcome}"
+engine.hook: "notification hook for {node}: {outcome} {error} (log {log})"
+engine.cannot_record_hook: "cannot record the notification hook: {error}"
+
+# ---- the command line
+
+cli.usage: |
+  usage: hetman <command> [flags]
+
+  commands:
+    check    check the orders without running anything
+    run      start a new campaign and run it
+    status   show where a campaign is
+    halt     halt a campaign after its current step
+    resume   continue a halted, stopped or interrupted campaign
+    answer   answer the questions a campaign asks a person
+    serve    show every campaign live on a web page (Watchtower)
+    scribe   set the flow up: a wizard, operations on the orders file, a
+             sentence through a model, campaigns explained in plain words
+             (hetman scribe help lists it all)
+    version  print the version of hetman
+
+  flags (check, run, status, halt, resume, serve):
+    -f FILE  orders file (default orders.yaml)
+  flags (run):
+    -input FILE  JSON file with the run input, an object prompt templates can refer to
+  flags (status, halt, resume, answer):
+    -c ID    campaign id (default: the latest campaign)
+  flags (answer; without -a, -comment and -outcome it asks in the terminal):
+    -a ID=ANSWER       answer one question (yes or no, an option, or text); repeat for each
+    -comment ID=TEXT   comment on one answer; repeat as needed
+    -outcome NAME      the outcome chosen at a human node
+    -ask N             answer only if question #N is still the open one
+    -by NAME           who answers (default: the user name of this computer)
+  flags (status):
+    -events  also list every chronicle event
+  flags (serve):
+    -addr ADDRESS  where to listen (default 127.0.0.1:8740, reachable only from this computer)
+  flags (scribe skill):
+    -dir DIR  folder for the skill file (default .agents/skills/hetman-scribe)
+    -force    replace a different skill file that is already there
+
+  environment (check, run):
+    HETMAN_LANGUAGE=CODE  the language for the person, overriding the language key of the orders
+                          for campaigns started now; a campaign keeps the language it started with
+
+  exit codes of run and resume: 0 done, 1 failed, 3 halted, 4 error, 5 waiting for a person, 130 interrupted
+cli.unknown_command: "hetman: unknown command {command}"
+cli.unexpected_argument: "hetman {command}: unexpected argument {arg}"
+cli.orders_rejected: "orders rejected: {n} problem(s)"
+cli.check_ok: "{path}: ok (flow {flow}, {nodes} nodes, {checks} checks{language})"
+cli.language_note: ", language {code} {label}"
+cli.bad_input: "hetman run: -input {file}: {error}"
+cli.skill_exists: "hetman scribe skill: {path}: a different file already exists; use -force to replace it"
+cli.skill_wrote: wrote {path}
+cli.skill_up_to_date: "{path} is up to date"
+cli.no_campaigns: no campaigns yet; start one with hetman run
+cli.started: campaign {id} started (flow {flow}{language})
+cli.not_contained: "hetman: step processes are not tied to this process ({error}); they are cleaned up on resume instead"
+cli.interrupted_asking: campaign {id} still waits for a person at {node}; answer with {answer}, then continue with {resume}
+cli.interrupted: campaign {id} interrupted; the current step runs again on hetman resume -c {id}
+cli.halted: campaign {id} halted; continue with hetman resume -c {id}
+cli.waiting: campaign {id} waits for a person; when the cause is gone, run hetman resume -c {id}
+cli.error_state: campaign {id} stopped in the error state; fix the cause and run hetman resume -c {id}
+cli.halt_already: campaign {id} is already halted
+cli.halt_pending: campaign {id} will halt after its current step
+cli.halt_done: campaign {id} halted at {node}
+cli.resume_elsewhere: campaign {id} is being run by another process; it continues there
+cli.resumed: campaign {id} resumed at {node}
+flag.f: orders file
+flag.input: JSON file with the run input
+flag.addr: address to listen on
+flag.c: "campaign id (default: latest)"
+flag.events: list every chronicle event
+flag.dir: folder for the skill file
+flag.skill_force: replace a different skill file
+cli.serving: "watchtower for {path} on {url} (Ctrl+C to stop)"
+cli.serve_stopped: watchtower stopped
+serve.shutdown: interrupted by shutdown; the current step runs again on resume
+serve.stopped: "stopped: {result}"
+
+# ---- hetman answer
+
+flag.ask: answer only if this question (the number shown with it) is still open
+flag.a: ID=ANSWER for one question; repeat for each
+flag.comment: ID=TEXT, a comment on one answer; repeat as needed
+flag.outcome: the outcome chosen at a human node
+flag.by: "who answers (default: the user name of this computer)"
+answer.ended: campaign {id} has ended ({end}); it asks nothing
+answer.already: "campaign {id}: the questions of {node} are already answered"
+answer.nothing_asked: campaign {id} asks nothing now (it is at {node})
+answer.nothing_recorded: nothing was recorded
+answer.recorded: answers recorded for campaign {id} at {node}
+answer.driven: the hetman process that drives campaign {id} continues it
+answer.not_driven: "no hetman process drives campaign {id}; continue it with: {command}"
+answer.no_answer: no answer given; nothing was recorded
+answer.comment_prompt: comment (Enter for none)
+answer.choose_outcome: "Choose the outcome: {outcomes}"
+answer.outcome_prompt: outcome
+answer.expect_text: text
+answer.asks.gate: "gate {node} asks (question #{seq}, {at}):"
+answer.asks.human: "human node {node} asks (question #{seq}, {at}):"
+answer.asks.dialogue: "agent step (round {round}) {node} asks (question #{seq}, {at}):"
+answer.not_found: "{path} (not found)"
+answer.look_at: "  look at: {path}"
+answer.outcome_one_of: "  outcome, one of: {outcomes}"
+answer.answer_with: "  answer: {command}"
+answer.or: "      or: {command}"
+answer.by: " by {by}"
+answer.via.command: command
+answer.via.page: page
+answer.answers_at: "answers at {node}{by}{via}, {at}:"
+answer.outcome: "  outcome: {outcome}"
+
+# ---- hetman status
+
+status.head: "campaign {id}  flow {flow}  started {started}"
+status.language: "language for the person: {language}"
+status.state: "state: {state}"
+status.header: "  NODE\tTYPE\tSTATUS\tOUTCOME\tATTEMPTS\tTIME\t"
+status.st.pending: pending
+status.st.finished: finished
+status.st.asking: asking
+status.st.running: running
+status.st.interrupted: interrupted
+status.st.error: error
+status.st.waiting: waiting
+status.st.attempt_failed: attempt failed
+status.st.not_run: not run
+status.waits_for_person: waits for a person
+status.interrupted_count: " ({n} interrupted)"
+status.check_row: "    check {check}"
+status.kind.required: required
+status.kind.soft: soft
+status.check_warning: "{outcome} (warning)"
+status.check_blocked: "{outcome} (blocked the gate)"
+status.artifacts: "artifacts of {node}: {files}"
+status.soft_warning: "soft check {check} of {node} (attempt {attempt}): {outcome}"
+status.warning: "warning: {warning}"
+status.agent: "agent {node}:"
+status.fact.executor: executor {executor}
+status.fact.model: model {model}
+status.fact.effort: effort {effort}
+status.agent.limit_retry: "subscription limit, retry at {at} (does not count): {error}"
+status.agent.waits: "{failure}, waits for a person (does not count): {error}"
+status.agent.failed_outcome: "failed ({failure}): {error} -> outcome {outcome}"
+status.agent.failed: "failed ({failure}): {error}"
+status.agent.asked: asked the person {n} question(s)
+status.agent.outcome: outcome {outcome}
+status.agent.attempt: "  attempt {n}  {status}  [{facts}]"
+status.agent.prompt: "    prompt   {file}"
+status.agent.continued: "    continued session {session}"
+status.agent.session: "    session  {session}"
+status.agent.output: "    output   {output}"
+status.d.error: "error: {error} (fix the cause, then hetman resume)"
+status.d.asking_driven: "waiting for a person at {node}: hetman answer (the running hetman process continues once answered)"
+status.d.asking: "waiting for a person at {node}: hetman answer (no hetman process drives it: after answering, hetman resume continues it)"
+status.d.answered: answered at {node}, but no hetman process drives it (hetman resume to continue)
+status.d.at: at {node}
+status.d.running: running {node} (attempt {attempt})
+status.d.halted: halted before {node} (hetman resume to continue)
+status.d.limit_wait: waiting at {node} for the subscription limit to reset; runs again at {until}
+status.d.limit_wait_undriven: waiting at {node} for the subscription limit until {until}, but no hetman process is running it (hetman resume to continue; it waits until then)
+status.d.limit: "stopped at {node}: the subscription limit was reached and no time to retry was given (hetman resume runs the step again)"
+status.d.offline: "stopped at {node}: connectivity was lost (hetman resume runs the step again)"
+status.d.halt_requested: "{where}, halt requested: halts after the current step"
+status.d.interrupted: "{where}, but no hetman process is running it: interrupted (hetman resume to continue)"
+status.d.undriven: "{where}, no hetman process is running it (hetman resume to continue)"
+
+# ---- Scribe with a model: one sentence to one operation or question
+
+query.latest: the latest campaign
+query.campaign: campaign {id}
+query.summary: explain {which}
+query.where: say where {which} is and what it waits for
+query.history: list what ran in {which}
+query.rework: say why {which} went back for rework
+query.failures: list what failed in {which}
+query.warnings: list the soft checks that warned in {which}
+query.other: "{kind} of {which}"
+query.at_node: ", at {node}"
+assist.unusable: "Scribe could not use the model's answer: {error}\nNothing was changed. The wizard works without a model: hetman scribe"
+assist.unclear: "The sentence can mean more than one thing. Did you mean:"
+assist.none: none of these
+assist.needs_choice: "Nothing was changed: choosing needs an answer, so run it again without -yes, or say it more precisely."
+assist.choice: "Choice [0-{max}]:"
+assist.nothing_changed: Nothing was changed.
+assist.proposes: "Scribe proposes: {words}."
+assist.cannot_apply: "It cannot be applied: {error}\nNothing was changed."
+assist.check_fails: "The result would not pass the orders check:\n{problems}\nNothing was changed."
+assist.apply: Apply this change? [y/N]
+assist.no_campaigns: There are no campaigns to ask about yet.
+assist.understood: "Scribe understood: {words}. {error}"
+op.note: "note: {note}"
+op.wrote: Wrote {path}.
+yes.words: y, yes
+no.words: n, no
+
+# ---- hetman scribe
+
+scribe.usage: |
+  usage:
+    hetman scribe [-f FILE]                      the wizard: build or change the flow by answering questions
+    hetman scribe [-f FILE] [-yes] "SENTENCE"    one sentence to one operation or question, through the model the orders name
+    hetman scribe OPERATION ARGS [flags]         one operation on the orders file
+    hetman scribe explain [-f FILE] [-c ID] [-kind KIND] [-node NODE]
+                                                 explain a campaign in plain words (kinds: {kinds})
+    hetman scribe skill [-dir DIR] [-force]      write the setup assistant skill for a coding agent
+
+  operations:
+scribe.usage_flags: |
+
+  node flags (new, add): -run CMD, -timeout D, -checks A,B, -executor NAME, -model M, -effort E,
+    -tools A,B, -attempts N, -prompt FILE, -schema FILE, -outcomes A,B, -on OUTCOME=TARGET (repeat),
+    -starters (create missing prompt and schema files)
+  set and unset fields: run, timeout, idle_timeout, executor, model, effort, tools, attempts, dialogue, prompt, schema
+  language codes: {codes}
+  flags of every operation:
+    -f FILE    orders file (default orders.yaml)
+    -dry-run   show the change and the check, write nothing
+    -force     write even if the result does not pass the check (for a state meant to be finished later)
+flag.yes: apply a clear operation without asking
+flag.dry_run: show the change, write nothing
+flag.op_force: write even if the result does not pass the check
+flag.run: "command: program and arguments"
+flag.list: list, separated by commas
+flag.number: number
+flag.starters: create missing prompt and schema files
+flag.soft: the check only warns
+flag.required: the check blocks the gate
+flag.explain_c: "campaign id (default: the latest)"
+flag.kind: what to explain
+flag.node: only this node
+scribe.yes_for_sentence: "hetman scribe: -yes is for a sentence; the wizard always asks"
+scribe.not_an_operation: "hetman scribe: {arg} is not an operation; put a sentence in quotes, or see hetman scribe help"
+scribe.op_usage: "usage: hetman scribe {form}\nexample: {example}"
+scribe.soft_or_required: "hetman scribe: a check is either -soft or -required"
+scribe.nothing_written: nothing was written
+scribe.already_says: The file already says that; nothing to write.
+scribe.does_not_pass: the result does not pass the orders check
+scribe.dry_run: "Dry run: nothing was written."
+scribe.nothing_written_force: nothing was written (use -force to write it anyway)
+scribe.wrote_forced: Wrote {path} although it does not pass the check (-force).
+op.created: Created {path}.
+scribe.no_campaigns: there are no campaigns yet
+scribe.no_campaign: there is no campaign {id}
+scribe.no_node: campaign {id} has no node {node}
+scribe.bad_kind: "hetman scribe explain: -kind must be one of {kinds}"
+scribe.sentence_invalid: "hetman scribe: the orders do not pass the check; a sentence can only be mapped to an operation on a valid file"
+scribe.no_model: |-
+  hetman scribe: {path} names no model for Scribe, and there is no default.
+  To use one, name a declared executor and a model, for example:
+    hetman scribe assistant EXECUTOR MODEL
+  Without a model, the wizard asks fixed questions: hetman scribe
+  and every operation is a command: hetman scribe help
+
+# ---- the wizard (hetman scribe)
+
+wizard.title: Scribe wizard for {path}. No model is used.
+wizard.hint: Enter takes the suggestion in [brackets]; a number picks from a list.
+wizard.new_file: "{file} does not exist yet, so this starts a new flow."
+wizard.what_next: What next?
+wizard.action.add_step: add a step
+wizard.action.add_gate: add a gate
+wizard.action.remove_step: remove a step
+wizard.action.rename_step: rename a step
+wizard.action.change_transition: change a transition
+wizard.action.timeout: set or remove a timeout
+wizard.action.change_agent: change an agent step (executor, model, effort, tools, attempts)
+wizard.action.declare_check: declare or change a check
+wizard.action.declare_executor: declare an executor
+wizard.action.add_question: add a question to a gate or a human step
+wizard.action.quit: quit
+wizard.place.after: after a step
+wizard.place.before: before a step
+wizard.type.script: script (runs a command)
+wizard.type.agent: agent (a model does the work)
+wizard.type.human: human (a person decides)
+wizard.kind.required: required (blocks the gate)
+wizard.kind.soft: soft (only warns)
+wizard.another_outcome: another outcome
+wizard.orders_invalid: "the orders do not pass the check, so the wizard cannot go on:"
+wizard.cannot: "Cannot {words}: {error}\nNothing was changed."
+wizard.the_change: "The change:"
+wizard.write_it: Write it?
+wizard.need_answer: An answer is needed here.
+wizard.bad_name: Use letters, digits, '_', '-' and '.', starting with a letter or digit; done and failed are taken.
+wizard.name_taken: There is a step named {name} already.
+wizard.choice: Choice
+wizard.pick_number: Pick a number from {from} to {to}.
+wizard.yes_short: y
+wizard.no_short: n
+wizard.yes_no: (y/n)
+wizard.answer_yes_no: Answer y or n.
+wizard.flow_name: Flow name
+wizard.first_step: The first step of the flow.
+wizard.language.question: Which language should the flow use for what it addresses to a person (questions, summaries, plans)?
+wizard.language.note: Code, code comments and everything written into the repository stay in English.
+wizard.language.skip: "{skip}, keep English"
+wizard.language.prompt: "Language: a number, a code or a name"
+wizard.language.unknown: No language in the list is called {name}; type a number, a code or a name from the list.
+wizard.language.ambiguous: "More than one language matches: {names}. Type its code."
+wizard.where: Where does it go?
+wizard.after_which: After which step?
+wizard.before_which: Before which step?
+wizard.step_kind: What kind of step?
+wizard.step_name: Step name (letters, digits, - _ .)
+wizard.command: Command to run (program and arguments)
+wizard.time_limit: Time limit, such as {example} (Enter for none)
+wizard.time_limit_none: Time limit, such as {example} ("none" removes it)
+wizard.if_fails: If it fails, go to
+wizard.which_executor: Which executor runs it?
+wizard.no_executor: No executor is declared yet; declare the adapter that runs agent steps.
+wizard.model: Model, passed to the adapter as is (Enter for none)
+wizard.effort: Effort, passed to the adapter as is (Enter for none)
+wizard.outcomes: Outcomes the model may report, separated by commas
+wizard.if_outcome: If the outcome is {outcome}, go to
+wizard.if_step_fails: If the step fails, go to
+wizard.starters: Create starter prompt and schema files where missing?
+wizard.human_choices: Choices the person has, separated by commas
+wizard.if_person_chooses: If the person chooses {outcome}, go to
+wizard.gate_name: Gate name
+wizard.declared_checks: "Declared checks: {checks}"
+wizard.declared_checks_change: "Declared checks: {checks} (a declared name changes that check)"
+wizard.gate_checks: Checks to run, in order, separated by commas ("new" declares new ones)
+wizard.declare_gate_checks: Declare the checks the gate runs, cheapest first.
+wizard.another_check: Declare another check for this gate?
+wizard.if_blocks: If the gate blocks, go to
+wizard.check_name: Check name
+wizard.check_kind: If it fails, should the gate block or only warn?
+wizard.executor_name: Executor name
+wizard.adapter_command: Adapter command (program and arguments)
+wizard.which_step: Which step?
+wizard.new_name: New name
+wizard.which_outcome: Which outcome?
+wizard.outcome_name: Outcome name
+wizard.lead_where: Where should it lead?
+wizard.no_agent_step: there is no agent step
+wizard.which_agent_step: Which agent step?
+wizard.what_to_change: What to change?
+wizard.new_value: New value ("none" removes it)
+wizard.no_ask_target: there is no gate or human step to ask from
+wizard.which_ask_target: Which gate or human step?
+wizard.question_id: Question id (letters, digits, - _ .)
+wizard.question: The question
+wizard.answer_kind: Kind of answer?
+wizard.options: Options, separated by commas
+
+# ---- the web page (Watchtower); every key the page uses starts with page.
+
+page.brand: Watchtower
+page.noscript: Watchtower needs JavaScript to show campaigns.
+page.loading: Loading…
+page.orders_not_loading: "the orders file does not load, so the last good version is shown: {error}"
+page.lang.label: Language of this page
+page.lang.english_only: English texts
+page.live.connecting: connecting
+page.live.live: live
+page.live.lost: not connected
+page.live.reconnecting: reconnecting
+page.status.passed: passed
+page.status.running: running
+page.status.waiting: waiting
+page.status.failed: failed
+page.status.warning: soft check failed
+page.status.notrun: not run
+page.status.interrupted: interrupted
+page.status.limit: subscription limit reached
+page.status.offline: connectivity lost
+page.status.asking: waiting for a person
+page.state.running: running
+page.state.halted: halted
+page.state.done: done
+page.state.failed: failed
+page.state.error: error
+page.state.interrupted: interrupted
+page.state.waiting: waiting
+page.state.limit: limit
+page.state.offline: offline
+page.state.asking: asking
+page.badge.waiting: waiting for limit
+page.badge.limit: limit reached
+page.badge.offline: offline
+page.badge.asking: waiting for a person
+page.failure.invalid_output: the output did not match the schema
+page.failure.transient: the adapter reported a transient error
+page.failure.permanent: the adapter reported a permanent error; no retry
+page.failure.crash: the adapter ended without a proper result
+page.failure.protocol: the adapter broke the protocol
+page.failure.timeout: the attempt ran past its timeout
+page.failure.idle_timeout: the adapter sent nothing for longer than the idle timeout
+page.failure.limit: the subscription limit was reached; the attempt does not count
+page.failure.offline: connectivity was lost; the attempt does not count
+page.cleanup.gone: nothing of the old process tree was alive
+page.cleanup.killed: the old process tree was still alive and was killed
+page.cleanup.reused: the process id now belongs to an unrelated process, which was left alone
+page.cleanup.unverified: the start time of the old process could not be read, so it was left alone
+page.cleanup.unrecorded: the attempt’s process was never recorded; there was nothing to check
+page.cleanup.title: Process cleanup
+page.cleanup.process: process {pid}
+page.cleanup.process_check: process {pid} of check {check}
+page.cleanup.started: ", started {ident}"
+page.dur.sec: "{v}s"
+page.dur.min: "{m}m {s}s"
+page.dur.hour: "{h}h {m}m"
+page.tick.sec: "{s}s"
+page.tick.min: "{m}m"
+page.tick.min_sec: "{m}m {s}s"
+page.tick.hour: "{h}h"
+page.tick.hour_min: "{h}h {m}m"
+page.not_found: Campaign {id} was not found.
+page.all_campaigns: All campaigns
+page.list.title: Campaigns
+page.list.empty: No campaigns yet. Start one with {command}.
+page.list.col.campaign: Campaign
+page.list.col.flow: Flow
+page.list.col.state: State
+page.list.col.started: Started
+page.list.col.duration: Duration
+page.list.col.steps: Steps
+page.list.steps_label: steps
+page.halt_requested: halt requested
+page.halt_requested_long: "halt requested: halts after the current step"
+page.pos.running: running {node} (attempt {attempt})
+page.pos.halted: halted before {node}
+page.pos.asking: waits at {node} for a person to answer
+page.pos.waiting: waiting at {node} for the subscription limit; runs again at {at} (in {left})
+page.pos.limit: "stopped at {node}: subscription limit reached"
+page.pos.offline: "stopped at {node}: connectivity lost"
+page.pos.interrupted: stopped at {node}, no process drives it
+page.pos.at: at {node}
+page.campaign.title: "Campaign #{id}"
+page.halt: Halt
+page.halt.title: Halt after the current step
+page.resume: Resume
+page.resume.title: Continue from the recorded position
+page.fact.started: started {time}
+page.fact.duration: duration {time}
+page.fact.language: language {language}{code}
+page.fact.language_title: Text for a person is written in this language
+page.error_state: "Stopped in the error state:"
+page.error_fix: Fix the cause, then resume.
+page.tab.pipeline: Pipeline
+page.tab.timeline: Timeline
+page.tab.chronicle: Chronicle
+page.tab.words: In words
+page.ask.waiting: Waiting for a person.
+page.ask.reason.gate: The gate asks at {node}.
+page.ask.reason.human: A person decides here at {node}.
+page.ask.reason.dialogue: The agent step asks at {node}.
+page.ask.answer_below: Answer below, or in a terminal with {command}.
+page.ask.answer_card: "{link}, or in a terminal with {command}"
+page.ask.answer_card_link: Answer on its step card
+page.ask.undriven: "No process drives the campaign now: an answer given here continues it from this server; after an answer in a terminal, resume it."
+page.wait.limit: Subscription limit reached.
+page.wait.limit_text: The adapter gave no time to retry, so the campaign waits for a person. Resume runs {node} again; the lost attempt does not count.
+page.wait.offline: Connectivity lost.
+page.wait.offline_text: The attempt of {node} was lost and does not count. Resume runs the step again once the connection is back.
+page.wait.reset: Waiting for the subscription limit to reset.
+page.wait.reset_text: "{node} runs again on its own at {at}."
+page.wait.undriven: No process drives the campaign now; resume it and it waits until then.
+page.toast.halt.already: A halt is already in force.
+page.toast.halt.pending: The campaign halts after its current step.
+page.toast.halt.halted: Halted.
+page.toast.resume.driving: Resumed. This server now drives the campaign.
+page.toast.resume.elsewhere: Resumed. The process that drives it continues.
+page.toast.halt_failed: "halt failed: {error}"
+page.toast.resume_failed: "resume failed: {error}"
+page.toast.answer.driving: Answers recorded. This server now drives the campaign.
+page.toast.answer.elsewhere: Answers recorded. The process that drives the campaign continues.
+page.toast.answer.recorded: Answers recorded. The campaign is halted or stopped; resume it to continue.
+page.toast.answer.other: Answers recorded.
+page.pipeline.start: start
+page.not_in_orders: not in orders
+page.exit.taken: taken {n} time(s)
+page.exit.not_taken: not taken
+page.now: now
+page.off_main_line: off the main line
+page.check.soft: soft
+page.check.required: required
+page.tile.needs_answer: needs an answer
+page.tile.limit_again: limit, again at {at}
+page.tile.limit: limit reached
+page.tile.offline: offline
+page.tile.halted_here: halted here
+page.tile.next: next
+page.attempts: "{n} attempts"
+page.legend: legend
+page.card.transitions: Transitions
+page.card.taken: (taken ×{n})
+page.card.attempts: "{n} attempts, newest first"
+page.card.attempt: Attempt
+page.card.attempt_n: Attempt {n}
+page.card.not_run: This step has not run in this campaign.
+page.card.label: step {node}
+page.card.executor: executor
+page.card.model: model
+page.card.effort: effort
+page.card.effort_value: effort {effort}
+page.card.close: Close
+page.card.checks: Checks
+page.card.log_files: log and files
+page.card.result_file: Result file
+page.card.exit: exit {code}
+page.card.prompt: Prompt
+page.card.log: Log
+page.card.log_live: Log (live)
+page.card.stderr: adapter diagnostics (standard error)
+page.card.output: Output (validated)
+page.card.rejected_output: Rejected output
+page.card.artifacts: Artifacts
+page.kv.status: Status
+page.kv.outcome: Outcome
+page.kv.started: Started
+page.kv.finished: Finished
+page.kv.duration: Duration
+page.kv.exit: Exit code
+page.kv.executor: Executor
+page.kv.model: Model
+page.kv.effort: Effort
+page.kv.continued: Continued
+page.kv.continued_session: session {session}
+page.kv.session: Session
+page.kv.why_failed: Why it failed
+page.kv.retry_at: Retry at
+page.kv.details: Details
+page.kv.error: Error
+page.kv.went_to: Went to
+page.file.loading: loading…
+page.file.cannot_read: "cannot read: {error}"
+page.askblock.gate: "Questions for a person (#{seq}, asked {at})"
+page.askblock.human: "Decision of a person (#{seq}, asked {at})"
+page.askblock.dialogue: "Questions of the agent, round {round} (#{seq}, asked {at})"
+page.askblock.look_at: Look at
+page.answers.none: Not answered.
+page.answers.answered: Answered
+page.answers.by: by {by}
+page.answers.via_page: on this page
+page.answers.via_command: on the command line
+page.answers.at: at {at}
+page.form.yes: "yes"
+page.form.no: "no"
+page.form.kind.yesno: yes or no
+page.form.kind.choice: one of the options
+page.form.kind.text: text
+page.form.comment: comment (optional)
+page.form.comment_on: comment on {id}
+page.form.question_id: question id
+page.form.outcome: "Outcome: where the flow goes next"
+page.form.goes_on: The flow goes on with {outcome}.
+page.form.your_name: your name (optional)
+page.form.answered_by: Answered by
+page.form.answered_by_label: answered by
+page.form.recording: Recording…
+page.form.record: Record answers
+page.form.terminal: "The same from a terminal: {command}"
+page.form.terminal_flags: "or, without questions: {command}"
+page.form.nothing_recorded: "Nothing was recorded: {problem}"
+page.log.skipped: "{n} earlier bytes not shown"
+page.log.empty: (empty)
+page.log.cannot_read: "cannot read the log: {error}"
+page.timeline.empty: Nothing has run yet.
+page.chronicle.col.seq: "#"
+page.chronicle.col.time: Time
+page.chronicle.col.event: Event
+page.chronicle.col.node: Node
+page.chronicle.col.check: Check
+page.chronicle.col.attempt: Attempt
+page.chronicle.col.outcome: Outcome
+page.chronicle.col.details: Details
+flag.err.pair: use ID=TEXT
+flag.err.twice: "{id} is given twice"
+flag.err.on: use OUTCOME=TARGET
+cli.input_not_object: "must hold one JSON object: {error}"
+cli.input_null: must hold one JSON object, not null
