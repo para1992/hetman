@@ -274,7 +274,10 @@ nodes:
 		{Seq: 5, Kind: chronicle.StepStarted, Node: "a", Attempt: 2, Details: agent(2, chronicle.Details{})},
 		{Seq: 6, Kind: chronicle.StepFinished, Node: "a", Attempt: 2, Details: chronicle.Details{Failure: chronicle.FailLimit, Error: "limit", RetryAt: &retry}},
 	}
-	c := build(chronicle.Campaign{ID: 1}, ev, o, dir, func() bool { return true })
+	// A repair round of attempt 1, recorded before its step_finished in a
+	// real chronicle, belongs to that attempt wherever it stands.
+	c := build(chronicle.Campaign{ID: 1}, append(ev[:3:3], append([]chronicle.Event{{Seq: 3, Kind: chronicle.OutputRepair, Node: "a", Attempt: 1,
+		Details: chronicle.Details{Round: 1, Error: "$.extra: not allowed", Session: "s-1", Prompt: "prompts/a.1.repair1.txt"}}}, ev[3:]...)...), o, dir, func() bool { return true })
 	if c.State != StateWaiting || c.Wait != chronicle.WaitLimit || c.WaitUntil == nil || !c.WaitUntil.Equal(retry) {
 		t.Fatalf("state %s wait %s until %v", c.State, c.Wait, c.WaitUntil)
 	}
@@ -286,6 +289,9 @@ nodes:
 	if a[0].Status != StatusFailed || a[0].Failure != chronicle.FailInvalidOutput || a[0].Session != "s-1" || a[0].Prompt != "prompts/a.1.txt" ||
 		a[0].Log != "logs/a.1.log" || a[0].Stderr != "logs/a.1.stderr.log" || a[0].Executor != "stub" {
 		t.Fatalf("attempt 1 %+v", a[0])
+	}
+	if r := a[0].Repairs; len(r) != 1 || r[0].Round != 1 || r[0].Max != 2 || r[0].Error != "$.extra: not allowed" || r[0].Prompt != "prompts/a.1.repair1.txt" {
+		t.Fatalf("repairs of attempt 1 %+v", r)
 	}
 	if a[1].Status != StatusInterrupted || a[1].RetryAt == nil {
 		t.Fatalf("attempt 2 %+v", a[1])

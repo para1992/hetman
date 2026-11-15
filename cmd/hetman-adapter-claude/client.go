@@ -166,7 +166,13 @@ func attempt(o options, st adapter.Step, session string, out *sender, diag io.Wr
 	cmd := exec.Command(o.client, clientArgs(st, session)...)
 	cmd.Dir = st.Workdir
 	cmd.Env = clientEnv(os.Environ(), o.env)
-	cmd.Stdin = strings.NewReader(st.Prompt + scopeNote(st.Tools))
+	prompt := st.Prompt
+	if st.Repair == 0 {
+		// A repair round asks for the answer only; the session knows the
+		// step's tools already.
+		prompt += scopeNote(st.Tools)
+	}
+	cmd.Stdin = strings.NewReader(prompt)
 	tail := &tailBuffer{max: 8 << 10}
 	cmd.Stderr = io.MultiWriter(diag, tail)
 	// A process the client started must not keep the adapter waiting for

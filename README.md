@@ -656,6 +656,19 @@ After a rejected answer, the next prompt ends with what was wrong with it. When 
 attempts are used up, the node's outcome is `fail`. A permanent error gives `fail`
 at once. A node the flow comes back to starts with all its attempts again.
 
+**Repairing an answer.** An answer that does not match the schema is first sent back
+to the same conversation, when the adapter declares the `repair` feature and reported
+a session: Hetman lists what was wrong and asks for only the corrected JSON object,
+without redoing or changing any work. Up to 2 such repair rounds run per attempt;
+they are not attempts, and the step's `timeout` still bounds the attempt with them.
+A corrected answer is judged like any other; the tool calls the client denied in the
+first turn stay with the attempt and still count for `fail_on_denied`. When the
+repairs are used up, or a round gives no answer (the conversation cannot be
+continued, an error, a timeout), the attempt fails with `invalid_output` as it would
+have without them. Each round is an `output_repair` event in the chronicle, a few
+lines in the step's log (the rejected answer among them), a `repair` line under the
+attempt in `hetman status` and a line on the step card.
+
 **Denied tool calls.** An adapter reports the tool calls its client denied in a step
 with the answer; they are recorded with the attempt and shown in `hetman status`
 (`denied` lines under the attempt), `hetman scribe explain` and the step card. By
@@ -1369,8 +1382,9 @@ the extra argument `--describe`. It must print one line and exit with code 0:
 reads; `protect`, which says the adapter keeps the client's file tools off the paths
 in `protect` (below); `check`, which says it can check steps without running them;
 `progress`, which says it sends progress messages while its client works
-silently; and `catalog`, which says it can tell which models and efforts its client
-offers.
+silently; `catalog`, which says it can tell which models and efforts its client
+offers; and `repair`, which says it takes repair rounds (`repair` in the start
+message, below).
 
 **Usage.** An adapter that declares `usage` answers the extra arguments `--usage
 five_hour weekly` with one line and exit code 0, without making a model request: its
@@ -1427,6 +1441,13 @@ everything inside them; `writable` lists folders that must stay readable and
 writable although they lie inside a protected path or outside `workdir`. An adapter
 whose client can enforce this declares `protect`. A tools entry the client would
 accept and never honour should be a `permanent` error that names it.
+
+A start message with `"repair": N` (only to an adapter that declares `repair`, and
+always with a `session`) is round N of a repair: the answer of that conversation did
+not match `schema`, and `prompt` asks the same conversation to correct only the
+answer; it is not the task. Continue that session with the prompt. When the client
+cannot continue it, report a `permanent` error: never start a new conversation for a
+repair, which would know nothing of the work the answer is about.
 
 **Check.** An adapter that declares `check` is run by `hetman check` with the extra
 argument `--check` and gets one line listing the agent nodes that use it:
@@ -1492,7 +1513,9 @@ HETMAN_ADAPTER='["/path/to/my-adapter"]' go test ./internal/adapter/adaptertest 
 ```
 
 It sends tiny steps: one, one resumed and a dialogue of two steps (both only for an
-adapter that declares `resume`), and one that is cancelled, and asks for the usage
+adapter that declares `resume`), a step with a repair round of its session and a
+repair round of a session the client does not have, which must end with an error
+(both only for an adapter that declares `repair`), and one that is cancelled, and asks for the usage
 and the catalogue (only for an adapter that declares `usage` or `catalog`; no model
 request); `HETMAN_ADAPTER_MODEL` and
 `HETMAN_ADAPTER_EFFORT` set the `model` and `effort` of those steps, so that a real

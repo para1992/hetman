@@ -12,8 +12,15 @@
 //	HETMAN_ADAPTER='["/path/to/adapter"]' go test ./internal/adapter/adaptertest -run External -v
 //
 // The steps it sends use the node ids "conformance", "conformance-resume",
-// "conformance-dialogue" and "conformance-cancel" and ask for a trivial
-// answer, so an adapter for a real client makes real but tiny requests.
+// "conformance-dialogue", "conformance-repair" and "conformance-cancel" and
+// ask for a trivial answer, so an adapter for a real client makes real but
+// tiny requests.
+//
+// The repair check runs only for an adapter that declares the repair
+// feature: a step, then a repair round of its session that must end with a
+// result, then a repair round of a session the client does not have
+// (MissingSession), which must end with an error and not with a new
+// conversation.
 //
 // Resume, dialogue, usage and catalog are optional capabilities: the resume
 // and dialogue checks run only for an adapter that declares the resume
@@ -70,6 +77,23 @@ const DialoguePrompt = `This is a protocol check. Do not use any tools and do no
 
 // DialogueAnswer is the message that continues the dialogue check.
 const DialogueAnswer = `The person answered your questions: color = blue. Now reply with exactly this JSON object and nothing else: {"outcome": "ok"}`
+
+// RepairSchema is the output schema of the repair check: the conformance
+// schema with no other property allowed.
+const RepairSchema = `{"type":"object","properties":{"outcome":{"type":"string","enum":["ok"]}},"required":["outcome"],"additionalProperties":false}`
+
+// RepairFirstPrompt is the prompt of the first step of the repair check,
+// whose answer the check then treats as rejected.
+const RepairFirstPrompt = `This is a protocol check. Do not use any tools and do not change any files. Reply with exactly this JSON object and nothing else: {"outcome": "ok", "note": ""}`
+
+// RepairPrompt is the message of the repair round of the repair check.
+const RepairPrompt = "Your answer was not accepted: it does not match the required output schema.\n- $: property \"note\" is not allowed\n" +
+	`Do not redo or change any work, and do not call any tools. Answer again with only the corrected JSON object, which is {"outcome": "ok"}, and nothing else.`
+
+// MissingSession is a session id no client has, which the repair check asks
+// an adapter to continue: the adapter must report an error, not start a new
+// conversation.
+const MissingSession = "hetman-conformance-no-such-session"
 
 // CancelPrompt is the prompt of the step that is cancelled.
 const CancelPrompt = `This is a protocol check. Do not use any tools and do not change any files. Count from 1 to 2000 in words, one number per line, then reply with {"outcome": "ok"}.`
@@ -145,6 +169,39 @@ func Run(t *testing.T, cfg Config) {
 		s = run(t, cfg, desc, next, false)
 		if s.terminal == nil || s.terminal.Type != adapter.TypeResult {
 			t.Fatalf("the continued step must end with a result; got %+v", s.terminal)
+		}
+	})
+	t.Run("repair", func(t *testing.T) {
+		if !desc.Has(adapter.FeatureRepair) {
+			t.Skip("the adapter does not declare the repair feature")
+		}
+		if !desc.Has(adapter.FeatureResume) {
+			t.Fatal("the adapter declares repair, which continues a session, but not resume")
+		}
+		first := step(cfg, "conformance-repair", RepairFirstPrompt, nil)
+		first.Schema = json.RawMessage(RepairSchema)
+		s := run(t, cfg, desc, first, false)
+		if s.terminal == nil || s.terminal.Type != adapter.TypeResult {
+			t.Fatalf("the first step must end with a result; got %+v", s.terminal)
+		}
+		if s.session == "" {
+			t.Fatal("the first step reported no session, so its answer cannot be repaired")
+		}
+		fix := step(cfg, "conformance-repair", RepairPrompt, &s.session)
+		fix.Schema, fix.Repair = json.RawMessage(RepairSchema), 1
+		r := run(t, cfg, desc, fix, false)
+		if r.terminal == nil || r.terminal.Type != adapter.TypeResult {
+			t.Fatalf("a repair round must end with a result; got %+v", r.terminal)
+		}
+		if r.session != "" && r.session != s.session {
+			t.Errorf("the repair round reported session %s, not the session %s it continues", r.session, s.session)
+		}
+		missing := MissingSession
+		gone := step(cfg, "conformance-repair", RepairPrompt, &missing)
+		gone.Schema, gone.Repair = json.RawMessage(RepairSchema), 1
+		g := run(t, cfg, desc, gone, false)
+		if g.terminal == nil || g.terminal.Type != adapter.TypeError {
+			t.Fatalf("a repair round of a session the client does not have must end with an error, not a new conversation; got %+v", g.terminal)
 		}
 	})
 	t.Run("usage", func(t *testing.T) {

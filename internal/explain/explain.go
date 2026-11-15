@@ -459,6 +459,8 @@ func (x *explainer) history() []string {
 			s = p.T("explain.item_not_run"+"_"+e.Outcome, "node", e.Node, "item", e.Item, "needs", e.Needs)
 		case chronicle.LockWaiting:
 			s = p.T("explain.lock_waited", "node", e.Node, "lock", e.Lock, "holder", e.Holder)
+		case chronicle.OutputRepair:
+			s = p.T("explain.output_repair", "node", e.Node, "attempt", e.Attempt, "round", e.Round, "error", trim(e.Error))
 		case chronicle.Retried, chronicle.Rewound:
 			s = p.T("explain."+e.Kind, "who", x.who(e), "via", x.via(e), "node", e.Node)
 		default:

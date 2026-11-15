@@ -44,6 +44,12 @@ const (
 	Retried         = "retried"       // a person sent the campaign back to a failed step, with a fresh attempt budget
 	Rewound         = "rewound"       // a person sent the campaign back to a node it visited before
 	NoClient        = "no_client"     // no client of a step's role can run it now; the campaign waits
+	// OutputRepair: the answer of an agent step's attempt does not match its
+	// schema, and the engine asks the same conversation to correct it
+	// (Round, the rejected answer's problems in Error, Session, the message
+	// in Prompt). It is not an attempt; the step_finished of the attempt
+	// follows.
+	OutputRepair = "output_repair"
 )
 
 // Why a campaign waits for a person, recorded as Details.Reason of an asked
@@ -123,7 +129,7 @@ type Details struct {
 	Questions []ask.Question `json:"questions,omitempty"` // asked: the questions
 	Show      []string       `json:"show,omitempty"`      // asked: files to look at, relative to the orders folder
 	Outcomes  []string       `json:"outcomes,omitempty"`  // asked by a human node: the outcomes to choose from
-	Round     int            `json:"round,omitempty"`     // asked by a dialogue step: which round of questions
+	Round     int            `json:"round,omitempty"`     // asked by a dialogue step: which round of questions; output_repair: which repair of the attempt
 	Answers   []ask.Answer   `json:"answers,omitempty"`   // answered: the answers, in question order
 	Ask       int64          `json:"ask,omitempty"`       // answered, notified: the seq of the event answered or announced
 	By        string         `json:"by,omitempty"`        // answered, retried, rewound: who did it, when known

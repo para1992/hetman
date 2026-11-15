@@ -851,6 +851,7 @@
       a.failure ? kv(t('page.kv.why_failed'), [h('code', { text: a.failure }), ' — ', I.texts['page.failure.' + a.failure] !== undefined ? t('page.failure.' + a.failure) : '']) : null,
       a.retryAt ? kv(t('page.kv.retry_at'), fmtTime(a.retryAt, true)) : null,
       (a.denied || []).length ? kv(t('page.kv.denied'), h('span', { class: 'err' }, a.denied.map((d) => h('div', { text: d })))) : null,
+      (a.repairs || []).length ? kv(t('page.kv.repairs'), h('span', null, a.repairs.map((r) => h('div', { text: t('page.repair', { round: r.round, max: r.max, error: r.error }) })))) : null,
       a.error ? kv(t(a.failure ? 'page.kv.details' : 'page.kv.error'), h('span', { class: 'err', text: a.error })) : null,
       a.transition ? kv(t('page.kv.went_to'), h('code', { text: a.transition })) : null);
     const body = h('div', { class: 'attempt-body' }, facts);

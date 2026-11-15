@@ -39,7 +39,8 @@ type agentAttempt struct {
 	running, interrupted    bool
 	outcome, failure, err   string
 	output                  string
-	dropped                 string // a cannot-proceed reason given next to another outcome
+	dropped                 string            // a cannot-proceed reason given next to another outcome
+	repairs                 []chronicle.Event // output_repair events of the attempt
 	retryAt                 *time.Time
 	asked                   int               // questions this attempt asked the person
 	choice                  *chronicle.Choice // how the client of a step run through a role was chosen
@@ -92,6 +93,10 @@ func (c *command) status(id int64, listEvents bool) int {
 		case chronicle.AgentSession:
 			if a := view(e.Node).lastAgent(e.Attempt); a != nil {
 				a.sessionOut = e.Session
+			}
+		case chronicle.OutputRepair:
+			if a := view(e.Node).lastAgent(e.Attempt); a != nil {
+				a.repairs = append(a.repairs, e)
 			}
 		case chronicle.StepFinished:
 			v := view(e.Node)
@@ -473,6 +478,9 @@ func printAgent(p *i18n.Printer, w io.Writer, node string, attempts []*agentAtte
 		}
 		if a.dropped != "" {
 			fmt.Fprintln(w, p.T("status.agent.dropped", "field", orders.UnableField, "outcome", a.outcome, "reason", a.dropped))
+		}
+		for _, r := range a.repairs {
+			fmt.Fprintln(w, p.T("status.agent.repair", "round", r.Round, "max", engine.MaxRepairs, "error", r.Error))
 		}
 		if a.prompt != "" {
 			fmt.Fprintln(w, p.T("status.agent.prompt", "file", a.prompt))

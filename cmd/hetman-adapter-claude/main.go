@@ -91,7 +91,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if describe {
 		data, _ := json.Marshal(adapter.Description{Protocol: []int{adapter.Version}, Name: adapterName,
-			Features: []string{adapter.FeatureResume, adapter.FeatureProtect, adapter.FeatureCheck, adapter.FeatureProgress, adapter.FeatureCatalog}})
+			Features: []string{adapter.FeatureResume, adapter.FeatureProtect, adapter.FeatureCheck, adapter.FeatureProgress, adapter.FeatureCatalog, adapter.FeatureRepair}})
 		fmt.Fprintf(stdout, "%s\n", data)
 		return 0
 	}
@@ -198,6 +198,20 @@ func step(o options, st adapter.Step, out *sender, diag io.Writer, cancel <-chan
 			out.log(readOnlyNote)
 			break
 		}
+	}
+	if st.Repair > 0 {
+		// A repair round asks the session that gave a rejected answer to
+		// correct it; a new conversation would know nothing of the work the
+		// answer is about, so the session is continued or the round fails.
+		if session == "" {
+			return failure(adapter.ErrPermanent, "a repair round needs the session to continue")
+		}
+		out.log(fmt.Sprintf("repair %d: asking session %s to correct the answer", st.Repair, session))
+		r := attempt(o, st, session, out, diag, cancel)
+		if r.missingSession {
+			return failure(adapter.ErrPermanent, fmt.Sprintf("session %s cannot be continued here, so its answer cannot be corrected", session))
+		}
+		return r.final
 	}
 	r := attempt(o, st, session, out, diag, cancel)
 	if r.missingSession && session != "" {

@@ -311,38 +311,43 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 	if c.session != "" {
 		session = &c.session
 	}
-	start := adapter.EncodeStart(adapter.Step{
+	step := adapter.Step{
 		RunID: strconv.FormatInt(e.Campaign, 10), NodeID: node.ID, Attempt: attempt, Prompt: text,
 		Model: run.model, Effort: run.effort, Tools: node.Tools, Workdir: workdir,
 		Schema: schemaJSON, Session: session, Protect: protect, Writable: writable,
-	})
+	}
 	reported := "" // the session id this attempt reported
 	recordErr := error(nil)
-	r := runAdapter(ctx, adapterProc{
-		argv:    append([]string{e.Orders.Program(x.Run[0])}, x.Run[1:]...),
-		dir:     e.Orders.Dir,
-		env:     env,
-		start:   start,
-		log:     logf,
-		stderr:  errf,
-		timeout: node.Timeout,
-		idle:    node.IdleTimeout,
-		started: func(pid int) {
-			ident, _ := processIdent(pid)
-			if err := e.record(chronicle.Event{Kind: chronicle.ProcessStarted, Node: node.ID, Attempt: attempt,
-				Details: chronicle.Details{Pid: pid, Ident: ident}}); err != nil {
-				e.say("engine.cannot_record_process", "pid", pid, "node", node.ID, "error", err)
-			}
-		},
-		session: func(id string) {
-			reported = id
-			if err := e.record(chronicle.Event{Kind: chronicle.AgentSession, Node: node.ID, Attempt: attempt,
-				Details: chronicle.Details{Session: id}}); err != nil && recordErr == nil {
-				recordErr = err
-			}
-			e.say("engine.session", "node", node.ID, "session", id)
-		},
-	})
+	// launch runs one adapter process of the attempt: for the attempt's own
+	// start message, or for a repair round of it.
+	launch := func(st adapter.Step, timeout time.Duration) adapterRun {
+		return runAdapter(ctx, adapterProc{
+			argv:    append([]string{e.Orders.Program(x.Run[0])}, x.Run[1:]...),
+			dir:     e.Orders.Dir,
+			env:     env,
+			start:   adapter.EncodeStart(st),
+			log:     logf,
+			stderr:  errf,
+			timeout: timeout,
+			idle:    node.IdleTimeout,
+			started: func(pid int) {
+				ident, _ := processIdent(pid)
+				if err := e.record(chronicle.Event{Kind: chronicle.ProcessStarted, Node: node.ID, Attempt: attempt,
+					Details: chronicle.Details{Pid: pid, Ident: ident}}); err != nil {
+					e.say("engine.cannot_record_process", "pid", pid, "node", node.ID, "error", err)
+				}
+			},
+			session: func(id string) {
+				reported = id
+				if err := e.record(chronicle.Event{Kind: chronicle.AgentSession, Node: node.ID, Attempt: attempt,
+					Details: chronicle.Details{Session: id}}); err != nil && recordErr == nil {
+					recordErr = err
+				}
+				e.say("engine.session", "node", node.ID, "session", id)
+			},
+		})
+	}
+	r := launch(step, node.Timeout)
 	if recordErr != nil {
 		return recordErr
 	}
@@ -360,6 +365,79 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 	exit := r.exit
 	fin.Exit = &exit
 	questions := e.judge(node, attempt, r, &fin, left > 0)
+	// An answer that does not match the schema goes back to the same
+	// conversation, which is asked to correct only the answer, a few times
+	// at most, before the attempt counts as failed. The adapter continues
+	// the conversation by its id, so the client's process need not live.
+	for round := 1; round <= MaxRepairs && fin.Failure == chronicle.FailInvalidOutput && desc.Has(adapter.FeatureRepair); round++ {
+		sess := reported
+		if sess == "" {
+			sess = c.session
+		}
+		if sess == "" {
+			break
+		}
+		budget := node.Timeout
+		if budget > 0 {
+			if budget -= time.Since(began); budget < minRepairTime {
+				break
+			}
+		}
+		repairText := repairMessage(fin.Error)
+		repairRel := RepairPromptFile(node.ID, attempt, round)
+		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(repairRel)), []byte(repairText), 0o644); err != nil {
+			return err
+		}
+		if err := e.record(chronicle.Event{Kind: chronicle.OutputRepair, Node: node.ID, Attempt: attempt, Details: chronicle.Details{
+			Round: round, Error: fin.Error, Session: sess, Prompt: repairRel}}); err != nil {
+			return err
+		}
+		fmt.Fprintf(logf, "hetman: answer rejected (%s): %s\n", fin.Failure, fin.Error)
+		if r.terminal != nil && len(r.terminal.Output) > 0 {
+			fmt.Fprintf(logf, "hetman: rejected answer: %s\n", r.terminal.Output)
+		}
+		fmt.Fprintf(logf, "hetman: asking session %s to correct only the answer (repair %d of %d)\n", sess, round, MaxRepairs)
+		e.say("engine.repair", "node", node.ID, "attempt", attempt, "round", round, "max", MaxRepairs, "error", fin.Error)
+		st := step
+		st.Prompt, st.Session, st.Repair = repairText, &sess, round
+		rr := launch(st, budget)
+		if recordErr != nil {
+			return recordErr
+		}
+		if rr.interrupted {
+			return ErrInterrupted
+		}
+		// Tool calls denied in the turn that gave the rejected answer stay
+		// denied calls of the attempt, and count for fail_on_denied.
+		if rr.terminal != nil {
+			rr.terminal.Denied = mergeDenied(fin.Denied, rr.terminal.Denied)
+		}
+		next := chronicle.Event{Kind: chronicle.StepFinished, Node: node.ID, Attempt: attempt,
+			Details: chronicle.Details{Log: fin.Log, Stderr: fin.Stderr, Executor: x.Name, Role: node.Role}}
+		var q []ask.Question
+		why := ""
+		if rr.startErr != nil {
+			why = fmt.Sprintf("cannot start %s: %v", x.Run[0], rr.startErr)
+		} else {
+			exit := rr.exit
+			next.Exit = &exit
+			q = e.judge(node, attempt, rr, &next, left > 0)
+			if !answered(rr) {
+				why = fmt.Sprintf("%s: %s", next.Failure, next.Error)
+			}
+		}
+		if why != "" {
+			// The repair gave no answer: the attempt fails as it would have
+			// without it.
+			if rr.terminal != nil {
+				fin.Denied = rr.terminal.Denied
+			}
+			fmt.Fprintf(logf, "hetman: the repair gave no answer (%s)\n", why)
+			e.say("engine.repair_no_answer", "node", node.ID, "attempt", attempt, "round", round, "error", why)
+			break
+		}
+		r, fin, questions = rr, next, q
+	}
 	if questions != nil {
 		if reported == "" {
 			reported = c.session

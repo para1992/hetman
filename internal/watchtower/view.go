@@ -213,6 +213,7 @@ type Attempt struct {
 	Output    json.RawMessage `json:"output,omitempty"`    // validated output
 	Failure   string          `json:"failure,omitempty"`   // why the attempt failed
 	Denied    []string        `json:"denied,omitempty"`    // tool calls the client denied in the attempt
+	Repairs   []Repair        `json:"repairs,omitempty"`   // rounds in which the attempt's answer was sent back to be corrected
 	RetryAt   *time.Time      `json:"retryAt,omitempty"`   // limit: when it is tried again
 	Ask       *Ask            `json:"ask,omitempty"`       // the questions this attempt put to a person
 	// A step run through a role: how its client was chosen, and the same
@@ -221,6 +222,16 @@ type Attempt struct {
 	Client   string            `json:"client,omitempty"`   // the client, its role and why it was chosen
 	Switched string            `json:"switched,omitempty"` // the client whose limit made the step change client
 	Compared string            `json:"compared,omitempty"` // the quota mode: the shares compared
+}
+
+// Repair is one round in which the answer of an attempt did not match the
+// step's schema and its conversation was asked to correct it.
+type Repair struct {
+	Round  int       `json:"round"`
+	Max    int       `json:"max"`
+	At     time.Time `json:"at"`
+	Error  string    `json:"error"`            // what was wrong with the answer
+	Prompt string    `json:"prompt,omitempty"` // the message of the round
 }
 
 // CheckRun is one execution of a gate check within an attempt.
@@ -431,6 +442,10 @@ func build(k chronicle.Campaign, events []chronicle.Event, o *orders.Orders, cam
 		case chronicle.ProcessCleanup:
 			if a := find(c.Nodes[e.Node], e.Attempt); a != nil {
 				a.Cleanup = append(a.Cleanup, Cleanup{At: e.At, Check: e.Check, Outcome: e.Outcome, Pid: e.Pid, Ident: e.Ident})
+			}
+		case chronicle.OutputRepair:
+			if a := find(c.Nodes[e.Node], e.Attempt); a != nil {
+				a.Repairs = append(a.Repairs, Repair{Round: e.Round, Max: engine.MaxRepairs, At: e.At, Error: e.Error, Prompt: e.Prompt})
 			}
 		case chronicle.CheckFinished:
 			if a := find(c.Nodes[e.Node], e.Attempt); a != nil {

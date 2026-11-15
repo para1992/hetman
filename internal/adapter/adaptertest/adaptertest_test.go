@@ -48,7 +48,11 @@ func TestStubWithPlan(t *testing.T) {
       [{"session": "s-2"}, {"result": {"outcome": "questions", "questions": [{"id": "color", "question": "Which color?", "kind": "choice", "options": ["red", "blue"]}]}}],
       [{"require_session": "s-2"}, {"session": "s-2"}, {"result": {"outcome": "ok"}}]
     ],
+    "conformance-repair": [[{"session": "s-3"}, {"result": {"outcome": "ok", "note": ""}}]],
     "conformance-cancel": [[{"log": "counting"}, {"hang": true}]]
+  },
+  "repairs": {
+    "conformance-repair": [[{"require_session": "s-3"}, {"session": "s-3"}, {"result": {"outcome": "ok"}}]]
   }
 }`), 0o644); err != nil {
 		t.Fatal(err)

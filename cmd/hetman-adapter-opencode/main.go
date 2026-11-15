@@ -91,7 +91,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if describe {
 		data, _ := json.Marshal(adapter.Description{Protocol: []int{adapter.Version}, Name: adapterName,
-			Features: []string{adapter.FeatureResume, adapter.FeatureProtect, adapter.FeatureCheck, adapter.FeatureCatalog}})
+			Features: []string{adapter.FeatureResume, adapter.FeatureProtect, adapter.FeatureCheck, adapter.FeatureCatalog, adapter.FeatureRepair}})
 		fmt.Fprintf(stdout, "%s\n", data)
 		return 0
 	}
@@ -200,6 +200,9 @@ func step(o options, st adapter.Step, out *sender, diag io.Writer, cancel <-chan
 	if st.Session != nil {
 		session = *st.Session
 	}
+	if st.Repair > 0 {
+		return repair(o, st, perms, session, out, diag, cancel)
+	}
 	prompt := fullPrompt(st)
 	r := attempt(o, st, perms, runInput{session: session, prompt: prompt}, out, diag, cancel)
 	if r.missingSession && session != "" {
@@ -216,6 +219,24 @@ func step(o options, st adapter.Step, out *sender, diag io.Writer, cancel <-chan
 			next.final.Message += fmt.Sprintf(" (also after %d continuation(s) of the session)", n)
 		}
 		r = next
+	}
+	return r.final
+}
+
+// repair runs a repair round: the engine rejected the answer the session
+// gave, and the session is asked to correct only the answer. It continues
+// that session or fails; a new conversation would know nothing of the work
+// the answer is about. A turn that ends without the answer again is the
+// engine's to judge, not continued here.
+func repair(o options, st adapter.Step, perms []rule, session string, out *sender, diag io.Writer, cancel <-chan struct{}) adapter.Message {
+	if session == "" {
+		return failure(adapter.ErrPermanent, "a repair round needs the session to continue")
+	}
+	out.log(fmt.Sprintf("repair %d: asking session %s to correct the answer", st.Repair, session))
+	prompt := strings.TrimRight(st.Prompt, "\n") + answerFormat(st)
+	r := attempt(o, st, perms, runInput{session: session, prompt: prompt}, out, diag, cancel)
+	if r.missingSession {
+		return failure(adapter.ErrPermanent, fmt.Sprintf("session %s cannot be continued here, so its answer cannot be corrected", session))
 	}
 	return r.final
 }

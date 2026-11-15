@@ -59,6 +59,13 @@ const (
 	// of the named windows, measured by the client, without a model
 	// request.
 	FeatureUsage = "usage"
+	// FeatureRepair: the adapter takes a start message whose Repair is set
+	// (see Step): it continues the conversation of Session with Prompt, a
+	// request to correct an answer that did not match the step's schema,
+	// and when the client cannot continue that conversation it reports a
+	// permanent error instead of starting a new one. An adapter that
+	// declares it also declares FeatureResume.
+	FeatureRepair = "repair"
 )
 
 // UsageFlag is the argument that asks an adapter for its client's usage; the
@@ -221,6 +228,12 @@ type Step struct {
 	// Workdir: the campaign's work folder.
 	Protect  []string `json:"protect,omitempty"`
 	Writable []string `json:"writable,omitempty"`
+	// Repair, when not zero, is the round of a repair within the attempt:
+	// the answer the conversation Session gave does not match Schema, and
+	// Prompt asks that same conversation to correct only the answer; it is
+	// not the task. The engine sends it only to an adapter that declares
+	// FeatureRepair, never without Session.
+	Repair int `json:"repair,omitempty"`
 }
 
 // Start is the engine's first message to the adapter.

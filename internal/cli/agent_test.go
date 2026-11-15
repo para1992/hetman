@@ -180,6 +180,26 @@ func TestStatusShowsADroppedUnableReason(t *testing.T) {
 	}
 }
 
+// An answer outside the schema that the same session corrected shows as a
+// repair next to its attempt, and in the events.
+func TestStatusShowsARepairedAnswer(t *testing.T) {
+	w := newAgentWorld(t, `{"trace": "trace.jsonl",
+		"nodes": {"a": [[{"session": "s-1"}, {"result": {"outcome": "okay"}}]]},
+		"repairs": {"a": [[{"result": {"outcome": "ok"}}]]}}`, "Do it.")
+	if out := w.call(exitDone, "run"); !strings.Contains(out, "a attempt 1: the answer does not match the schema") ||
+		!strings.Contains(out, "(repair 1 of 2)") {
+		t.Fatalf("run output:\n%s", out)
+	}
+	status := w.call(0, "status")
+	if !strings.Contains(status, "repair   1 of 2: the answer did not match the schema, the same conversation was asked to correct it: $.outcome: must be one of") ||
+		!strings.Contains(status, `output   {"outcome":"ok"}`) || !strings.Contains(status, "attempt 1  outcome ok") {
+		t.Fatalf("status:\n%s", status)
+	}
+	if events := w.call(0, "status", "-events"); !strings.Contains(events, "output_repair a attempt=1 prompt=prompts/a.1.repair1.txt session=s-1 round=1 error=") {
+		t.Fatalf("events:\n%s", events)
+	}
+}
+
 func TestRunInput(t *testing.T) {
 	w := newAgentWorld(t, `{"trace": "trace.jsonl"}`, "Task: {{input.task}}")
 	input := filepath.Join(w.dir, "input.json")

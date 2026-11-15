@@ -36,6 +36,22 @@ func TestForEachChildrenAndLocks(t *testing.T) {
 	}
 }
 
+func TestOutputRepairIsTold(t *testing.T) {
+	var j journal
+	j.start("a")
+	j.add(chronicle.Event{Kind: chronicle.StepStarted, Node: "a", Attempt: 1})
+	j.add(chronicle.Event{Kind: chronicle.OutputRepair, Node: "a", Attempt: 1, Details: chronicle.Details{Round: 1, Error: `$: property "note" is not allowed`, Session: "s-1"}})
+	j.add(chronicle.Event{Kind: chronicle.StepFinished, Node: "a", Attempt: 1, Outcome: "ok"})
+	want := `a attempt 1 answered outside its schema ($: property "note" is not allowed); the same conversation was asked to correct the answer (repair 1).`
+	if got := explainAll(j); !strings.Contains(got, want) {
+		t.Fatalf("explanation lacks %q:\n%s", want, got)
+	}
+	uk := Text(In(i18n.For("uk"), chronicle.Campaign{ID: 3, Flow: "release", Started: t0}, j, Summary, "", time.UTC))
+	if !strings.Contains(uk, "ту саму розмову попросили виправити відповідь (виправлення 1)") {
+		t.Fatalf("Ukrainian explanation:\n%s", uk)
+	}
+}
+
 func TestWaitingForALock(t *testing.T) {
 	var j journal
 	j.start("a")

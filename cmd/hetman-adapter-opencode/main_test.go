@@ -104,6 +104,13 @@ func fakeClient(scenario string) int {
 			return replay("continued", 0)
 		}
 		return replay("denied_empty", 0)
+	case "empty-in-session":
+		// A continued session whose turn ends without the answer.
+		if session == "" {
+			fmt.Fprintln(os.Stderr, "fake: expected --session")
+			return 3
+		}
+		return replay("denied_empty", 0)
 	case "resume-missing":
 		if session != "" {
 			return replay("resume_missing", 1)
@@ -124,6 +131,9 @@ func fakeClient(scenario string) int {
 		time.Sleep(10 * time.Minute)
 		return 0
 	case "conformance":
+		if session == adaptertest.MissingSession {
+			return replay("resume_missing", 1)
+		}
 		if strings.Contains(string(prompt), "Count from 1 to 2000") {
 			replayLines("ok", 1)
 			time.Sleep(10 * time.Minute)
@@ -475,6 +485,72 @@ func TestResumeMissingSession(t *testing.T) {
 	}
 	if f := final(msgs); f.Type != adapter.TypeResult {
 		t.Errorf("final %+v", f)
+	}
+}
+
+// A repair round continues the session with the engine's message and the
+// answer format, not the scope note of a first message, and a turn that
+// ends without the answer again is the engine's to judge.
+func TestRepair(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "record.jsonl")
+	t.Setenv(envRecord, rec)
+	st := testStep(dir)
+	id := "ses_00000000000000000000000011"
+	st.Session, st.Repair, st.Tools = &id, 2, []string{"bash(go test *)"}
+	st.Prompt = "Your answer was not accepted. Answer again with only the corrected JSON object."
+	msgs := stepRun(t, "resume", st)
+	inv := runs(t, rec)
+	if len(inv) != 1 {
+		t.Fatalf("invocations %+v", inv)
+	}
+	if n := len(inv[0].Args); n < 2 || inv[0].Args[n-2] != "--session" || inv[0].Args[n-1] != id {
+		t.Errorf("arguments %q do not continue the session", inv[0].Args)
+	}
+	if p := inv[0].Prompt; p != st.Prompt+answerFormat(st) {
+		t.Errorf("prompt %q", p)
+	}
+	if !strings.Contains(logText(msgs), "repair 2: asking session "+id) {
+		t.Errorf("log:\n%s", logText(msgs))
+	}
+	if f := final(msgs); f.Type != adapter.TypeResult {
+		t.Errorf("final %+v", f)
+	}
+
+	os.Remove(rec)
+	f := final(stepRun(t, "empty-in-session", st))
+	if f.Type != adapter.TypeError {
+		t.Errorf("empty turn: %+v", f)
+	}
+	if inv := runs(t, rec); len(inv) != 1 {
+		t.Errorf("invocations %+v, want no continuation of a repair round", inv)
+	}
+}
+
+// A repair round never starts a new conversation: without a session, or
+// with one the client cannot find, it fails.
+func TestRepairNeedsItsSession(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "record.jsonl")
+	t.Setenv(envRecord, rec)
+	st := testStep(dir)
+	st.Repair = 1
+	if f := final(stepRun(t, "resume", st)); f.Type != adapter.TypeError || f.Kind != adapter.ErrPermanent || !strings.Contains(f.Message, "needs the session") {
+		t.Errorf("without a session: %+v", f)
+	}
+	if _, err := os.Stat(rec); err == nil {
+		if inv := runs(t, rec); len(inv) > 0 {
+			t.Errorf("the client ran for a repair without a session: %+v", inv)
+		}
+	}
+	id := "ses_00000000000000000000000000"
+	st.Session = &id
+	f := final(stepRun(t, "resume-missing", st))
+	if f.Type != adapter.TypeError || f.Kind != adapter.ErrPermanent || !strings.Contains(f.Message, "cannot be corrected") {
+		t.Errorf("missing session: %+v", f)
+	}
+	if inv := runs(t, rec); len(inv) != 1 {
+		t.Errorf("invocations %+v, want only the one that continues the session", inv)
 	}
 }
 

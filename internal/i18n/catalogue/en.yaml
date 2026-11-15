@@ -75,6 +75,7 @@ explain.item_finished: "{node}: item {item} (campaign {child}) ended {outcome}."
 explain.item_not_run_failed: "{node}: item {item} was not run: it needs {needs}, which failed."
 explain.item_not_run_not_run: "{node}: item {item} was not run: it needs {needs}, which did not run."
 explain.lock_waited: "{node} waited for the lock {lock}, held by {holder}."
+explain.output_repair: "{node} attempt {attempt} answered outside its schema ({error}); the same conversation was asked to correct the answer (repair {round})."
 explain.item_kept: "{node} kept item {item} (campaign {child}), done in an earlier attempt."
 explain.child_retried: "{node} ran its segment again in campaign {child}, from its failed step {at}."
 explain.retried_child: "{who}{via} retried campaign {child} at {node}; the campaign continues its running step."
@@ -210,6 +211,8 @@ engine.limit_hit_no_retry: "{node} attempt {attempt} hit the subscription limit 
 engine.offline: "{node} attempt {attempt} lost: no connectivity ({error}); waiting for a person"
 engine.failed_all: "{node} attempt {attempt} failed ({failure}): {error}; all {n} attempts used"
 engine.failed_left: "{node} attempt {attempt} failed ({failure}): {error}; {n} of {max} attempts left"
+engine.repair: "{node} attempt {attempt}: the answer does not match the schema ({error}); asking the same conversation to correct only the answer (repair {round} of {max})"
+engine.repair_no_answer: "{node} attempt {attempt}: repair {round} gave no answer ({error}); the attempt fails as it is"
 engine.asks: "{node} waits for a person ({n} question(s)); answer with: {command}"
 engine.asks_decision: "{node} waits for a person (a decision); answer with: {command}"
 engine.asks_decision_questions: "{node} waits for a person (a decision and {n} question(s)); answer with: {command}"
@@ -401,6 +404,7 @@ status.agent.attempt: "  attempt {n}  {status}  [{facts}]"
 status.agent.prompt: "    prompt   {file}"
 status.agent.denied: "    denied   {call}"
 status.agent.dropped: "    ignored  {field} next to outcome {outcome}, left out of the output: {reason}"
+status.agent.repair: "    repair   {round} of {max}: the answer did not match the schema, the same conversation was asked to correct it: {error}"
 status.agent.continued: "    continued session {session}"
 status.agent.session: "    session  {session}"
 status.agent.output: "    output   {output}"
@@ -838,6 +842,8 @@ page.kv.continued_session: session {session}
 page.kv.session: Session
 page.kv.why_failed: Why it failed
 page.kv.denied: Denied tool calls
+page.kv.repairs: Answer repairs
+page.repair: "repair {round} of {max}: the answer did not match the schema, the same conversation was asked to correct it: {error}"
 page.kv.retry_at: Retry at
 page.kv.details: Details
 page.kv.error: Error

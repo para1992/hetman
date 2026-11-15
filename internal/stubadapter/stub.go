@@ -22,8 +22,15 @@
 //	  "nodes": {
 //	    "review": [[MOVE, ...], ...],  moves per attempt: the first list for attempt 1,
 //	    "*": [[MOVE, ...]]             the second for attempt 2, the last for any later one;
-//	  }                                "*" serves nodes not listed
-//	}
+//	  },                               "*" serves nodes not listed
+//	  "repairs": {                     moves for repair rounds (a start message with
+//	    "review": [[MOVE, ...], ...]   "repair" set), by round as "nodes" is by attempt;
+//	  }                                with a "repairs" section the stub declares the
+//	}                                  "repair" feature
+//
+// A repair round needs the session it continues; without one, or with no
+// repair moves for the node, the stub sends a permanent error, as an
+// adapter does that cannot continue the conversation.
 //
 // Relative paths are taken from the step's working directory. A move is an
 // object with one of these keys:
@@ -88,6 +95,7 @@ type Plan struct {
 	Reject   []string            `json:"reject_tools"`
 	When     []When              `json:"when"`
 	Nodes    map[string][][]Move `json:"nodes"`
+	Repairs  map[string][][]Move `json:"repairs"`
 	Usage    map[string]Window   `json:"usage"`
 	Catalog  json.RawMessage     `json:"catalog"`
 }
@@ -241,6 +249,9 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if plan.catalog() != nil {
 			d.Features = append(d.Features, adapter.FeatureCatalog)
 		}
+		if plan.Repairs != nil {
+			d.Features = append(d.Features, adapter.FeatureRepair)
+		}
 		if plan.Features != nil {
 			d.Features = *plan.Features
 		}
@@ -281,6 +292,9 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if plan.Trace != "" {
 		trace(local(step.Workdir, plan.Trace), step)
 	}
+	if step.Repair > 0 {
+		return s.repair(plan, step)
+	}
 	moves, planned := pick(plan, step)
 	if !planned {
 		fmt.Fprintf(stderr, "stub: no plan for %s attempt %d; reporting the first outcome the schema allows\n", step.NodeID, step.Attempt)
@@ -290,6 +304,33 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "stub: continuing session %s\n", *step.Session)
 	}
 	for _, m := range moves {
+		if code, done := s.do(m, step); done {
+			return code
+		}
+	}
+	return 0
+}
+
+// repair performs the moves of a repair round.
+func (s *stub) repair(plan Plan, step adapter.Step) int {
+	if step.Session == nil {
+		s.send(adapter.Message{Type: adapter.TypeError, Kind: adapter.ErrPermanent, Message: "a repair round needs a session to continue"})
+		return 0
+	}
+	fmt.Fprintf(s.stderr, "stub: repair %d of %s attempt %d in session %s\n", step.Repair, step.NodeID, step.Attempt, *step.Session)
+	list, ok := plan.Repairs[step.NodeID]
+	if !ok {
+		list = plan.Repairs["*"]
+	}
+	if len(list) == 0 {
+		s.send(adapter.Message{Type: adapter.TypeError, Kind: adapter.ErrPermanent, Message: "the plan has no repair moves for " + step.NodeID})
+		return 0
+	}
+	i := step.Repair - 1
+	if i >= len(list) {
+		i = len(list) - 1
+	}
+	for _, m := range list[i] {
 		if code, done := s.do(m, step); done {
 			return code
 		}
