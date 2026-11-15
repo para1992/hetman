@@ -200,10 +200,26 @@ func step(o options, st adapter.Step, out *sender, diag io.Writer, cancel <-chan
 	if st.Session != nil {
 		session = *st.Session
 	}
-	r := attempt(o, st, perms, session, out, diag, cancel)
+	prompt := fullPrompt(st)
+	r := attempt(o, st, perms, runInput{session: session, prompt: prompt}, out, diag, cancel)
 	if r.missingSession && session != "" {
 		out.log(fmt.Sprintf("session %s cannot be continued here; starting a new conversation", session))
-		r = attempt(o, st, perms, "", out, diag, cancel)
+		r = attempt(o, st, perms, runInput{prompt: prompt}, out, diag, cancel)
+	}
+	// A turn that ended without the answer, after denied calls or not, is
+	// continued in the same session with a reminder of what is allowed and
+	// of the answer format, a few times at most.
+	for n := 1; n <= maxContinuations && r.unanswered && r.session != ""; n++ {
+		out.log(fmt.Sprintf("continuing session %s (%d of %d): the turn ended without the answer", r.session, n, maxContinuations))
+		next := attempt(o, st, perms, runInput{session: r.session, prompt: continuation(st, r), continued: true, denied: r.denied}, out, diag, cancel)
+		if next.unanswered && n == maxContinuations {
+			next.final.Message += fmt.Sprintf(" (also after %d continuation(s) of the session)", n)
+		}
+		r = next
 	}
 	return r.final
 }
+
+// maxContinuations is how many times one attempt continues a session whose
+// turn ended without the answer.
+const maxContinuations = 2

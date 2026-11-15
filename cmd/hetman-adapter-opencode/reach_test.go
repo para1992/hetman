@@ -186,15 +186,95 @@ func TestWorkdirBehindALink(t *testing.T) {
 }
 
 // A denied tool call is logged with the tool, its target and the client's
-// reason; an answer without JSON after a denial is permanent.
+// reason. An answer without JSON after a denial continues the session a
+// few times; when that does not bring the answer either, the error is
+// transient, so that the engine can use the step's other attempts, and it
+// reports every denied call.
 func TestDeniedCall(t *testing.T) {
-	msgs := stepRun(t, "denied", testStep(t.TempDir()))
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "record.jsonl")
+	t.Setenv(envRecord, rec)
+	msgs := stepRun(t, "denied", testStep(dir))
 	log := logText(msgs)
 	if !strings.Contains(log, "denied: write plan.md: The user has specified a rule which prevents you from using this specific tool call.") ||
 		strings.Contains(log, "relevant rules") {
 		t.Errorf("log:\n%s", log)
 	}
-	if f := final(msgs); f.Kind != adapter.ErrPermanent || !strings.Contains(f.Message, "the client denied 1 tool call(s)") || len(f.Denied) != 1 {
+	inv := runs(t, rec)
+	if len(inv) != 1+maxContinuations {
+		t.Fatalf("%d runs of the client, want %d", len(inv), 1+maxContinuations)
+	}
+	for _, i := range inv[1:] {
+		if n := len(i.Args); i.Args[n-2] != "--session" || i.Args[n-1] != "ses_00000000000000000000000020" {
+			t.Errorf("continuation arguments %q", i.Args)
+		}
+	}
+	if !strings.Contains(log, "continuing session ses_00000000000000000000000020 (2 of 2)") {
+		t.Errorf("log:\n%s", log)
+	}
+	f := final(msgs)
+	if f.Kind != adapter.ErrTransient || !strings.Contains(f.Message, "the client denied 3 tool call(s)") ||
+		!strings.Contains(f.Message, "also after 2 continuation(s)") || len(f.Denied) != 3 {
+		t.Errorf("final %+v", f)
+	}
+	if got := sessions(msgs); len(got) != 1 {
+		t.Errorf("sessions %v, want one", got)
+	}
+}
+
+// A turn that ends with no answer after a denial is continued in the same
+// session with what was denied, what is allowed and the answer format;
+// the answer then is the result, with the denial reported.
+func TestContinueAfterDenial(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "record.jsonl")
+	t.Setenv(envRecord, rec)
+	work := filepath.Join(t.TempDir(), "work")
+	st := testStep(dir)
+	st.Tools = []string{"read", "glob", "bash(sh ../checks/try.sh *)"}
+	st.Writable = []string{work}
+	msgs := stepRun(t, "denied-then-answer", st)
+	log := logText(msgs)
+	for _, want := range []string{
+		"denied: glob /outside/the/step: The user has specified a rule",
+		"(thinking) The folder is denied.",
+		"the turn ended (last model step: stop) with no answer",
+		"continuing session ses_00000000000000000000000021 (1 of 2)",
+	} {
+		if !strings.Contains(log, want) {
+			t.Errorf("log lacks %q:\n%s", want, log)
+		}
+	}
+	inv := runs(t, rec)
+	if len(inv) != 2 {
+		t.Fatalf("%d runs of the client, want 2", len(inv))
+	}
+	if n := len(inv[1].Args); inv[1].Args[n-2] != "--session" || inv[1].Args[n-1] != "ses_00000000000000000000000021" {
+		t.Errorf("continuation arguments %q", inv[1].Args)
+	}
+	p := inv[1].Prompt
+	for _, want := range []string{
+		"Your turn ended without an answer",
+		"- glob /outside/the/step: The user has specified a rule which prevents you from using this specific tool call.\n",
+		"stay denied",
+		"The tools of this step: read, glob, bash(sh ../checks/try.sh *).",
+		"File tools reach " + dir + " and " + work + ";",
+		"\n\n---\nAnswer format:",
+		`{"type":"object","properties":{"outcome":{"type":"string","enum":["ok"]}},"required":["outcome"]}`,
+	} {
+		if !strings.Contains(p, want) {
+			t.Errorf("continuation prompt lacks %q:\n%s", want, p)
+		}
+	}
+	if strings.Contains(p, "write the note") {
+		t.Errorf("continuation prompt repeats the task:\n%s", p)
+	}
+	if got := sessions(msgs); len(got) != 1 || got[0] != "ses_00000000000000000000000021" {
+		t.Errorf("sessions %v", got)
+	}
+	f := final(msgs)
+	if f.Type != adapter.TypeResult || string(f.Output) != `{"outcome":"ok"}` || len(f.Denied) != 1 ||
+		!strings.HasPrefix(f.Denied[0], "glob /outside/the/step: ") {
 		t.Errorf("final %+v", f)
 	}
 }

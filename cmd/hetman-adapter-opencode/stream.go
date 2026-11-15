@@ -71,6 +71,7 @@ type stream struct {
 	tokOut  int64
 	cost    float64
 	stopped bool     // a step finished with reason "stop"
+	reason  string   // the reason the last step finished with
 	denied  []string // the tool calls the client's permissions denied, with its reason
 }
 
@@ -137,6 +138,7 @@ func (s *stream) line(raw []byte) {
 		if p.Reason == "stop" {
 			s.stopped = true
 		}
+		s.reason = p.Reason
 	case "error":
 		if ev.Error != nil {
 			s.errors = append(s.errors, *ev.Error)
@@ -199,15 +201,33 @@ func (s *stream) finish(exit int, stderr string) attemptResult {
 		if obj, ok := extractObject(answer); ok {
 			return attemptResult{final: adapter.Message{Type: adapter.TypeResult, Output: obj, Denied: s.denied}}
 		}
-		if len(s.denied) > 0 {
-			// The same calls are denied again on a retry.
-			return attemptResult{final: failure(adapter.ErrPermanent, fmt.Sprintf("the client denied %d tool call(s) (%s) and the answer holds no JSON object: %s",
-				len(s.denied), clip(strings.Join(s.denied, "; "), 600), clip(oneLine(answer), 300)), s.denied...)}
+		// The model ended its turn without the answer: the client's loop
+		// goes on after a denied call (the model gets the denial as the
+		// call's error), so the model stopped by itself. Continuing the
+		// session, or another attempt, can still bring the answer, so the
+		// error is transient. A flow that wants a denial to fail the
+		// attempt says so with fail_on_denied, which the engine applies to
+		// the denied calls reported here and with a result.
+		r := attemptResult{unanswered: true, session: s.session, denied: s.denied, empty: strings.TrimSpace(answer) == ""}
+		ended := "the turn ended"
+		if s.reason != "" {
+			ended += " (last model step: " + s.reason + ")"
 		}
-		if strings.TrimSpace(answer) == "" {
-			return attemptResult{final: failure(adapter.ErrTransient, "the client gave no answer")}
+		switch {
+		case len(s.denied) > 0:
+			r.final = failure(adapter.ErrTransient, fmt.Sprintf("the client denied %d tool call(s) (%s) and the answer holds no JSON object: %s",
+				len(s.denied), clip(strings.Join(s.denied, "; "), 600), clip(oneLine(answer), 300)), s.denied...)
+		case r.empty:
+			r.final = failure(adapter.ErrTransient, "the client gave no answer")
+		default:
+			r.final = failure(adapter.ErrTransient, "the answer holds no JSON object: "+clip(oneLine(answer), 300))
 		}
-		return attemptResult{final: failure(adapter.ErrTransient, "the answer holds no JSON object: "+clip(oneLine(answer), 300))}
+		if r.empty {
+			s.out.log(ended + " with no answer")
+		} else {
+			s.out.log(ended + " without a JSON object in the answer")
+		}
+		return r
 	}
 	return attemptResult{final: s.classify(exit, stderr)}
 }

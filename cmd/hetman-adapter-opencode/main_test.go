@@ -22,8 +22,8 @@ import (
 // limit_free, badmodel, offline, resume_missing and badargs (output and
 // standard error as the client printed them, with ids, request ids and
 // local paths replaced). Written by hand after the client's event schema:
-// normal, resume, ok, questions, garbage, noauth, limit_go, denied and
-// models.txt.
+// normal, resume, ok, questions, garbage, noauth, limit_go, denied,
+// denied_empty, continued and models.txt.
 const (
 	envSelf   = "HETMAN_TEST_ADAPTER_SELF" // the test binary runs the adapter
 	envFake   = "FAKE_CLIENT_SCENARIO"     // the test binary acts as the client
@@ -98,6 +98,12 @@ func fakeClient(scenario string) int {
 			return 3
 		}
 		return replay("resume", 0)
+	case "denied-then-answer":
+		// The turn ends empty after a denial; continued, it answers.
+		if session != "" {
+			return replay("continued", 0)
+		}
+		return replay("denied_empty", 0)
 	case "resume-missing":
 		if session != "" {
 			return replay("resume_missing", 1)
@@ -321,7 +327,7 @@ func TestCommandLineAndEnvironment(t *testing.T) {
 	if !strings.HasPrefix(agent, "hetman-") || len(agent) != len("hetman-")+8 {
 		t.Errorf("agent %q", agent)
 	}
-	want := []string{"run", "--format", "json", "--pure", "--print-logs", "--log-level", "INFO", "--agent", agent,
+	want := []string{"run", "--format", "json", "--pure", "--print-logs", "--log-level", "INFO", "--thinking", "--agent", agent,
 		"--model", "example/fast", "--variant", "low", "--title", "hetman draft (run 7)"}
 	if strings.Join(inv.Args, "\n") != strings.Join(want, "\n") {
 		t.Errorf("arguments\n got %q\nwant %q", inv.Args, want)
@@ -395,7 +401,17 @@ func TestToolRules(t *testing.T) {
 // A run with tool use: the session comes first, the log follows the work,
 // the last JSON object of the answer is the result.
 func TestNormalRun(t *testing.T) {
-	msgs := stepRun(t, "normal", testStep(t.TempDir()))
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "record.jsonl")
+	t.Setenv(envRecord, rec)
+	msgs := stepRun(t, "normal", testStep(dir))
+	// A denial followed by an answer needs no continuation.
+	if n := len(runs(t, rec)); n != 1 {
+		t.Errorf("%d runs of the client, want 1", n)
+	}
+	if f := final(msgs); len(f.Denied) != 1 || !strings.HasPrefix(f.Denied[0], "bash rm -rf build: ") {
+		t.Errorf("denied %q", f.Denied)
+	}
 	if msgs[0].Type != adapter.TypeSession || msgs[0].ID != "ses_00000000000000000000000010" {
 		t.Errorf("first message %+v, want the session", msgs[0])
 	}

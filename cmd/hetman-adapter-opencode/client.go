@@ -126,11 +126,14 @@ func newAgentName() string {
 //     it, before any model output, and it is the only place where some
 //     failures are named (an unknown model, a usage limit the client keeps
 //     retrying).
+//   - --thinking adds the model's reasoning to the events, which the
+//     client leaves out otherwise; it shows in the step's log what a model
+//     was about when its turn ended without an answer.
 //   - --agent selects the adapter's own agent (see agentConfig).
 //   - --title gives a new session a title, so the client does not spend a
 //     model request on making one.
 func clientArgs(st adapter.Step, agent, session string) []string {
-	a := []string{"run", "--format", "json", "--pure", "--print-logs", "--log-level", "INFO", "--agent", agent}
+	a := []string{"run", "--format", "json", "--pure", "--print-logs", "--log-level", "INFO", "--thinking", "--agent", agent}
 	if st.Model != "" {
 		a = append(a, "--model", st.Model)
 	}
@@ -172,6 +175,58 @@ func fullPrompt(st adapter.Step) string {
 		entries = append(entries, e)
 	}
 	b.WriteString(strings.TrimRight(adapter.ScopeNote(entries, "bash"), "\n"))
+	b.WriteString(answerFormat(st))
+	return b.String()
+}
+
+// continuation is the message that continues a session whose turn ended
+// without the answer: which calls the client denied and that they stay
+// denied, which tools and folders the step has, and the answer format
+// again. The client does not let the adapter change the denial the model
+// sees, which names the matching rules but not the folders, so they are
+// named here.
+func continuation(st adapter.Step, r attemptResult) string {
+	var b strings.Builder
+	if r.empty {
+		b.WriteString("Your turn ended without an answer, and the task is not finished.")
+	} else {
+		b.WriteString("Your reply did not end with the required JSON object.")
+	}
+	if len(r.denied) > 0 {
+		b.WriteString(" The client denied these tool calls:\n")
+		seen := map[string]bool{}
+		n := 0
+		for _, d := range r.denied {
+			if seen[d] {
+				continue
+			}
+			seen[d] = true
+			if n++; n > 10 {
+				b.WriteString("- and more\n")
+				break
+			}
+			b.WriteString("- " + d + "\n")
+		}
+		b.WriteString("Such calls stay denied however often they are repeated, so do not make them again; a call that the step's tools allow still works.")
+	}
+	b.WriteString("\nThe tools of this step: " + toolsText(st.Tools) + ".")
+	if st.Workdir != "" {
+		folders := []string{st.Workdir}
+		for _, w := range st.Writable {
+			if _, in := adapter.Rel(st.Workdir, w); !in {
+				folders = append(folders, w)
+			}
+		}
+		b.WriteString(" File tools reach " + strings.Join(folders, " and ") + "; a path outside may be denied.")
+	}
+	b.WriteString("\nGo on with the task using what is allowed. When you are done, or when the task cannot be finished with these tools, end your reply with the JSON object; when it cannot be finished, say so in it as far as the schema allows.")
+	b.WriteString(answerFormat(st))
+	return b.String()
+}
+
+// answerFormat says how the reply must end.
+func answerFormat(st adapter.Step) string {
+	var b strings.Builder
 	b.WriteString("\n\n---\nAnswer format: when you are done, end your reply with exactly one JSON object")
 	if s := schemaArg(st.Schema); s != "" {
 		b.WriteString(" that matches this JSON Schema:\n\n")
@@ -277,16 +332,33 @@ func clientEnv(environ, extra []string, config, dir string) []string {
 type attemptResult struct {
 	final          adapter.Message
 	missingSession bool // the client found no session with the id to continue
+	// unanswered: the run ended normally, but the answer holds no JSON
+	// object. The session can then be continued with a reminder.
+	unanswered bool
+	empty      bool     // and the answer holds no text at all
+	session    string   // the session of the run
+	denied     []string // the calls denied so far in the step's attempt
+}
+
+// runInput is what one run of the client is given.
+type runInput struct {
+	session string // the session to continue, or "" for a new one
+	prompt  string
+	// continued: the run continues the session of the run before it in the
+	// same attempt, which named it already.
+	continued bool
+	denied    []string // the calls denied in earlier runs of the same attempt
 }
 
 // attempt runs the client once and turns what it printed into a result or
-// error message, sending log and session messages on the way.
-func attempt(o options, st adapter.Step, rules []rule, session string, out *sender, diag io.Writer, cancel <-chan struct{}) attemptResult {
+// error message, sending log and session messages on the way. The result
+// reports the calls denied in earlier runs of the same attempt as well.
+func attempt(o options, st adapter.Step, rules []rule, in runInput, out *sender, diag io.Writer, cancel <-chan struct{}) attemptResult {
 	agent := newAgentName()
-	cmd := exec.Command(o.client, clientArgs(st, agent, session)...)
+	cmd := exec.Command(o.client, clientArgs(st, agent, in.session)...)
 	cmd.Dir = st.Workdir
 	cmd.Env = clientEnv(os.Environ(), o.env, agentConfig(agent, rules), st.Workdir)
-	cmd.Stdin = strings.NewReader(fullPrompt(st))
+	cmd.Stdin = strings.NewReader(in.prompt)
 	// A process the client started must not keep the adapter waiting for
 	// output that will never come.
 	cmd.WaitDelay = 2 * time.Second
@@ -352,6 +424,10 @@ func attempt(o options, st adapter.Step, rules []rule, session string, out *send
 		}
 	}()
 	s := newStream(st, out)
+	s.denied = append(s.denied, in.denied...)
+	if in.continued {
+		s.session = in.session
+	}
 	stopClient := func() {
 		exited := make(chan struct{})
 		go func() { cmd.Wait(); close(exited) }()
