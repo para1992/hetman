@@ -1362,8 +1362,6 @@ page.start.begun: "Work has started. The steps below run one after another and t
 page.start.begun_close: Got it
 page.list.empty_start: No campaigns yet. Use the button above to start the first one.
 page.view.failed: "This part of the page could not be shown: {error}. Reload the page; if it happens again, the browser console has the details."
-page.input.add_object: "Add to {label}"
-page.input.problems: "The run input is not complete; nothing was started:"
 # ---- the catalogue: models and efforts an executor's client offers
 engine.catalog.no_executor: "the orders declare no executor {executor}"
 engine.catalog.unsupported: "the adapter of executor {executor} does not tell which models its client offers"
