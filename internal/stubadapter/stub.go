@@ -42,7 +42,7 @@
 //	{"error": "KIND", "message": "...", "retry_in": "30s", "retry_at": "RFC 3339 time"}
 //	                                     send an error; retry_in or retry_at for a limit
 //
-// The plan is read again for every start, --describe and --usage, so a test
+// The plan is read again for every start, --describe, --usage and --catalog, so a test
 // can change what the adapter does between steps by rewriting the file.
 //
 // A dialogue step asks with a result whose outcome is "questions", such as
@@ -64,6 +64,7 @@ package stubadapter
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -88,6 +89,36 @@ type Plan struct {
 	When     []When              `json:"when"`
 	Nodes    map[string][][]Move `json:"nodes"`
 	Usage    map[string]Window   `json:"usage"`
+	Catalog  json.RawMessage     `json:"catalog"`
+}
+
+// FixedCatalog is the catalogue the stub reports for "catalog": true: two
+// groups, a model with no effort setting and one whose efforts it cannot
+// tell.
+var FixedCatalog = adapter.Catalog{Complete: true, Models: []adapter.CatalogModel{
+	{ID: "alpha/small", Label: "Alpha Small", Group: "alpha", Efforts: []string{}},
+	{ID: "alpha/large", Label: "Alpha Large", Group: "alpha", Efforts: []string{"low", "medium", "high"}},
+	{ID: "beta/deep", Label: "Beta Deep", Group: "beta", Efforts: []string{"high", "max"}},
+	{ID: "beta/plain", Label: "Beta Plain", Group: "beta"},
+}}
+
+// catalog returns what the plan says --catalog prints, as one line; empty
+// when the plan has no catalogue. An object is printed as written, valid or
+// not, so that tests can give a bad one.
+func (p Plan) catalog() []byte {
+	text := strings.TrimSpace(string(p.Catalog))
+	switch text {
+	case "", "null", "false":
+		return nil
+	case "true":
+		data, _ := json.Marshal(FixedCatalog)
+		return data
+	}
+	var b bytes.Buffer
+	if json.Compact(&b, []byte(text)) != nil {
+		return []byte(text)
+	}
+	return b.Bytes()
 }
 
 // Window is the usage the adapter reports for one window.
@@ -142,6 +173,10 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if n := len(args); n > 0 && args[n-1] == adapter.CheckFlag {
 		checkOnly, args = true, args[:n-1]
 	}
+	catalogOnly := false
+	if n := len(args); n > 0 && args[n-1] == adapter.CatalogFlag {
+		catalogOnly, args = true, args[:n-1]
+	}
 	var windows []string
 	usageOnly := false
 	for i, a := range args {
@@ -164,6 +199,15 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "stub: plan %s: %v\n", planPath, err)
 			return 2
 		}
+	}
+	if catalogOnly {
+		data := plan.catalog()
+		if data == nil {
+			fmt.Fprintln(stderr, "stub: the plan has no catalogue")
+			return 2
+		}
+		fmt.Fprintf(stdout, "%s\n", data)
+		return 0
 	}
 	if checkOnly {
 		err := adapter.ServeCheck(stdin, stdout, func(st adapter.Step) []adapter.CheckProblem {
@@ -193,6 +237,9 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		if plan.Usage != nil {
 			d.Features = append(d.Features, adapter.FeatureUsage)
+		}
+		if plan.catalog() != nil {
+			d.Features = append(d.Features, adapter.FeatureCatalog)
 		}
 		if plan.Features != nil {
 			d.Features = *plan.Features

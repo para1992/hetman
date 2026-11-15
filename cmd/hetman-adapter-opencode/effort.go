@@ -3,13 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
@@ -73,30 +71,17 @@ func modelVariants(o options, st adapter.Step, provider string) ([]string, bool,
 	return parseVariants(out.String(), st.Model)
 }
 
-// parseVariants reads the output of "models PROVIDER --verbose": each model
-// as a "provider/model" line followed by a JSON object.
+// parseVariants returns the variants of a model in the output of
+// "models PROVIDER --verbose" and whether the model is listed.
 func parseVariants(text, model string) ([]string, bool, error) {
-	locs := modelLine.FindAllStringSubmatchIndex(text, -1)
-	for i, l := range locs {
-		if text[l[2]:l[3]] != model {
-			continue
+	models, err := parseModels(text)
+	if err != nil {
+		return nil, false, err
+	}
+	for _, m := range models {
+		if m.id == model {
+			return m.variants, true, nil
 		}
-		end := len(text)
-		if i+1 < len(locs) {
-			end = locs[i+1][0]
-		}
-		var info struct {
-			Variants map[string]json.RawMessage `json:"variants"`
-		}
-		if err := json.Unmarshal([]byte(text[l[1]:end]), &info); err != nil {
-			return nil, false, err
-		}
-		var names []string
-		for k := range info.Variants {
-			names = append(names, k)
-		}
-		sort.Strings(names)
-		return names, true, nil
 	}
 	return nil, false, nil
 }

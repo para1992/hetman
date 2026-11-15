@@ -76,36 +76,45 @@ func CheckAdapters(ctx context.Context, o *orders.Orders) (errs, warnings orders
 			if !d.Has(adapter.FeatureProgress) {
 				warnings = append(warnings, quietWarnings(o, name, byExecutor[name])...)
 			}
-			if !d.Has(adapter.FeatureCheck) {
-				continue
-			}
 			steps := byExecutor[name]
-			problems, err := checkSteps(ctx, argv, o.Dir, env, steps)
-			if err != nil {
-				warnings = append(warnings, orders.Problem{File: o.Path, Msg: fmt.Sprintf("warning: executor %q: its adapter could not check the agent nodes: %v", name, err)})
-				continue
-			}
-			for _, p := range problems {
-				item := -1
-				if p.Item != nil {
-					item = *p.Item
+			var items []found
+			if d.Has(adapter.FeatureCheck) {
+				problems, err := checkSteps(ctx, argv, o.Dir, env, steps)
+				if err != nil {
+					warnings = append(warnings, orders.Problem{File: o.Path, Msg: fmt.Sprintf("warning: executor %q: its adapter could not check the agent nodes: %v", name, err)})
 				}
-				field := p.Field
-				if n := o.Nodes[p.NodeID]; n != nil && n.Role != "" && field != adapter.FieldTools {
+				for _, p := range problems {
+					items = append(items, found{node: p.NodeID, field: p.Field, item: p.Item, msg: p.Message, warning: p.Warning, by: "adapter"})
+				}
+			}
+			if d.Has(adapter.FeatureCatalog) {
+				items = withCatalog(items, ExecutorCatalog(ctx, o, name, false).Catalog, steps)
+			}
+			for _, f := range items {
+				item := -1
+				if f.item != nil {
+					item = *f.item
+				}
+				field := f.field
+				if n := o.Nodes[f.node]; n != nil && n.Role != "" && field != adapter.FieldTools {
 					field = "role" // the model and effort of a role's client are written under the role
 				}
-				line, col := orders.Position(o.Path, p.NodeID, field, item)
-				msg := fmt.Sprintf("node %q: %s (adapter of executor %s)", p.NodeID, p.Message, name)
-				if p.Item != nil {
+				line, col := orders.Position(o.Path, f.node, field, item)
+				text := f.msg
+				if len(f.suggest) > 0 {
+					text += "; " + adapter.SuggestText(f.suggest)
+				}
+				msg := fmt.Sprintf("node %q: %s (%s of executor %s)", f.node, text, f.by, name)
+				if f.item != nil {
 					for _, st := range steps {
-						if st.NodeID == p.NodeID && item >= 0 && item < len(st.Tools) {
-							msg = fmt.Sprintf("node %q: tools item %q: %s (adapter of executor %s)", p.NodeID, st.Tools[item], p.Message, name)
+						if st.NodeID == f.node && item >= 0 && item < len(st.Tools) {
+							msg = fmt.Sprintf("node %q: tools item %q: %s (%s of executor %s)", f.node, st.Tools[item], text, f.by, name)
 						}
 					}
-				} else if p.Field != "" {
-					msg = fmt.Sprintf("node %q: %s: %s (adapter of executor %s)", p.NodeID, p.Field, p.Message, name)
+				} else if f.field != "" {
+					msg = fmt.Sprintf("node %q: %s: %s (%s of executor %s)", f.node, f.field, text, f.by, name)
 				}
-				if p.Warning {
+				if f.warning {
 					warnings = append(warnings, orders.Problem{File: o.Path, Line: line, Col: col, Msg: "warning: " + msg})
 					continue
 				}
@@ -115,6 +124,45 @@ func CheckAdapters(ctx context.Context, o *orders.Orders) (errs, warnings orders
 	}
 	walk(o, 0)
 	return errs, warnings
+}
+
+// found is one problem with a step, from its adapter's check or from the
+// catalogue of its executor.
+type found struct {
+	node, field string
+	item        *int
+	msg         string
+	warning     bool
+	suggest     []string
+	by          string // "adapter" or "catalogue"
+}
+
+// withCatalog adds to what an adapter's check found what the catalogue
+// says about the model and effort of each step. Where the adapter already
+// reported a problem with the same field of the node, its message stays and
+// only the catalogue's suggestions are added to it.
+func withCatalog(list []found, c *adapter.Catalog, steps []adapter.Step) []found {
+	seen := map[string]bool{}
+	for _, st := range steps {
+	findings:
+		for _, f := range c.Check(st.Model, st.Effort) {
+			for i := range list {
+				if list[i].node == st.NodeID && list[i].field == f.Field && list[i].item == nil {
+					if len(list[i].suggest) == 0 {
+						list[i].suggest = f.Suggest
+					}
+					continue findings
+				}
+			}
+			key := st.NodeID + "\x00" + f.Field + "\x00" + f.Message
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			list = append(list, found{node: st.NodeID, field: f.Field, msg: f.Message, warning: f.Warning, suggest: f.Suggest, by: "catalogue"})
+		}
+	}
+	return list
 }
 
 // AdapterWarnings is CheckAdapters for a flow being edited: everything it

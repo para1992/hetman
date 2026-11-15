@@ -39,6 +39,7 @@ func TestStubWithPlan(t *testing.T) {
 	plan := filepath.Join(dir, "plan.json")
 	if err := os.WriteFile(plan, []byte(`{
   "name": "scripted",
+  "catalog": true,
   "usage": {"five_hour": {"used": 0.25, "resets_in": "3h"}, "weekly": {"used": 0.5}},
   "nodes": {
     "conformance": [[{"log": "thinking"}, {"session": "s-1"}, {"result": {"outcome": "ok"}}]],

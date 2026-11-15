@@ -705,6 +705,38 @@ When an attempt was cut off (Hetman stopped, a limit, lost connectivity) and the
 adapter declares the `resume` feature, the next attempt is given that id so the
 adapter can continue the conversation; otherwise the step starts fresh.
 
+### Choosing a model
+
+The `model` and `effort` of an agent step are whatever the client behind the executor
+understands, and each client names them its own way: one wants `provider/model`,
+another short aliases, and some efforts exist only for some models. You do not need
+to look them up. When the adapter of the executor can tell what its client offers
+(the `catalog` feature, see [Writing an adapter](#writing-an-adapter)), Hetman offers
+a choice instead of free text:
+
+- `hetman scribe models` lists, for each executor of the orders, the models grouped
+  (by provider, for example) with the efforts beside each. Add an executor's name to
+  see only its models, and any words to keep only the models whose name holds them:
+  `hetman scribe models coder large`. `-refresh` asks the adapter again.
+- The wizard (`hetman scribe`) offers the models as a numbered list when it asks for
+  the model of an agent step. A long list is narrowed by typing part of a name;
+  `other` types a name by hand. It asks for the effort only when the chosen model has
+  any, and offers that model's efforts.
+- In the flow editor of the Watchtower the model field searches the list as you type
+  and the effort field offers the chosen model's efforts; it is disabled, with a note,
+  for a model without an effort setting. Changing the executor changes the list.
+- `hetman check` reports a model the list does not hold, or an effort the model does
+  not take, at the node, with the nearest valid names. `hetman scribe set NODE model
+  X` (and `effort`, and the model and effort of `add`, `new`, `role` and `role-add`)
+  refuses such a value the same way; add `-unlisted` to write it anyway, for a model
+  newer than the list.
+
+Some clients take names their list cannot show, such as a model's full name next to
+an alias; their adapter says the list is not complete, and a name it does not hold is
+then only a warning. When an executor has no catalogue (its adapter does not have the
+feature, or the client is not installed here), the fields stay free text and Hetman
+says why in one line.
+
 ### Roles: several clients for one step
 
 A role is a pool of clients a step may run on. Each client is an executor with its
@@ -1154,6 +1186,13 @@ so a session can be continued only by the same user on the same computer for the
 orders folder. When the client cannot find the session, the adapter says so in the
 log and starts a new conversation with the prompt.
 
+**Catalogue.** The adapter declares `catalog`. The client has no command that lists
+its models, so the catalogue is a table inside the adapter: the aliases `haiku`,
+`sonnet`, `opus` and `fable`, each with the efforts `low`, `medium`, `high`, `xhigh`
+and `max` that the adapter passes to `--effort`. The client also takes a model's full
+name, which the table cannot hold, so the catalogue says it is not complete: a name it
+does not list is a warning with the nearest aliases, not an error.
+
 **Usage.** The adapter does not declare the `usage` feature. The installed client
 has no command, flag or status file meant for programs that reports how much of the
 subscription is used without a model request: `claude auth status` reports the
@@ -1281,6 +1320,15 @@ computer that ran them, so a session can be continued only by the same user on t
 same computer. When the client cannot find the session, the adapter says so in the
 log and starts a new conversation with the prompt.
 
+**Catalogue.** The adapter declares `catalog` and answers it from the client's own
+listing, `opencode models --verbose`, which needs no model request: every model the
+client can use (`provider/model`), its name, and its variants as the efforts, in the
+client's order. One listing gives the variants of every model at once (about a second
+for some 180 models). The listing holds every model the client accepts, so the
+catalogue is complete. Pass `--env` with the variables a provider needs (such as a
+cloud profile) to the adapter, or the client will list only the providers it reaches
+without them, exactly as for a step.
+
 **Usage.** The adapter does not declare the `usage` feature. `opencode stats` counts
 tokens and cost per day from the client's own records, but no share of a provider's
 allowance and no reset time, in a table meant for people; nothing else the client
@@ -1312,8 +1360,9 @@ the extra argument `--describe`. It must print one line and exit with code 0:
 `resume`, which dialogue steps need; `usage`, which the `quota` mode of a role
 reads; `protect`, which says the adapter keeps the client's file tools off the paths
 in `protect` (below); `check`, which says it can check steps without running them;
-and `progress`, which says it sends progress messages while its client works
-silently.
+`progress`, which says it sends progress messages while its client works
+silently; and `catalog`, which says it can tell which models and efforts its client
+offers.
 
 **Usage.** An adapter that declares `usage` answers the extra arguments `--usage
 five_hour weekly` with one line and exit code 0, without making a model request: its
@@ -1327,6 +1376,29 @@ is left out; a client that counts by month reports that share as `weekly`.
 
 Report only what the client itself measures; when it has no such number, do not
 declare the feature, and Hetman estimates from what it saw.
+
+**Catalogue.** An adapter that declares `catalog` answers the extra argument
+`--catalog` with one line and exit code 0, without making a model request: the models
+a step may name and the efforts each takes.
+
+```json
+{"complete": true, "models": [
+ {"id": "provider/large", "label": "Large", "group": "provider", "efforts": ["low", "medium", "high"]},
+ {"id": "provider/small", "label": "Small", "group": "provider", "efforts": []},
+ {"id": "provider/new", "efforts": null}]}
+```
+
+`id` is exactly what goes into `model:`; `label` (a name for people) and `group`
+(such as the provider) are optional. `efforts` is the list of values the model takes
+for `effort:`: an empty list says the model has no effort setting, `null` or leaving
+it out says the adapter cannot tell. `complete` says the list holds every model the
+client accepts; say `false` when the client also takes names the list cannot hold,
+such as a model's full name next to an alias. Take the list from the client's own
+listing when it has one; otherwise list what the adapter knows the client accepts.
+Hetman asks with a time limit of one minute and keeps the answer in memory for ten
+minutes. An adapter without the feature, a client that is not installed, or an
+answer that is not valid simply means no catalogue: the model and effort are then
+typed by hand, and Hetman says why.
 
 **Start.** Hetman then starts the program without `--describe` and writes:
 
@@ -1365,7 +1437,10 @@ Without contacting a model it prints one line and exits with code 0:
 Hetman reports each problem at its line of the orders file and rejects the file; a
 problem with `"warning": true` (something the adapter could not verify, such as a
 model name) is shown as a warning and rejects nothing. The edit operations run the
-same check on the changed orders and show what it finds as warnings.
+same check on the changed orders and show what it finds as warnings. For an adapter
+that also declares `catalog`, Hetman checks the model and effort of each step against
+the catalogue itself; where the adapter already reported a problem with the same
+field, its message stays and only the nearest valid names are added to it.
 
 **Messages from the adapter.**
 
@@ -1410,7 +1485,8 @@ HETMAN_ADAPTER='["/path/to/my-adapter"]' go test ./internal/adapter/adaptertest 
 
 It sends tiny steps: one, one resumed and a dialogue of two steps (both only for an
 adapter that declares `resume`), and one that is cancelled, and asks for the usage
-(only for an adapter that declares `usage`; no model request); `HETMAN_ADAPTER_MODEL` and
+and the catalogue (only for an adapter that declares `usage` or `catalog`; no model
+request); `HETMAN_ADAPTER_MODEL` and
 `HETMAN_ADAPTER_EFFORT` set the `model` and `effort` of those steps, so that a real
 client can be checked with its cheapest model. `cmd/hetman-stub-adapter` is an
 adapter that passes it without any client; its plan format is described in

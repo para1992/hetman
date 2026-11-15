@@ -15,6 +15,11 @@
 // prints one Usage line with its client's current usage of those windows,
 // makes no model request, and exits with code 0.
 //
+// An adapter that declares the catalog feature answers the argument
+// --catalog: it prints one Catalog line with the models and efforts its
+// client offers, makes no model request, and exits with code 0 (see
+// catalog.go).
+//
 // For a step the engine writes one Start message, then the adapter writes
 // any number of log and session messages followed by exactly one result or
 // error message, and exits with code 0. The engine may write a cancel

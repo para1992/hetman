@@ -192,6 +192,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/stream", s.handleStream)
 	mux.HandleFunc("GET /api/tasks", s.handleTasks)
 	mux.HandleFunc("GET /api/roles", s.handleRoles)
+	mux.HandleFunc("GET /api/flows/{file}/catalog", s.handleCatalog)
 	mux.Handle("POST /api/campaigns/{id}/halt", s.control(s.handleHalt))
 	mux.Handle("POST /api/campaigns/{id}/resume", s.control(s.handleResume))
 	mux.HandleFunc("GET /api/campaigns/{id}/show", s.handleShow)

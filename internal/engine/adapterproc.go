@@ -268,6 +268,11 @@ func describe(ctx context.Context, argv []string, dir string, env []string) (ada
 // query runs an adapter with extra arguments that ask it something, such as
 // --describe, and returns what it printed.
 func query(ctx context.Context, argv, extra []string, dir string, env []string) ([]byte, error) {
+	return queryWithin(ctx, argv, extra, dir, env, describeTimeout)
+}
+
+// queryWithin is query with its own time limit.
+func queryWithin(ctx context.Context, argv, extra []string, dir string, env []string, limit time.Duration) ([]byte, error) {
 	cmd := exec.Command(argv[0], append(append([]string{}, argv[1:]...), extra...)...)
 	cmd.Dir, cmd.Env = dir, env
 	var stdout, stderr bytes.Buffer
@@ -279,7 +284,7 @@ func query(ctx context.Context, argv, extra []string, dir string, env []string) 
 	}
 	exited := make(chan error, 1)
 	go func() { exited <- cmd.Wait() }()
-	t := time.NewTimer(describeTimeout)
+	t := time.NewTimer(limit)
 	defer t.Stop()
 	select {
 	case err := <-exited:
@@ -289,7 +294,7 @@ func query(ctx context.Context, argv, extra []string, dir string, env []string) 
 	case <-t.C:
 		killTree(cmd.Process)
 		<-exited
-		return nil, fmt.Errorf("%s %s did not finish within %s", argv[0], extra[0], describeTimeout)
+		return nil, fmt.Errorf("%s %s did not finish within %s", argv[0], extra[0], limit)
 	case <-ctx.Done():
 		killTree(cmd.Process)
 		<-exited

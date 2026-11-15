@@ -4,12 +4,14 @@
 //
 // Usage:
 //
-//	hetman-adapter-claude [--client PROGRAM] [--env NAME]... [--describe | --check]
+//	hetman-adapter-claude [--client PROGRAM] [--env NAME]... [--describe | --check | --catalog]
 //
 // --client names the client program, "claude" on the path by default.
 // --env passes one more variable of the adapter's own environment to the
 // client; by default the client gets only what it needs to run, to reach the
 // network and to find its login (see clientEnv).
+// --catalog prints the model aliases and effort levels the adapter knows
+// the client accepts (see catalog.go).
 //
 // The step's prompt goes to the client on standard input. The client runs in
 // the step's working folder with only the step's tools, pre-approved, and
@@ -81,6 +83,7 @@ func parseArgs(args []string) (o options, describe bool, err error) {
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	args, check := cutFlag(args, adapter.CheckFlag)
+	args, catalog := cutFlag(args, adapter.CatalogFlag)
 	o, describe, err := parseArgs(args)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s adapter: %v\n", adapterName, err)
@@ -88,9 +91,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if describe {
 		data, _ := json.Marshal(adapter.Description{Protocol: []int{adapter.Version}, Name: adapterName,
-			Features: []string{adapter.FeatureResume, adapter.FeatureProtect, adapter.FeatureCheck, adapter.FeatureProgress}})
+			Features: []string{adapter.FeatureResume, adapter.FeatureProtect, adapter.FeatureCheck, adapter.FeatureProgress, adapter.FeatureCatalog}})
 		fmt.Fprintf(stdout, "%s\n", data)
 		return 0
+	}
+	if catalog {
+		return serveCatalog(stdout)
 	}
 	if check {
 		if err := adapter.ServeCheck(stdin, stdout, func(st adapter.Step) []adapter.CheckProblem { return stepProblems(o, st, stderr) }); err != nil {

@@ -523,18 +523,18 @@
       out.push(h('p', null, h('b', { text: r.name }), ' ', h('span', { class: 'tag', text: tk('page.roles.mode.', r.select) }), ' ',
         r.clients.map((c, i) => h('span', { class: 'tag', text: (i + 1) + ' ' + c.executor + (c.model ? ' ' + c.model : '') + (c.effort ? ' · ' + c.effort : '') }))));
     }
-    const client = [{ name: 'executor', kind: 'select', options: f.executors }, { name: 'model', kind: 'text' }, { name: 'effort', kind: 'text' }];
+    const client = (v) => [{ name: 'executor', kind: 'select', options: f.executors }].concat(catalogFields(v.executor || f.executors[0] || '', v.model));
     const withClient = (op, v) => {
       if (v.model) op.model = v.model;
       if (v.effort) op.effort = v.effort;
       return op;
     };
-    const ops = [{ key: 'role_new', fields: () => [{ name: 'rolename', kind: 'text' }, { name: 'select', kind: 'select', options: f.modes }].concat(client),
+    const ops = [{ key: 'role_new', fields: (v) => [{ name: 'rolename', kind: 'text' }, { name: 'select', kind: 'select', options: f.modes }].concat(client(v)),
       op: (v) => withClient({ op: 'role', name: v.rolename || '', select: v.select || f.modes[0], executor: v.executor || f.executors[0] || '' }, v) }];
     if (names.length) {
       ops.push({ key: 'role_select', fields: () => [{ name: 'rolename', kind: 'select', options: names }, { name: 'select', kind: 'select', options: f.modes }],
         op: (v) => ({ op: 'role', name: v.rolename || names[0], select: v.select || f.modes[0] }) });
-      ops.push({ key: 'role_add', fields: () => [{ name: 'rolename', kind: 'select', options: names }].concat(client, [{ name: 'at', kind: 'number' }]),
+      ops.push({ key: 'role_add', fields: (v) => [{ name: 'rolename', kind: 'select', options: names }].concat(client(v), [{ name: 'at', kind: 'number' }]),
         op: (v) => {
           const op = withClient({ op: 'role-add', name: v.rolename || names[0], executor: v.executor || f.executors[0] || '' }, v);
           if (Number(v.at) > 0) op.at = Number(v.at);
@@ -686,7 +686,7 @@
       if (type === 'gate') out.push({ name: 'checks', kind: 'multi', options: checks });
       if (type === 'agent') {
         if (f.roles.length) out.push({ name: 'role', kind: 'select', options: [''].concat(f.roles.map((r) => r.name)) });
-        if (!v.role) out.push({ name: 'executor', kind: 'select', options: f.executors }, { name: 'model', kind: 'text' });
+        if (!v.role) out.push({ name: 'executor', kind: 'select', options: f.executors }, ...catalogFields(v.executor || f.executors[0] || '', v.model));
         out.push({ name: 'outcomes', kind: 'list' }, { name: 'starters', kind: 'check', value: true });
       }
       if (type === 'human') out.push({ name: 'outcomes', kind: 'list' });
@@ -699,6 +699,7 @@
       if (op.type === 'agent' && !v.role) {
         if (v.executor) op.executor = v.executor;
         if (v.model) op.model = v.model;
+        if (v.effort) op.effort = v.effort;
       }
       if (op.type === 'agent') {
         if (v.starters !== false) op.starters = true;
@@ -738,6 +739,8 @@
       const valueField = (field) => {
         if (field === 'executor') return { name: 'value', kind: 'select', options: f.executors, value: n.executor };
         if (field === 'role') return { name: 'value', kind: 'select', options: f.roles.map((r) => r.name), value: n.role };
+        if (field === 'model') return { name: 'value', label: 'model', kind: 'model', executor: n.executor || '', value: n.model || '' };
+        if (field === 'effort') return { name: 'value', label: 'effort', kind: 'effort', executor: n.executor || '', model: n.model || '', value: n.effort || '' };
         return { name: 'value', kind: 'text', value: current(n, field) };
       };
       ops.push({ key: 'agent', fields: (v) => [{ name: 'field', kind: 'select', options: agentFields, value: first }, valueField(v.field || first)],
@@ -796,6 +799,94 @@
 
   function split(s) { return String(s).split(/[,\s]+/).filter(Boolean); }
 
+  // ---- models and efforts offered by the catalogue of an executor ---------
+
+  // The adapter of an executor may tell what its client offers: the models
+  // a step may name and the efforts of each. The model field then offers
+  // them as a searchable list and the effort field becomes a choice of the
+  // model's efforts. Without a catalogue both stay free text, with a note.
+  const CATALOGS = new Map(); // by file and executor: the answer, or { loading: true }
+
+  function catalogFields(executor, model) {
+    return [{ name: 'model', kind: 'model', executor: executor }, { name: 'effort', kind: 'effort', executor: executor, model: model || '' }];
+  }
+
+  function catalogOf(file, executor, refresh) {
+    if (!executor) return { reason: t('page.catalog.no_executor') };
+    const key = file + '\n' + executor;
+    const known = CATALOGS.get(key);
+    if (known && !refresh) return known;
+    CATALOGS.set(key, { loading: true });
+    fetch(flowPath(file) + '/catalog?executor=' + encodeURIComponent(executor) + (refresh ? '&refresh=1' : '') + '&lang=' + encodeURIComponent(W.lang()))
+      .then((res) => res.json())
+      .catch(() => ({ reason: t('page.catalog.unreachable') }))
+      .then((data) => { CATALOGS.set(key, data || {}); W.render(); });
+    return CATALOGS.get(key);
+  }
+
+  function effortWords(m) {
+    if (m.efforts == null) return t('page.catalog.efforts_unknown');
+    if (!m.efforts.length) return t('page.catalog.no_effort_short');
+    return t('page.catalog.efforts', { efforts: m.efforts.join(', ') });
+  }
+
+  function catalogField(f, key, v, fd) {
+    const fkey = key + '/' + fd.name;
+    const label = t('page.field.' + (fd.label || fd.name));
+    const cat = catalogOf(f.file, fd.executor, false);
+    const ready = cat && cat.available;
+    const note = (text, refresh) => h('span', { class: 'hint' }, text, refresh && fd.executor ? [' ',
+      h('button', { class: 'btn', type: 'button', 'data-fkey': fkey + '/refresh', onclick: () => { catalogOf(f.file, fd.executor, true); W.render(); } }, t('page.catalog.refresh'))] : null);
+    const plain = () => {
+      const input = h('input', { type: 'text', 'data-fkey': fkey, 'aria-label': label, oninput: (e) => { v[fd.name] = e.target.value; } });
+      input.value = v[fd.name] || '';
+      return input;
+    };
+    const why = cat.loading ? t('page.catalog.loading') : t('page.catalog.none', { reason: cat.reason || '' });
+    let parts;
+    if (fd.kind === 'model') {
+      if (!ready) {
+        parts = [plain(), note(why, !cat.loading)];
+      } else {
+        const list = 'dl-' + fkey.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const input = h('input', { type: 'text', list: list, autocomplete: 'off', 'data-fkey': fkey, 'aria-label': label,
+          placeholder: t('page.catalog.model_placeholder'), oninput: (e) => { v[fd.name] = e.target.value; },
+          onchange: (e) => { v[fd.name] = e.target.value.trim(); W.render(); } });
+        input.value = v[fd.name] || '';
+        const chosen = (v[fd.name] || '').trim();
+        const m = cat.models.find((x) => x.id === chosen);
+        let text = t('page.catalog.count', { n: cat.models.length });
+        if (chosen && m) text = (m.label && m.label !== m.id ? m.label + ' · ' : '') + effortWords(m);
+        else if (chosen) text = t(cat.complete ? 'page.catalog.unknown_model' : 'page.catalog.unlisted_model', { model: chosen });
+        parts = [input, h('datalist', { id: list }, cat.models.map((x) => h('option', { value: x.id },
+          (x.group ? x.group + ' · ' : '') + (x.label && x.label !== x.id ? x.label + ' · ' : '') + effortWords(x)))),
+        note(text, true)];
+      }
+    } else {
+      const m = ready && fd.model ? cat.models.find((x) => x.id === fd.model) : null;
+      if (m && m.efforts && !m.efforts.length) {
+        // A model without an effort setting takes none: an effort chosen
+        // for another model is not sent with it.
+        if (fd.name === 'effort') v.effort = '';
+        parts = [h('select', { 'data-fkey': fkey, 'aria-label': label, disabled: true }, h('option', { value: '' }, '—')),
+          note(t('page.catalog.no_effort', { model: m.id }))];
+      } else if (m && m.efforts) {
+        const cur = v[fd.name] || '';
+        const options = m.efforts.slice();
+        if (cur && !options.includes(cur)) options.unshift(cur);
+        parts = [h('select', { 'data-fkey': fkey, 'aria-label': label, onchange: (e) => { v[fd.name] = e.target.value; } },
+          h('option', { value: '', selected: !cur }, t('page.catalog.default_effort')),
+          options.map((o) => h('option', { value: o, selected: cur === o }, m.efforts.includes(o) ? o : t('page.catalog.not_offered', { effort: o })))),
+        note(t('page.catalog.efforts_of', { model: m.id }))];
+      } else {
+        let text = why;
+        if (ready) text = !fd.model ? t('page.catalog.effort_without_model') : !m ? t('page.catalog.effort_model_unlisted', { model: fd.model }) : t('page.catalog.effort_unknown', { model: m.id });
+        parts = [plain(), note(text)];
+      }
+    }
+    return h('label', { class: 'row' }, h('span', { class: 'lbl', text: label }), parts);
+  }
+
   function editorCard(f, id) {
     const n = f.nodes.find((x) => x.id === id);
     const close = () => { location.hash = flowHref(f.file); };
@@ -837,7 +928,7 @@
     if (!v) { v = {}; C.forms.set(key, v); }
     const fields = spec.fields(v);
     for (const fd of fields) if (v[fd.name] === undefined && fd.value !== undefined) v[fd.name] = fd.value;
-    const items = fields.map((fd) => field(key, v, fd));
+    const items = fields.map((fd) => (fd.kind === 'model' || fd.kind === 'effort' ? catalogField(f, key, v, fd) : field(key, v, fd)));
     return W.details('op:' + key, false, { class: 'attempt ctl-op' },
       h('summary', null, h('b', { text: t('page.op.' + spec.key) })),
       h('form', { class: 'answer attempt-body', novalidate: true, onsubmit: (e) => {

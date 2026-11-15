@@ -526,7 +526,7 @@ func TestEffort(t *testing.T) {
 		model, effort, problem string
 	}{
 		{"example/fast", "high", ""},
-		{"example/fast", "max", "its variants: high, low"},
+		{"example/fast", "max", "its variants: low, high"},
 		{"example/plain", "low", "has no variants"},
 		{"example/unlisted", "low", ""}, // not in the catalogue: passed unchecked
 		{"", "low", ""},                 // no model: passed unchecked
