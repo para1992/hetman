@@ -1,0 +1,61 @@
+# Two agent steps run by the Codex client, with a gate between them: the
+# draft step writes a short note into note.md in this folder, the gate checks
+# the file, and the review step reads it and may send it back to the draft
+# once.
+#
+# It needs the client installed (codex on the path) and logged in with a
+# ChatGPT account, and the adapter. Build the adapter once, from the
+# repository root:
+#
+#   go build -o examples/codex/bin/hetman-adapter-codex ./cmd/hetman-adapter-codex
+#
+# Then, in this folder:
+#
+#   hetman check
+#   hetman run -input input.json
+#   hetman status
+#
+# A run makes two to four small requests. Any model "codex debug models"
+# lists works; the adapter's --catalog lists them with their efforts. The
+# gate's check is a POSIX shell script; on Windows run it from a shell that
+# has sh on its path, such as Git Bash.
+version: 0
+flow: codex-demo
+workdir: .   # the folder agent steps work in, relative to this file
+start: draft
+
+executors:
+  codex: {run: [./bin/hetman-adapter-codex]}
+
+checks:
+  note: {run: [sh, checks/note.sh], timeout: 30s}
+
+nodes:
+  draft:
+    type: agent
+    executor: codex
+    prompt: prompts/draft.md
+    schema: schemas/draft.json
+    model: gpt-5.6-luna
+    effort: low
+    tools: [write]               # the sandbox lets commands and patches write in workdir
+    timeout: 5m
+    idle_timeout: 3m
+    max_attempts: 2
+    on: {ok: ready, fail: failed}
+  ready:
+    type: gate
+    checks: [note]
+    on: {pass: review, blocked: failed}
+  review:
+    type: agent
+    executor: codex
+    prompt: prompts/review.md
+    schema: schemas/review.json
+    model: gpt-5.6-luna
+    effort: low
+    tools: [read]                # the reviewer can read files, not change them
+    timeout: 5m
+    idle_timeout: 3m
+    max_attempts: 2
+    on: {approved: done, needs_rework: draft, rejected: failed, fail: failed}

@@ -1087,9 +1087,10 @@ An adapter is the program between Hetman and one coding-agent client: it receive
 one step, runs the client on it, and reports what the client does and answers, in
 the protocol described under Writing an adapter. The `hetman` binary contains no
 adapter and never names a client; an orders file names the adapter program of each
-executor. This repository has three: `hetman-adapter-claude` for the Claude Code
-client, `hetman-adapter-opencode` for the OpenCode client, and
-`hetman-stub-adapter`, which runs no model (see Agent steps without a real client).
+executor. This repository has four: `hetman-adapter-claude` for the Claude Code
+client, `hetman-adapter-opencode` for the OpenCode client, `hetman-adapter-codex` for
+the Codex client, and `hetman-stub-adapter`, which runs no model (see Agent steps
+without a real client).
 
 ### Claude Code
 
@@ -1360,6 +1361,179 @@ this client from the attempts Hetman saw against the client's `allowance`.
 Its comments say how to run it; a run makes two to four small requests and needs a
 provider with quota left. A step that hits the provider's limit makes the campaign
 wait until `hetman resume`.
+
+### Codex
+
+`hetman-adapter-codex` runs a step through the `codex` command-line client in
+non-interactive mode (`codex exec`), on your ChatGPT subscription. Download
+`hetman-adapter-codex-VERSION-OS-ARCH` for your system from the Releases page (it is
+in the same checksum file), or build it:
+
+```sh
+go build -o hetman-adapter-codex ./cmd/hetman-adapter-codex
+```
+
+It needs `codex` on the path, logged in with a ChatGPT account (`codex login`;
+`codex login status` says which). A login with an API key is refused by the client
+for these runs (`forced_login_method="chatgpt"`), since it would be paid usage. Name
+it under `executors`:
+
+```yaml
+executors:
+  codex: {run: [./bin/hetman-adapter-codex]}   # options: --client PATH, --env NAME
+
+nodes:
+  implement:
+    type: agent
+    executor: codex
+    model: gpt-5.6-terra
+    effort: high
+    tools: [write, network]
+    ...
+```
+
+For each attempt it runs the client in the step's `workdir`, with the prompt on
+standard input:
+
+```
+codex exec --json --ignore-user-config --ignore-rules --skip-git-repo-check
+  -c approval_policy="never" -c approvals_reviewer="user" -c forced_login_method="chatgpt"
+  -c allow_login_shell=false -c history.persistence="none" -c check_for_update_on_startup=false
+  -c skills.include_instructions=false -c skills.bundled.enabled=false
+  --disable apps --disable plugins --disable hooks --disable memories --disable multi_agent
+  --disable browser_use --disable computer_use --disable image_generation --disable goals
+  --disable tool_suggest
+  -c default_permissions="hetman" -c permissions.hetman.extends=":workspace"
+  -c permissions.hetman.filesystem={"/WORKDIR"="write","/WORK"="write","/PROTECTED"="read",...}
+  [-c permissions.hetman.network.enabled=true] -c web_search="disabled"
+  -C WORKDIR -m MODEL -c model_reasoning_effort="EFFORT" --output-schema SCHEMA_FILE -
+```
+
+A continued conversation is `codex exec resume ... SESSION -` with the same options
+but `-C`. The adapter never passes `--dangerously-bypass-approvals-and-sandbox`, the
+`danger-full-access` sandbox or an automatic approval reviewer.
+
+- `model` is a model id as the client's catalogue lists it (`codex debug models`);
+  empty means the client's default. The server refuses a model the account cannot use
+  ("not supported when using Codex with a ChatGPT account"), a `permanent` error.
+  `hetman check` looks the model up in that catalogue, which needs no model request.
+- `effort` is passed as `model_reasoning_effort`. The catalogue says which efforts each
+  model takes (`low`, `medium`, `high`, `xhigh`, `max` on the current models); the
+  adapter rejects one the model does not offer before the client runs. `ultra`, which
+  the client describes as reasoning with automatic task delegation to sub-agents, is
+  refused, since the adapter switches sub-agents off. Without a model the value is
+  passed unchecked but for its form.
+- `tools`: the client does not allow or deny tools by name. The model runs shell
+  commands and edits files with `apply_patch`, and the client's sandbox (bubblewrap
+  on Linux, Seatbelt on macOS, its own sandbox on Windows) decides what
+  those may touch, from a permission profile the adapter defines for the step. Command
+  rules exist only as rules files in your or the project's folder, which the adapter
+  does not load (`--ignore-rules`) and cannot pass on the command line. So an entry
+  names what the sandbox may do:
+  - `read`: shell commands are available and may read files (the whole file system,
+    as far as the sandbox lets them), but write nothing;
+  - `write`: as `read`, and commands and `apply_patch` may write in `workdir`, the
+    campaign's work folder and the system's temporary folders, but not in the
+    protected paths (profile `:workspace`);
+  - `write(FOLDER)` (or `write(FOLDER/**)`): as `read`, and they may write only in
+    FOLDER (relative to `workdir`, or absolute), the work folder and the temporary
+    folders, not in the protected paths. The client's sandbox opens only an existing
+    folder for writing (a file, or a folder that does not exist, stays read-only), so
+    FOLDER must exist when the step runs; otherwise the step fails at once;
+  - `network`: commands may reach the network (with `read` or `write`); without it
+    the sandbox cuts commands off from it;
+  - `web_search`: the client's own web search tool is available (`web_search="live"`);
+    without it, it is off.
+
+  No tools means no shell and no file edits: the client's shell tools are switched off
+  and the profile is read-only. Every other entry is rejected as a `permanent` error
+  naming it, and by `hetman check` at its line: a command pattern such as
+  `shell(go test *)` (not enforceable), a path pattern on `read` (the sandbox cannot
+  limit reading), a glob in `write(...)` (the client refuses write globs), a pattern on
+  `network` (the client limits domains only through its experimental proxy), tool
+  names such as `bash`, `edit` or `Read`, tool servers, and `network` without `read` or
+  `write`.
+- Protection is enforced by the sandbox, for shell commands as well as for
+  `apply_patch`: each protected path is a `read` entry of the profile, which wins over
+  the writable folder that holds it, also for a path that does not exist yet (so new
+  files in `.hetman/` are covered), and the work folder inside `.hetman/` is a `write`
+  entry, which wins over `.hetman/`. Writable folders outside `workdir` are `write`
+  entries. A step whose tools write nothing gets no writable folder. What stays open:
+  every step may read the whole file system as far as the sandbox allows, including
+  the protected paths; a writing step may write the system's temporary folders, as the
+  client's workspace mode does; and the client's own protections apply on top (it keeps
+  `.git` read-only in the working folder, so a step cannot commit).
+- The answer: the client holds the final message to a JSON Schema given with
+  `--output-schema`, but only in the server's strict mode, which refuses a schema
+  unless every object says `"additionalProperties": false` and lists every property as
+  required. So the adapter gives the client a strict form of the node's schema: every
+  object closed, every property required, an optional property allowed to be `null`;
+  such a `null` is removed from the answer again. A schema that allows other
+  properties on purpose, or uses `$ref`, `oneOf`, `allOf` or `not`, gets no strict form,
+  and when the server refuses a strict form anyway the turn runs again without one. The
+  prompt always ends with the schema and asks for the JSON object at the end of the
+  answer; without a client schema the last JSON object in the answer is taken. Hetman
+  checks every answer against the node's own schema. A turn that ends without the
+  object is continued in the same session (twice at most) with what the sandbox
+  refused, what it allows and the answer format.
+- While a turn is under way and no tool call is open, the adapter sends a `progress`
+  message every ten seconds: the client prints nothing while the model thinks, and it
+  ends a model stream that stays silent and retries it itself, reporting each retry.
+  A command that hangs sends no progress, so `idle_timeout` still catches it.
+- Errors: the usage limit ("You've hit your usage limit ... try again at ...") and a
+  request given up after HTTP 429 are `limit`, with the reset time when the client
+  gives one; a connection the client could not make after its retries is `offline`; an
+  expired login, a model the account cannot use and bad arguments are `permanent`;
+  anything else is `transient`.
+- The log shows what the client does: its messages, each shell command and patch with
+  the first line of its output, and the model steps, tool calls and tokens at the end.
+  A command that failed because the sandbox kept it from writing (`Read-only file
+  system`, `Operation not permitted`, `Permission denied`) and a patch the client
+  refused (in its error log: `patch rejected: writing outside of the project`) are
+  logged as `denied: TOOL TARGET: REASON` and reported with the answer (see Denied
+  tool calls). A command that fails with such a message for another reason is
+  reported the same way.
+- Your own setup is kept out: `--ignore-user-config` does not load `config.toml` (its
+  tool servers, skills list, profiles, project trust, hooks and model settings),
+  `--ignore-rules` your command rules, and the disabled features remove apps, plugins,
+  hooks, memories, sub-agents, the browser and computer use. Commands run without
+  your login shell profile, and nothing is added to your history file. The client's
+  home folder is used as it is, without changes: a private copy would need a copy of
+  your login, whose refresh would leave the original stale. One thing cannot be
+  switched off: the instruction file in the client's home folder (`AGENTS.md` there) is
+  still given to the model, as is the project's `AGENTS.md`.
+- The client gets only the environment it needs: the system's basic variables, proxy
+  and certificate settings and `CODEX_HOME`; commands it runs see the same. `--env
+  NAME` adds one more. `OPENAI_API_KEY`, `CODEX_API_KEY`, `CODEX_ACCESS_TOKEN` and
+  `OPENAI_BASE_URL` are never passed.
+
+**Session resume.** The adapter declares `resume` and reports the client's thread id
+as soon as the client starts. When Hetman gives it a session id, the client continues
+that thread with `codex exec resume` and receives the whole prompt of the new attempt
+as the next message. The client keeps threads in its home folder on the computer that
+ran them. When the client cannot find the thread, the adapter says so in the log and
+starts a new conversation with the prompt. The client takes an id that is not a thread
+id (a UUID) for a thread name and starts a new conversation when none has that name,
+so the adapter does not pass such an id: a normal attempt starts afresh, and a repair
+round fails with a `permanent` error, as it does when the client reports another
+thread than the one it was asked to continue.
+
+**Catalogue.** The adapter declares `catalog` and answers it from the client's own
+catalogue, `codex debug models`, which the client refreshes from the server for the
+logged-in account without a model request: every model id, its display name and its
+efforts (without `ultra`, see above). Models the client hides from its picker are
+listed in the group `hidden`. The server refuses any other model, so the catalogue is
+complete. When the catalogue cannot be refreshed, the one bundled with the client
+(`codex debug models --bundled`) is used and marked not complete.
+
+**Usage.** The adapter does not declare the `usage` feature. The client reports its
+rate-limit windows only through its experimental app server, not through a command
+meant for programs. A role's `quota` mode therefore estimates this client from the
+attempts Hetman saw against the client's `allowance`.
+
+`examples/codex` is the same small flow as `examples/claude` with this adapter. Its
+comments say how to run it; a run makes two to four small requests with a small model
+at low effort.
 
 ## Writing an adapter
 

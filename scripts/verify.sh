@@ -55,6 +55,7 @@ for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 wi
   GOOS=$os GOARCH=$arch go build -trimpath -o "$out/hetman-$os-$arch$ext" ./cmd/hetman
   GOOS=$os GOARCH=$arch go build -trimpath -o "$out/hetman-adapter-claude-$os-$arch$ext" ./cmd/hetman-adapter-claude
   GOOS=$os GOARCH=$arch go build -trimpath -o "$out/hetman-adapter-opencode-$os-$arch$ext" ./cmd/hetman-adapter-opencode
+  GOOS=$os GOARCH=$arch go build -trimpath -o "$out/hetman-adapter-codex-$os-$arch$ext" ./cmd/hetman-adapter-codex
   echo "ok $target"
 done
 

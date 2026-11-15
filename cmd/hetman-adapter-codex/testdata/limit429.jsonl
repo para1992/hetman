@@ -1,0 +1,4 @@
+{"type": "thread.started", "thread_id": "$THREAD"}
+{"type": "turn.started"}
+{"type": "error", "message": "Reconnecting... 5/5 (exceeded retry limit, last status: 429 Too Many Requests)"}
+{"type": "turn.failed", "error": {"message": "exceeded retry limit, last status: 429 Too Many Requests, request id: req-0000"}}
