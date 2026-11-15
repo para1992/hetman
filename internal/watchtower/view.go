@@ -174,6 +174,7 @@ type Tile struct {
 	Args     map[string]string `json:"args,omitempty"`    // the parameters of Note
 	Attempt  int               `json:"attempt,omitempty"` // the attempt of the node the child belongs to
 	Earlier  bool              `json:"earlier,omitempty"` // the child belongs to an earlier attempt and is never driven again
+	Before   []Tile            `json:"before,omitempty"`  // the children of earlier attempts for the same item, newest first
 }
 
 // Exit is one transition out of a node.

@@ -100,6 +100,44 @@ nodes:
 	}
 }
 
+// After a retry the page shows one tile per item, in list order, with its
+// latest attempt; an earlier attempt of an item hangs under that tile.
+func TestForEachEarlierAttemptsHangUnderTheirItem(t *testing.T) {
+	items := strings.ReplaceAll(`[{"id":"a"},{"id":"b","failonce":true},{"id":"c"}]`, "'", "''")
+	w := newSegmentWorld(t, `version: 0
+start: plan
+nodes:
+  plan: {type: script, run: `+arg("write", "items.json", items)+`, on: {ok: each, fail: failed}}
+  each: {type: foreach, segment: 'SEG', items: artifact.plan.items.json, parallel: 1, on: {done: done, failed: failed}}
+`, `version: 0
+flow: item
+start: work
+nodes:
+  work: {type: script, run: `+arg("item", "SYNC1")+`, on: {ok: done, fail: failed}}
+`)
+	runner, _ := w.process("run")
+	runner.Wait()
+	w.waitState(1, watchtower.StateFailed)
+	retry, out := w.process("retry")
+	retry.Wait()
+	c := w.waitState(1, watchtower.StateDone)
+	tiles := find(c.Columns, "each").Tiles
+	var got []string
+	for _, t := range tiles {
+		s := fmt.Sprintf("%s:%s:%d", t.Item, t.Status, len(t.Before))
+		for _, b := range t.Before {
+			s += fmt.Sprintf("[%s:%s:%d:%v]", b.Item, b.Status, b.Attempt, b.Earlier)
+		}
+		got = append(got, s)
+	}
+	if want := "a:passed:0 b:passed:1[b:failed:1:true] c:passed:0"; strings.Join(got, " ") != want {
+		t.Fatalf("tiles %v, want %s\n%s", got, want, out)
+	}
+	if tiles[1].Child == tiles[1].Before[0].Child || tiles[1].Attempt != 2 {
+		t.Fatalf("tile of b %+v", tiles[1])
+	}
+}
+
 func TestChildQuestionShownAndAnsweredThroughTheParent(t *testing.T) {
 	w := newSegmentWorld(t, `version: 0
 start: s

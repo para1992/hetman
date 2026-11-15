@@ -157,6 +157,50 @@ nodes:
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
 
+// After a retry an item that failed in its first attempt and passed in the
+// second is one row with its latest attempt; the earlier attempt is an
+// indented line directly under it, and the items keep their list order.
+func TestStatusShowsEarlierAttemptsUnderTheirItem(t *testing.T) {
+	items := strings.ReplaceAll(`[{"id":"x"},{"id":"y","failonce":true},{"id":"z"}]`, "'", "''")
+	w := newWorld(t, `  a: {type: script, run: `+arg("write", "items.json", items)+`, on: {ok: each, fail: failed}}
+  each: {type: foreach, segment: seg.yaml, items: artifact.a.items.json, parallel: 1, on: {done: done, failed: failed}}
+`)
+	w.file("seg.yaml", `version: 0
+flow: item
+start: work
+nodes:
+  work: {type: script, run: `+arg("item", "SYNC")+`, on: {ok: done, fail: failed}}
+`)
+	w.call(exitFailed, "run")
+	var firstY int64
+	for _, e := range w.events() {
+		if e.Kind == chronicle.ChildStarted && e.Item == "y" {
+			firstY = e.Child
+		}
+	}
+	if out := w.call(exitDone, "retry"); !strings.Contains(out, "campaign done") {
+		t.Fatalf("retry:\n%s", out)
+	}
+	status := w.call(0, "status")
+	var rows []string
+	for _, l := range strings.Split(status, "\n") {
+		if strings.Contains(l, "item ") || strings.Contains(l, "earlier attempt") {
+			rows = append(rows, l)
+		}
+	}
+	flat := func(i int) string { return strings.Join(strings.Fields(rows[i]), " ") }
+	if len(rows) != 4 || !strings.HasPrefix(flat(0), "item x ") || !strings.HasPrefix(flat(1), "item y ") ||
+		!strings.HasSuffix(flat(1), "done") || strings.Contains(flat(1), "campaign "+itoa(firstY)+" ") ||
+		flat(2) != "earlier attempt 1 campaign "+itoa(firstY)+" failed" || !strings.HasPrefix(flat(3), "item z ") {
+		t.Fatalf("rows %q\n%s", rows, status)
+	}
+	// The earlier attempt is indented further than its item.
+	indent := func(s string) int { return len(s) - len(strings.TrimLeft(s, " ")) }
+	if indent(rows[2]) <= indent(rows[1]) {
+		t.Fatalf("earlier attempt not indented under its item:\n%s", status)
+	}
+}
+
 const lockedStep = `  a: {type: script, run: ARG, locks: [stand], on: {ok: done, fail: failed}}
 `
 

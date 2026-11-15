@@ -82,6 +82,44 @@ func TestUnableAfterADenialOfAnAllowedTool(t *testing.T) {
 	}
 }
 
+// The reason field next to an ordinary outcome is no part of the step's
+// schema: it is left out before validation and of the stored output, even
+// under additionalProperties false. A reason that says something is kept on
+// the event; the answer still counts as the outcome it names.
+func TestUnableReasonNextToAnotherOutcome(t *testing.T) {
+	strict := `{"type": "object", "properties": {"outcome": {"type": "string", "enum": ["ok"]}, "summary": {"type": "string"}}, "required": ["outcome"], "additionalProperties": false}`
+	for _, c := range []struct{ field, dropped string }{
+		{`""`, ""},
+		{`"  \n "`, ""},
+		{`null`, ""},
+		{`" the tests were slow "`, "the tests were slow"},
+		{`7`, "7"},
+	} {
+		f := setupAgent(t, unableAgent(""), map[string]string{"p.md": "Do it.", "s.json": strict,
+			"plan.json": `{"trace": "trace.jsonl", "nodes": {"a": [[{"result": {"outcome": "ok", "summary": "done", "cannot_proceed_reason": ` + c.field + `}}]]}}`}, "")
+		f.drive(Done)
+		want(t, f.finished(), []string{"a#1 ok/"})
+		fin := f.events(chronicle.StepFinished)[0]
+		if string(fin.Output) != `{"outcome":"ok","summary":"done"}` || fin.Dropped != c.dropped || fin.Failure != "" {
+			t.Fatalf("field %s: output %s, dropped %q, failure %q", c.field, fin.Output, fin.Dropped, fin.Failure)
+		}
+	}
+	// Without the field the output is stored as given.
+	f := setupAgent(t, unableAgent(""), map[string]string{"p.md": "Do it.", "s.json": strict,
+		"plan.json": `{"trace": "trace.jsonl", "nodes": {"a": [[{"result": {"summary": "done", "outcome": "ok"}}]]}}`}, "")
+	f.drive(Done)
+	if fin := f.events(chronicle.StepFinished)[0]; string(fin.Output) != `{"summary":"done","outcome":"ok"}` || fin.Dropped != "" {
+		t.Fatalf("output %s, dropped %q", fin.Output, fin.Dropped)
+	}
+}
+
+// The instruction says plainly that the field stays out of an ordinary answer.
+func TestUnableInstructionLeavesTheFieldOut(t *testing.T) {
+	if s := unableInstruction(); !strings.Contains(s, `In every other answer leave the field "cannot_proceed_reason" out entirely`) {
+		t.Fatalf("instruction %q", s)
+	}
+}
+
 // With a transition for it, the reserved outcome is followed like any other.
 func TestUnableFollowsItsTransition(t *testing.T) {
 	f := setupAgent(t, unableAgent(", cannot_proceed: escalate"), map[string]string{"p.md": "Do it.", "s.json": okSchema,

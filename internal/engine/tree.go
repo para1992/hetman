@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	"hetman/internal/chronicle"
 	"hetman/internal/orders"
@@ -120,6 +121,35 @@ type Child struct {
 	Attempt   int  // the attempt of the parent's node the child belongs to
 	KeptFrom  int  // for-each: the item reached done in this earlier attempt and was kept, not run again
 	RetriedIn bool // segment: the child of the attempt before, retried at its failed node
+
+	Before []Child // the children of earlier attempts for the same item, newest first; see AttachEarlier
+}
+
+// AttachEarlier puts each child of an earlier attempt into Before of the
+// child of the latest attempt for the same item (for a segment, its one
+// child), newest attempt first, so that a reader sees one row per item with
+// its earlier attempts under it rather than a failed attempt on its own. It
+// returns the earlier children that have no such child, such as an item
+// the list no longer holds, in the order given.
+func AttachEarlier(list, earlier []Child) []Child {
+	at := map[string]int{}
+	for i := len(list) - 1; i >= 0; i-- {
+		at[list[i].Item] = i
+	}
+	var rest []Child
+	for _, ch := range earlier {
+		i, ok := at[ch.Item]
+		if !ok {
+			rest = append(rest, ch)
+			continue
+		}
+		list[i].Before = append(list[i].Before, ch)
+	}
+	for i := range list {
+		b := list[i].Before
+		sort.SliceStable(b, func(x, y int) bool { return b[x].Attempt > b[y].Attempt })
+	}
+	return rest
 }
 
 // ChildrenOf lists the children of the latest attempt of a segment or

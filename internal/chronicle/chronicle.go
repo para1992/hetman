@@ -116,6 +116,7 @@ type Details struct {
 	Session  string          `json:"session,omitempty"`  // session id passed to the adapter, or reported by it
 	Output   json.RawMessage `json:"output,omitempty"`   // agent step: the validated output
 	Failure  string          `json:"failure,omitempty"`  // agent step: why the attempt failed (Fail*)
+	Dropped  string          `json:"dropped,omitempty"`  // agent step: a cannot-proceed reason given next to another outcome, left out of the output
 	RetryAt  *time.Time      `json:"retry_at,omitempty"` // limit failure: when to try again
 
 	Reason    string         `json:"reason,omitempty"`    // asked, notified: why a person is needed (Reason*)

@@ -165,6 +165,21 @@ func TestOfflineStopsAndResumeRunsTheStepAgain(t *testing.T) {
 	}
 }
 
+// A cannot-proceed reason given next to an ordinary outcome does not fail
+// the step; status shows that it was left out of the output.
+func TestStatusShowsADroppedUnableReason(t *testing.T) {
+	w := newAgentWorld(t, `{"trace": "trace.jsonl", "nodes": {"a": [
+		[{"result": {"outcome": "ok", "cannot_proceed_reason": "the docs were thin"}}]]}}`, "Do it.")
+	if out := w.call(exitDone, "run"); !strings.Contains(out, "campaign done") {
+		t.Fatalf("run output:\n%s", out)
+	}
+	status := w.call(0, "status")
+	if !strings.Contains(status, "ignored  cannot_proceed_reason next to outcome ok, left out of the output: the docs were thin") ||
+		!strings.Contains(status, `output   {"outcome":"ok"}`) {
+		t.Fatalf("status:\n%s", status)
+	}
+}
+
 func TestRunInput(t *testing.T) {
 	w := newAgentWorld(t, `{"trace": "trace.jsonl"}`, "Task: {{input.task}}")
 	input := filepath.Join(w.dir, "input.json")

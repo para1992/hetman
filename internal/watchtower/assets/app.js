@@ -696,29 +696,43 @@
     return el;
   }
 
+  // childTile is the tile of a child campaign of a segment or for-each
+  // step; it opens the child.
+  function childTile(c, col, t, fkey) {
+    let tag = null;
+    const sub = [];
+    const label = t.item || tt('page.child.campaign', { id: t.child });
+    if (t.item && t.child) tag = h('span', { class: 'tag', text: '#' + t.child });
+    if (col.attempts > 1 && t.attempt && !t.earlier) sub.push(tt('page.tile.child.attempt', { n: t.attempt }));
+    if (t.outcome) sub.push(t.outcome);
+    else if (t.node) sub.push(t.node);
+    const note = t.note ? tt(t.note, t.args) : '';
+    if (note) sub.push(note);
+    else if (!t.child) sub.push(statusText(t.status));
+    return h('button', {
+      class: 'tile st-' + t.status + (t.earlier ? ' earlier' : ''), type: 'button', 'data-fkey': fkey,
+      title: col.node + ' / ' + label + ': ' + statusText(t.status) + (note ? ' (' + note + ')' : ''),
+      onclick: () => { location.hash = t.child ? href(t.child) : href(c.id, 'pipeline', col.node); },
+    },
+    mark(t.status),
+    h('span', { class: 'label', text: label }),
+    h('span', { class: 'right' }, t.attempts > 1 ? h('span', { class: 'count', title: tt('page.attempts', { n: t.attempts }), text: '×' + t.attempts }) : null),
+    h('span', { class: 'sub' }, tag, sub.map((x) => h('span', { class: 'part' }, x))));
+  }
+
   function tile(c, col, t, i, last) {
+    if ((t.item || t.child) && t.before && t.before.length) {
+      // The earlier attempts of an item fold under its tile, like re-run
+      // jobs in a pipeline: the tile itself shows the latest attempt.
+      const key = 'before-' + c.id + '-' + col.node + '-' + (t.item || i);
+      return h('div', { class: 'tile-group' }, childTile(c, col, t, 'tile-' + col.node + '-' + i),
+        details(key, false, { class: 'before' },
+          h('summary', { 'data-fkey': key, text: tt('page.tile.child.before', { n: t.before.length }) }),
+          h('div', { class: 'before-tiles' }, t.before.map((b, j) => childTile(c, col, b, 'tile-' + col.node + '-' + i + '-' + j)))));
+    }
+    if (t.item || t.child) return childTile(c, col, t, 'tile-' + col.node + '-' + i);
     let label, tag = null;
     const sub = [];
-    if (t.item || t.child) {
-      // A child campaign of a segment or for-each step; it opens the child.
-      label = t.item || tt('page.child.campaign', { id: t.child });
-      if (t.item && t.child) tag = h('span', { class: 'tag', text: '#' + t.child });
-      if (col.attempts > 1 && t.attempt && !t.earlier) sub.push(tt('page.tile.child.attempt', { n: t.attempt }));
-      if (t.outcome) sub.push(t.outcome);
-      else if (t.node) sub.push(t.node);
-      const note = t.note ? tt(t.note, t.args) : '';
-      if (note) sub.push(note);
-      else if (!t.child) sub.push(statusText(t.status));
-      return h('button', {
-        class: 'tile st-' + t.status, type: 'button', 'data-fkey': 'tile-' + col.node + '-' + i,
-        title: col.node + ' / ' + label + ': ' + statusText(t.status) + (note ? ' (' + note + ')' : ''),
-        onclick: () => { location.hash = t.child ? href(t.child) : href(c.id, 'pipeline', col.node); },
-      },
-      mark(t.status),
-      h('span', { class: 'label', text: label }),
-      h('span', { class: 'right' }, t.attempts > 1 ? h('span', { class: 'count', title: tt('page.attempts', { n: t.attempts }), text: '×' + t.attempts }) : null),
-      h('span', { class: 'sub' }, tag, sub.map((x) => h('span', { class: 'part' }, x))));
-    }
     if (t.check) {
       label = t.check;
       const run = last && col.status !== 'waiting' && last.checks && last.checks.find((r) => r.check === t.check);

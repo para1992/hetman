@@ -83,6 +83,10 @@ func (s *Server) childTiles(col *Column, o *orders.Orders, events []chronicle.Ev
 	if err != nil || len(list) == 0 {
 		return
 	}
+	// The children of earlier attempts stay on the page under the item
+	// they tried; they are never driven again.
+	earlier, _ := engine.EarlierChildren(s.Chron, events, col.Node)
+	rest := engine.AttachEarlier(list, earlier)
 	var tiles []Tile
 	for _, ch := range list {
 		t := Tile{Item: ch.Item, Child: ch.ID, Outcome: ch.Outcome, Status: StatusNotRun}
@@ -103,21 +107,28 @@ func (s *Server) childTiles(col *Column, o *orders.Orders, events []chronicle.Ev
 			t.Attempts = ch.State.Attempts[ch.State.Node]
 		}
 		t.Attempt = ch.Attempt
-		tiles = append(tiles, t)
-	}
-	// The children of earlier attempts stay on the page; they are never
-	// driven again.
-	earlier, _ := engine.EarlierChildren(s.Chron, events, col.Node)
-	for _, ch := range earlier {
-		t := Tile{Item: ch.Item, Child: ch.ID, Outcome: ch.Outcome, Attempt: ch.Attempt, Earlier: true,
-			Note: "page.tile.child.earlier", Args: map[string]string{"n": strconv.Itoa(ch.Attempt)}}
-		t.Status, _, _, _ = childTileStatus(ch.State, false)
-		if t.Status == StatusRunning || t.Status == StatusWaiting || t.Status == StatusAsking {
-			t.Status = StatusInterrupted
+		for _, b := range ch.Before {
+			t.Before = append(t.Before, earlierTile(b))
 		}
 		tiles = append(tiles, t)
 	}
+	// An earlier child whose item the latest list does not hold any more
+	// keeps a tile of its own.
+	for _, ch := range rest {
+		tiles = append(tiles, earlierTile(ch))
+	}
 	col.Tiles = tiles
+}
+
+// earlierTile is the tile of a child of an earlier attempt.
+func earlierTile(ch engine.Child) Tile {
+	t := Tile{Item: ch.Item, Child: ch.ID, Outcome: ch.Outcome, Attempt: ch.Attempt, Earlier: true,
+		Note: "page.tile.child.earlier", Args: map[string]string{"n": strconv.Itoa(ch.Attempt)}}
+	t.Status, _, _, _ = childTileStatus(ch.State, false)
+	if t.Status == StatusRunning || t.Status == StatusWaiting || t.Status == StatusAsking {
+		t.Status = StatusInterrupted
+	}
+	return t
 }
 
 // childTileStatus is the status of a child's tile, where the child is, and

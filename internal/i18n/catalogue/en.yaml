@@ -394,6 +394,7 @@ status.agent.outcome: outcome {outcome}
 status.agent.attempt: "  attempt {n}  {status}  [{facts}]"
 status.agent.prompt: "    prompt   {file}"
 status.agent.denied: "    denied   {call}"
+status.agent.dropped: "    ignored  {field} next to outcome {outcome}, left out of the output: {reason}"
 status.agent.continued: "    continued session {session}"
 status.agent.session: "    session  {session}"
 status.agent.output: "    output   {output}"
@@ -435,6 +436,7 @@ status.child.waiting: "{wait} at {node}"
 status.child.running: "{node} (attempt {attempt})"
 status.child.kept: "{outcome} (kept from attempt {n})"
 status.child.earlier: "attempt {n}, not run again"
+status.child.earlier_attempt: "earlier attempt {n}"
 status.waiter.at: "{path} (campaign {id})"
 status.waiter.asking: "{at} waits for a person at {node}: hetman answer"
 status.waiter.error: "{at} stopped in the error state: {error}"
@@ -779,6 +781,9 @@ page.tile.child.halted: halted
 page.tile.child.kept: kept from attempt {n}
 page.tile.child.attempt: attempt {n}
 page.tile.child.earlier: earlier attempt {n}, not run again
+page.tile.child.before:
+  one: "{n} earlier attempt"
+  other: "{n} earlier attempts"
 page.child.runs_this: "{parent} runs this one at {path}"
 page.child.parent: "↑ campaign #{id}"
 page.child.part_of: "(part of {top})"

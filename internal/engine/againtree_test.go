@@ -85,6 +85,36 @@ func TestRetryOfAForEachKeepsTheItemsThatWereDone(t *testing.T) {
 	if starts := startsIn(f.childEvents(first["b"])); len(starts) != 1 {
 		t.Fatalf("the failed child of attempt 1 ran again: %v", starts)
 	}
+	list := f.children("each")
+	if rest := AttachEarlier(list, earlier); len(rest) != 0 {
+		t.Fatalf("unattached %+v", rest)
+	}
+	for _, c := range list {
+		if n := len(c.Before); (c.Item == "b") != (n == 1) || (n == 1 && c.Before[0].ID != first["b"]) {
+			t.Fatalf("item %s has earlier attempts %+v", c.Item, c.Before)
+		}
+	}
+}
+
+// Earlier children go under the latest child of their item, newest first;
+// a segment's go under its one child; one whose item is gone stays apart.
+func TestAttachEarlier(t *testing.T) {
+	list := []Child{{Item: "a", ID: 9, Attempt: 3}, {Item: "b", ID: 0, Attempt: 3}}
+	earlier := []Child{{Item: "a", ID: 1, Attempt: 1}, {Item: "gone", ID: 2, Attempt: 1}, {Item: "a", ID: 5, Attempt: 2}, {Item: "b", ID: 6, Attempt: 2}}
+	rest := AttachEarlier(list, earlier)
+	if len(rest) != 1 || rest[0].ID != 2 {
+		t.Fatalf("rest %+v", rest)
+	}
+	if b := list[0].Before; len(b) != 2 || b[0].ID != 5 || b[1].ID != 1 {
+		t.Fatalf("a before %+v", b)
+	}
+	if b := list[1].Before; len(b) != 1 || b[0].ID != 6 {
+		t.Fatalf("b before %+v", b)
+	}
+	seg := []Child{{ID: 7, Attempt: 2}}
+	if rest := AttachEarlier(seg, []Child{{ID: 3, Attempt: 1}}); len(rest) != 0 || len(seg[0].Before) != 1 {
+		t.Fatalf("segment %+v %+v", seg, rest)
+	}
 }
 
 func TestRetryOfASegmentRetriesItsChildAtTheFailedNode(t *testing.T) {

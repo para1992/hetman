@@ -39,6 +39,7 @@ type agentAttempt struct {
 	running, interrupted    bool
 	outcome, failure, err   string
 	output                  string
+	dropped                 string // a cannot-proceed reason given next to another outcome
 	retryAt                 *time.Time
 	asked                   int               // questions this attempt asked the person
 	choice                  *chronicle.Choice // how the client of a step run through a role was chosen
@@ -102,7 +103,7 @@ func (c *command) status(id int64, listEvents bool) int {
 			}
 			if a := v.lastAgent(e.Attempt); a != nil {
 				a.running, a.outcome, a.failure, a.err, a.output, a.retryAt = false, e.Outcome, e.Failure, e.Error, string(e.Output), e.RetryAt
-				a.denied = e.Denied
+				a.denied, a.dropped = e.Denied, e.Dropped
 				a.log, a.stderr = e.Log, e.Stderr
 			}
 		case chronicle.CheckFinished:
@@ -286,6 +287,11 @@ func (c *command) printChildren(tw io.Writer, events []chronicle.Event, node, in
 	if err != nil || depth > orders.MaxDepth {
 		return
 	}
+	// The children of earlier attempts are listed under the item they
+	// tried, so that a failed earlier attempt does not read as the item's
+	// state.
+	earlier, _ := engine.EarlierChildren(c.chron, events, node)
+	rest := engine.AttachEarlier(list, earlier)
 	for _, ch := range list {
 		name := p.T("status.child.segment")
 		if ch.Item != "" {
@@ -294,6 +300,7 @@ func (c *command) printChildren(tw io.Writer, events []chronicle.Event, node, in
 		switch {
 		case ch.NotRun != "":
 			fmt.Fprintf(tw, "%s%s\t\t%s\t%s\t\t\t\n", indent, name, p.T("status.st.not_run"), notRunWhy(p, ch))
+			printBefore(p, tw, ch, indent)
 			continue
 		case ch.ID == 0:
 			// An item waits for the items it needs that are not done yet;
@@ -304,6 +311,7 @@ func (c *command) printChildren(tw io.Writer, events []chronicle.Event, node, in
 				needs = p.T("status.child.needs", "items", strings.Join(open, ", "))
 			}
 			fmt.Fprintf(tw, "%s%s\t\t%s\t%s\t\t\t\n", indent, name, p.T("status.st.pending"), needs)
+			printBefore(p, tw, ch, indent)
 			continue
 		}
 		status, detail := childStatus(p, ch.State, c.childDriven(ch.ID))
@@ -311,23 +319,38 @@ func (c *command) printChildren(tw io.Writer, events []chronicle.Event, node, in
 			status, detail = p.T("status.st.finished"), p.T("status.child.kept", "outcome", ch.Outcome, "n", ch.KeptFrom)
 		}
 		fmt.Fprintf(tw, "%s%s\t%s\t%s\t%s\t\t\t\n", indent, name, p.T("status.child.campaign", "id", ch.ID), status, detail)
+		printBefore(p, tw, ch, indent)
 		if ch.State.End == "" && ch.State.Running {
 			c.printChildren(tw, ch.Events, ch.State.Node, indent+"  ", depth+1)
 		}
 	}
-	earlier, _ := engine.EarlierChildren(c.chron, events, node)
-	for _, ch := range earlier {
+	// An earlier child whose item the latest list does not hold any more.
+	for _, ch := range rest {
 		name := p.T("status.child.segment")
 		if ch.Item != "" {
 			name = p.T("status.child.item", "item", ch.Item)
 		}
-		state := ch.State.End
-		if state == "" {
-			state = p.T("status.d.at", "node", ch.State.Node)
-		}
 		fmt.Fprintf(tw, "%s%s\t%s\t%s\t%s\t\t\t\n", indent, name, p.T("status.child.campaign", "id", ch.ID),
-			p.T("status.child.earlier", "n", ch.Attempt), state)
+			p.T("status.child.earlier", "n", ch.Attempt), earlierState(p, ch.State))
 	}
+}
+
+// printBefore lists the earlier attempts of a child under its row,
+// indented and marked as earlier, newest first.
+func printBefore(p *i18n.Printer, tw io.Writer, ch engine.Child, indent string) {
+	for _, b := range ch.Before {
+		fmt.Fprintf(tw, "%s  %s\t%s\t\t%s\t\t\t\n", indent, p.T("status.child.earlier_attempt", "n", b.Attempt),
+			p.T("status.child.campaign", "id", b.ID), earlierState(p, b.State))
+	}
+}
+
+// earlierState is how a child of an earlier attempt ended: its end, or the
+// node it stopped at.
+func earlierState(p *i18n.Printer, st chronicle.State) string {
+	if st.End != "" {
+		return st.End
+	}
+	return p.T("status.d.at", "node", st.Node)
 }
 
 // notRunWhy says why a for-each item did not run, in the reader's language.
@@ -439,6 +462,9 @@ func printAgent(p *i18n.Printer, w io.Writer, node string, attempts []*agentAtte
 		}
 		for _, d := range a.denied {
 			fmt.Fprintln(w, p.T("status.agent.denied", "call", d))
+		}
+		if a.dropped != "" {
+			fmt.Fprintln(w, p.T("status.agent.dropped", "field", orders.UnableField, "outcome", a.outcome, "reason", a.dropped))
 		}
 		if a.prompt != "" {
 			fmt.Fprintln(w, p.T("status.agent.prompt", "file", a.prompt))
@@ -599,6 +625,9 @@ func eventLine(e chronicle.Event) string {
 	}
 	if e.Failure != "" {
 		parts = append(parts, "failure="+e.Failure)
+	}
+	if e.Dropped != "" {
+		parts = append(parts, fmt.Sprintf("dropped=%q", e.Dropped))
 	}
 	if e.RetryAt != nil {
 		parts = append(parts, "retry_at="+e.RetryAt.Local().Format(time.RFC3339))

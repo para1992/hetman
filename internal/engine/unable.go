@@ -42,7 +42,22 @@ func unableInstruction() string {
 
 ---
 If you cannot do this step at all, for example because a tool or file you need is denied or out of reach, or the task contradicts itself, do not guess and do not pretend it is done: reply with a JSON object whose "outcome" is %[1]q and whose %[2]q says in a sentence or two what stops you, naming the tool or file. Fill any other required field with an empty value. A person reads the reason; this step is not retried by itself.
+In every other answer leave the field %[2]q out entirely: do not include it, not even empty.
 `, orders.Unable, orders.UnableField)
+}
+
+// droppedReason is what a person is shown of a reason field an answer gave
+// next to an outcome other than orders.Unable: the trimmed text, or the
+// JSON of a value that is not a string; empty when it says nothing.
+func droppedReason(v any) string {
+	switch r := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(r)
+	}
+	b, _ := json.Marshal(v)
+	return string(b)
 }
 
 // allowedAfterAll points a person at entries the agent did not use when an

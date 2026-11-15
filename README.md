@@ -414,7 +414,10 @@ asked of a child campaign they are refused and name that campaign. They are also
 refused while any unfinished child is driven. Sending a campaign back to a segment or
 for-each node, or to a node before it, runs that node again as a new attempt with new
 children; the children of earlier attempts keep their history, stay listed (marked
-with their attempt), and are never driven again. A retry of a for-each node runs the
+with their attempt), and are never driven again. Each is listed under the item, or
+the segment, it tried: `hetman status` shows one row per item with its latest
+attempt and the earlier ones as indented lines under it, and Watchtower folds them
+under the item's tile. A retry of a for-each node runs the
 list of the attempt before again, keeps the items that reached `done` there
 (`item_kept`) and runs the others as new children. A retry of a segment node whose
 child failed or stopped in the error state retries that child at its own failed node.
@@ -609,6 +612,7 @@ gets and tells the model about them at the end of every first prompt of an attem
 ```
 ---
 If you cannot do this step at all, for example because a tool or file you need is denied or out of reach, or the task contradicts itself, do not guess and do not pretend it is done: reply with a JSON object whose "outcome" is "cannot_proceed" and whose "cannot_proceed_reason" says in a sentence or two what stops you, naming the tool or file. Fill any other required field with an empty value. A person reads the reason; this step is not retried by itself.
+In every other answer leave the field "cannot_proceed_reason" out entirely: do not include it, not even empty.
 ```
 
 Such an answer is not retried. With a transition for `cannot_proceed` under `on`, the
@@ -617,7 +621,11 @@ output and the next step's `{{rework}}`); without one, the attempt fails with th
 failure `unable` and the campaign stops in the error state with the reason, waiting
 for a person, who fixes the cause and runs `hetman retry`. An answer with that outcome
 and no reason is invalid output. The schema of a node may not list `cannot_proceed`
-nor have a property `cannot_proceed_reason`.
+nor have a property `cannot_proceed_reason`. An answer with any other outcome that
+still carries `cannot_proceed_reason` is not punished for it: the field is left out
+before the answer is checked against the node's schema and is not part of the stored
+output. When it holds text, the answer still counts as the outcome it names, and
+`hetman status` shows the text under the attempt as ignored.
 
 **Limits and connectivity.** When the adapter reports a subscription limit, the
 attempt does not count. If the adapter says when to retry, the campaign waits until

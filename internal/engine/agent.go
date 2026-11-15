@@ -489,9 +489,22 @@ func (e *Engine) judge(node *orders.Node, attempt int, r adapterRun, fin *chroni
 		}
 		return nil
 	}
+	// The engine invites a reason field for an answer that cannot proceed;
+	// next to any other outcome it is no part of the step's schema, so it
+	// is left out before validation and of the stored output. A reason
+	// that says something is kept on the event for a person to read; the
+	// answer still counts as the outcome it names.
+	raw := m.Output
+	if obj, ok := v.(map[string]any); ok {
+		if r, has := obj[orders.UnableField]; has {
+			delete(obj, orders.UnableField)
+			fin.Dropped = droppedReason(r)
+			raw, _ = json.Marshal(obj)
+		}
+	}
 	if obj, ok := v.(map[string]any); ok && asking && obj[orders.OutcomeField] == ask.Outcome {
-		raw, _ := json.Marshal(obj[ask.Field])
-		qs, err := ask.Parse(raw)
+		field, _ := json.Marshal(obj[ask.Field])
+		qs, err := ask.Parse(field)
 		if err == nil && len(obj) != 2 {
 			err = fmt.Errorf("an answer with outcome %q holds only %q", ask.Outcome, ask.Field)
 		}
@@ -500,7 +513,7 @@ func (e *Engine) judge(node *orders.Node, attempt int, r adapterRun, fin *chroni
 			return nil
 		}
 		var compact bytes.Buffer
-		json.Compact(&compact, m.Output)
+		json.Compact(&compact, raw)
 		fin.Output = compact.Bytes()
 		return qs
 	}
@@ -509,7 +522,7 @@ func (e *Engine) judge(node *orders.Node, attempt int, r adapterRun, fin *chroni
 		return nil
 	}
 	var compact bytes.Buffer
-	json.Compact(&compact, m.Output)
+	json.Compact(&compact, raw)
 	fin.Output = compact.Bytes()
 	fin.Outcome = v.(map[string]any)[orders.OutcomeField].(string)
 	return nil
