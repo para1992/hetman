@@ -5,12 +5,14 @@
 //
 // Usage:
 //
-//	hetman-adapter-opencode [--client PROGRAM] [--env NAME]... [--describe | --check]
+//	hetman-adapter-opencode [--client PROGRAM] [--env NAME]... [--describe | --check | --catalog]
 //
 // --client names the client program, "opencode" on the path by default.
 // --env passes one more variable of the adapter's own environment to the
 // client; by default the client gets only what it needs to run, to reach the
 // network and to find its stored logins (see clientEnv).
+// --catalog prints the models and variants the client lists (see
+// catalog.go).
 //
 // The step's prompt, followed by the answer format, goes to the client on
 // standard input. The client runs in the step's working folder as an agent
@@ -81,6 +83,7 @@ func parseArgs(args []string) (o options, describe bool, err error) {
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	args, check := cutFlag(args, adapter.CheckFlag)
+	args, catalog := cutFlag(args, adapter.CatalogFlag)
 	o, describe, err := parseArgs(args)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s adapter: %v\n", adapterName, err)
@@ -88,9 +91,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if describe {
 		data, _ := json.Marshal(adapter.Description{Protocol: []int{adapter.Version}, Name: adapterName,
-			Features: []string{adapter.FeatureResume, adapter.FeatureProtect, adapter.FeatureCheck}})
+			Features: []string{adapter.FeatureResume, adapter.FeatureProtect, adapter.FeatureCheck, adapter.FeatureCatalog}})
 		fmt.Fprintf(stdout, "%s\n", data)
 		return 0
+	}
+	if catalog {
+		return serveCatalog(o, stdout, stderr)
 	}
 	if check {
 		if err := adapter.ServeCheck(stdin, stdout, func(st adapter.Step) []adapter.CheckProblem {

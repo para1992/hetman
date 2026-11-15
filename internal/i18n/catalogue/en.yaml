@@ -1348,3 +1348,65 @@ page.input.item: "{label} {n}"
 page.input.remove_item: Remove this item
 page.input.add_object: "Add to {label}"
 page.input.problems: "The run input is not complete; nothing was started:"
+# ---- the catalogue: models and efforts an executor's client offers
+engine.catalog.no_executor: "the orders declare no executor {executor}"
+engine.catalog.unsupported: "the adapter of executor {executor} does not tell which models its client offers"
+engine.catalog.failed: "the adapter of executor {executor} could not tell which models its client offers: {error}"
+flag.models_refresh: ask the adapters again instead of using what they said lately
+flag.unlisted: accept a model or effort the executor's catalogue does not list, such as a model newer than the listing
+scribe.usage_models: |
+
+  models and efforts:
+    hetman scribe models [-f FILE] [-refresh] [EXECUTOR] [WORDS...]
+               what the client of each executor offers; words keep only the models whose name holds them
+    -unlisted  (set, new, add, role, role-add) accept a model or effort the catalogue does not list
+scribe.models.invalid: "hetman scribe models: the orders do not pass the check"
+scribe.models.no_executors: "hetman scribe models: {path} declares no executor"
+scribe.models.none: "Executor {executor}: no catalogue; {reason}. Its model and effort are typed by hand."
+scribe.models.title:
+  one: "Executor {executor}: {n} model"
+  other: "Executor {executor}: {n} models"
+scribe.models.title_filtered: "Executor {executor}: {n} of {total} models hold \"{filter}\""
+scribe.models.incomplete: "The client may accept names not listed here, such as a model's full name."
+scribe.models.no_match: "  No model matches."
+scribe.models.no_group: other
+scribe.models.efforts: "effort: {efforts}"
+scribe.models.no_effort: no effort setting
+scribe.models.efforts_unknown: effort not known
+scribe.catalog_refused: "hetman scribe: nothing was written; pick a model and an effort the catalogue lists (hetman scribe models), or add -unlisted to write it anyway"
+wizard.models.none: "No list of models: {reason}."
+wizard.models.title:
+  one: "The executor's client offers {n} model."
+  other: "The executor's client offers {n} models."
+wizard.models.many: "{n} models match; type part of a name to narrow the list."
+wizard.models.prompt: "Model: a number, part of a name, \"{other}\" to type one by hand, or none for the client's default"
+wizard.models.other: other
+wizard.models.by_hand: Model, exactly as the client names it
+wizard.models.unlisted: "Note: the catalogue does not list {model}; the step fails at once if the client does not know it."
+wizard.models.no_match: "No model matches \"{filter}\"."
+wizard.models.nearest: "Nearest: {names}"
+wizard.models.picked: "Model: {model}"
+wizard.models.no_effort: "Model {model} has no effort setting; none is asked."
+wizard.models.efforts: "Efforts of model {model}:"
+wizard.models.effort_prompt: "Effort: a number, or none for the client's default"
+wizard.models.unchanged: Nothing changes.
+page.catalog.invalid_orders: The orders file does not pass the check, so its executors cannot be asked.
+page.catalog.no_executor: Pick an executor first.
+page.catalog.unreachable: Hetman could not be reached.
+page.catalog.loading: Asking the adapter which models its client offers…
+page.catalog.none: "Typed by hand: {reason}."
+page.catalog.refresh: Ask again
+page.catalog.count: "Type to search the models the client offers ({n})."
+page.catalog.model_placeholder: "part of a name, empty for the client's default"
+page.catalog.unknown_model: "{model} is not in the list of the client's models; the step would fail."
+page.catalog.unlisted_model: "{model} is not in the list; the client may still accept it, such as a model's full name."
+page.catalog.efforts: "effort: {efforts}"
+page.catalog.no_effort_short: no effort setting
+page.catalog.efforts_unknown: effort not known
+page.catalog.no_effort: "Model {model} has no effort setting."
+page.catalog.default_effort: the client's default
+page.catalog.not_offered: "{effort} (not offered by this model)"
+page.catalog.efforts_of: "The efforts model {model} offers."
+page.catalog.effort_without_model: Without a model the client's default model is used, whose efforts the list cannot tell.
+page.catalog.effort_model_unlisted: "{model} is not in the list, so its efforts are not known."
+page.catalog.effort_unknown: "The adapter does not say which efforts {model} takes."

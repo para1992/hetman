@@ -89,6 +89,7 @@ func scribeUsage(p *i18n.Printer) string {
 		fmt.Fprintf(&b, "  %s\n      %s\n", u.form, spec.SummaryIn(p))
 	}
 	b.WriteString(p.T("scribe.usage_flags", "codes", strings.Join(language.Codes(), ", ")))
+	b.WriteString(p.T("scribe.usage_models"))
 	return b.String()
 }
 
@@ -108,6 +109,8 @@ func scribeCmd(args []string, stdout, stderr io.Writer) int {
 			return writeScribe(p, args[1:], stdout, stderr)
 		case "explain":
 			return explainCmd(args[1:], stdout, stderr)
+		case "models":
+			return modelsCmd(args[1:], stdout, stderr)
 		case "help", "-h", "--help":
 			fmt.Fprint(stdout, scribeUsage(p))
 			return exitDone
@@ -181,6 +184,7 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 	file := fs.String("f", orders.DefaultFile, p.T("flag.f"))
 	dry := fs.Bool("dry-run", false, p.T("flag.dry_run"))
 	force := fs.Bool("force", false, p.T("flag.op_force"))
+	unlisted := fs.Bool("unlisted", false, p.T("flag.unlisted"))
 	strs := map[string]*string{}
 	lists := map[string]*string{}
 	ints := map[string]*int{}
@@ -385,6 +389,7 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 	if b := opts["ask"]; b != nil {
 		op.Ask = b.v
 	}
+	before, _ := orders.Load(*file)
 	doc, err := edit.Open(*file)
 	if err != nil {
 		fmt.Fprintln(stderr, "hetman scribe:", err)
@@ -404,6 +409,15 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, p.T("op.note", "note", n))
 	}
 	o, checkErr := doc.Check()
+	if checkErr == nil && !*unlisted {
+		if refused := catalogRefusal(before, o); len(refused) > 0 {
+			for _, line := range refused {
+				fmt.Fprintln(stderr, line)
+			}
+			fmt.Fprintln(stderr, p.T("scribe.catalog_refused"))
+			return exitUsage
+		}
+	}
 	if checkErr != nil {
 		fmt.Fprintf(stderr, "%v\n%s\n", checkErr, p.T("scribe.does_not_pass"))
 	} else {

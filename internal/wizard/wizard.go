@@ -497,6 +497,7 @@ func (w *wizard) step(op edit.Op, placed bool) (edit.Op, []edit.Op, error) {
 			}
 			sort.Strings(executors)
 		}
+		var declared *edit.Op
 		if len(executors) > 0 {
 			if op.Executor, err = w.choose(w.p.T("wizard.which_executor"), executors, executors[0]); err != nil {
 				return op, nil, err
@@ -508,12 +509,14 @@ func (w *wizard) step(op edit.Op, placed bool) (edit.Op, []edit.Op, error) {
 				return op, nil, err
 			}
 			extra = append(extra, x)
-			op.Executor = x.Name
+			op.Executor, declared = x.Name, &x
 		}
-		if op.Model, err = w.ask(w.p.T("wizard.model"), ""); err != nil {
+		model, entry, err := w.pickModel(w.catalog(op.Executor, declared), "")
+		if err != nil {
 			return op, nil, err
 		}
-		if op.Effort, err = w.ask(w.p.T("wizard.effort"), ""); err != nil {
+		op.Model = model
+		if op.Effort, err = w.pickEffort(entry, ""); err != nil {
 			return op, nil, err
 		}
 		fmt.Fprintln(w.out, w.p.T("wizard.fail_on_denied_hint"))
@@ -746,6 +749,9 @@ func (w *wizard) changeAgent() ([]edit.Op, error) {
 		return nil, err
 	}
 	node := w.o.Nodes[n]
+	if (field == "model" || field == "effort") && node.Role == "" {
+		return w.changeModel(n, field)
+	}
 	cur := map[string]string{"executor": node.Executor, "model": node.Model, "effort": node.Effort,
 		"tools": strings.Join(node.Tools, ", "), "attempts": strconv.Itoa(node.MaxAttempts), "fail_on_denied": failOnDenied(node)}[field]
 	if field == "fail_on_denied" {
@@ -759,6 +765,41 @@ func (w *wizard) changeAgent() ([]edit.Op, error) {
 		return []edit.Op{{Op: edit.OpUnset, Node: n, Field: field}}, nil
 	}
 	return []edit.Op{{Op: edit.OpSet, Node: n, Field: field, Value: v}}, nil
+}
+
+// changeModel changes the model or the effort of an agent node, offering
+// what the catalogue of its executor lists. A new model that does not take
+// the node's effort is followed by a question about the effort.
+func (w *wizard) changeModel(n, field string) ([]edit.Op, error) {
+	node := w.o.Nodes[n]
+	c := w.catalog(node.Executor, nil)
+	model, entry := node.Model, c.Model(node.Model)
+	var err error
+	if field == "model" {
+		if model, entry, err = w.pickModel(c, node.Model); err != nil {
+			return nil, err
+		}
+	}
+	effort := node.Effort
+	if field == "effort" || entry != nil && entry.EffortsKnown() && node.Effort != "" && !contains(entry.Efforts, node.Effort) {
+		if effort, err = w.pickEffort(entry, node.Effort); err != nil {
+			return nil, err
+		}
+	}
+	var ops []edit.Op
+	for _, f := range []struct{ field, old, new string }{{"model", node.Model, model}, {"effort", node.Effort, effort}} {
+		switch {
+		case f.new == f.old:
+		case f.new == "":
+			ops = append(ops, edit.Op{Op: edit.OpUnset, Node: n, Field: f.field})
+		default:
+			ops = append(ops, edit.Op{Op: edit.OpSet, Node: n, Field: f.field, Value: f.new})
+		}
+	}
+	if len(ops) == 0 {
+		return nil, errors.New(w.p.T("wizard.models.unchanged"))
+	}
+	return ops, nil
 }
 
 // failOnDenied writes a node's fail_on_denied as the set operation takes it.

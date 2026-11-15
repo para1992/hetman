@@ -15,14 +15,15 @@
 // "conformance-dialogue" and "conformance-cancel" and ask for a trivial
 // answer, so an adapter for a real client makes real but tiny requests.
 //
-// Resume, dialogue and usage are optional capabilities: the resume and
-// dialogue checks run only for an adapter that declares the resume feature,
-// the usage check only for one that declares the usage feature. The usage
-// check makes no model request: it asks the adapter for its client's usage
-// of every window of the protocol and checks the line it prints. The dialogue check is what a
-// dialogue step needs: a step that answers with questions, then the same
-// conversation continued with the answers as the next message, ending in a
-// final result.
+// Resume, dialogue, usage and catalog are optional capabilities: the resume
+// and dialogue checks run only for an adapter that declares the resume
+// feature, the usage and catalog checks only for one that declares that
+// feature. Neither of these two makes a model request: the usage check asks
+// the adapter for its client's usage of every window of the protocol, the
+// catalog check for the models and efforts the client offers, and each
+// checks the line printed. The dialogue check is what a dialogue step needs:
+// a step that answers with questions, then the same conversation continued
+// with the answers as the next message, ending in a final result.
 package adaptertest
 
 import (
@@ -152,6 +153,12 @@ func Run(t *testing.T, cfg Config) {
 		}
 		usage(t, cfg)
 	})
+	t.Run("catalog", func(t *testing.T) {
+		if !desc.Has(adapter.FeatureCatalog) {
+			t.Skip("the adapter does not declare the catalog feature")
+		}
+		catalog(t, cfg)
+	})
 	t.Run("cancel", func(t *testing.T) {
 		run(t, cfg, desc, step(cfg, "conformance-cancel", CancelPrompt, nil), true)
 	})
@@ -265,6 +272,36 @@ func usage(t *testing.T, cfg Config) {
 		t.Fatalf("%s: %v\noutput: %s", adapter.UsageFlag, err, out.String())
 	}
 	t.Logf("usage: %+v", u.Windows)
+}
+
+// catalog asks the adapter for its client's catalogue and checks what it
+// prints: one valid line, quickly, without a model request.
+func catalog(t *testing.T, cfg Config) {
+	cmd := command(cfg, []string{adapter.CatalogFlag})
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := start(t, cmd); err != nil {
+		t.Fatal(err)
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+	select {
+	case err := <-exited:
+		if err != nil {
+			t.Fatalf("%s must exit with code 0: %v", adapter.CatalogFlag, err)
+		}
+	case <-time.After(30 * time.Second):
+		cmd.Process.Kill()
+		t.Fatalf("%s did not finish within 30s", adapter.CatalogFlag)
+	}
+	c, err := adapter.ParseCatalog(out.Bytes())
+	if err != nil {
+		t.Fatalf("%s: %v\noutput: %.500s", adapter.CatalogFlag, err, out.String())
+	}
+	if len(c.Models) == 0 {
+		t.Logf("note: the catalogue lists no models")
+	}
+	t.Logf("catalogue: %d models, complete %v", len(c.Models), c.Complete)
 }
 
 func step(cfg Config, node, prompt string, session *string) adapter.Step {
