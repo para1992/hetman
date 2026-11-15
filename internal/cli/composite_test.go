@@ -201,6 +201,75 @@ nodes:
 	}
 }
 
+// After a retry of a for-each whose items all stopped in the error state,
+// the first item runs again and the others wait for their turn: they are
+// not shown as errors, nor listed as holding the campaign up, and the
+// error each stopped with stays under it as its earlier run.
+func TestStatusShowsErroredItemsQueuedAfterARetry(t *testing.T) {
+	items := strings.ReplaceAll(`[{"id":"x","badonce":true,"wait":true},{"id":"y","badonce":true},{"id":"z","badonce":true}]`, "'", "''")
+	w := newWorld(t, `  a: {type: script, run: `+arg("write", "items.json", items)+`, on: {ok: each, fail: failed}}
+  each: {type: foreach, segment: seg.yaml, items: artifact.a.items.json, parallel: 1, on: {done: done, failed: failed}}
+`)
+	w.file("seg.yaml", `version: 0
+flow: item
+start: work
+nodes:
+  work: {type: script, run: `+arg("item", "SYNC")+`, on: {ok: done, fail: failed}}
+`)
+	w.call(exitError, "run")
+	before := w.call(0, "status")
+	if n := strings.Count(before, "stopped in the error state"); n < 3 {
+		t.Fatalf("status before the retry:\n%s", before)
+	}
+	proc, out := w.process("retry")
+	defer func() {
+		w.release()
+		proc.Wait()
+	}()
+	var x int64
+	for _, e := range w.events() {
+		if e.Kind == chronicle.ChildStarted && e.Item == "x" {
+			x = e.Child
+		}
+	}
+	w.waitIn(x, func(e chronicle.Event) bool {
+		return e.Kind == chronicle.ProcessStarted && afterRetry(w.eventsOf(x), e)
+	}, out)
+	status := w.call(0, "status")
+	rows := map[string]string{}
+	var earlier []string
+	for _, l := range strings.Split(status, "\n") {
+		f := strings.Join(strings.Fields(l), " ")
+		switch {
+		case strings.HasPrefix(f, "item "):
+			rows[strings.Fields(f)[1]] = f
+		case strings.HasPrefix(f, "earlier run "):
+			earlier = append(earlier, f)
+		}
+	}
+	if !strings.Contains(rows["x"], " running ") || !strings.Contains(rows["y"], " waiting waits for its turn to run again from work") ||
+		!strings.Contains(rows["z"], " waiting waits for its turn to run again from work") {
+		t.Fatalf("rows %q\n%s", rows, status)
+	}
+	if len(earlier) != 2 || !strings.HasPrefix(earlier[0], "earlier run stopped in the error state: ") {
+		t.Fatalf("earlier runs %q\n%s", earlier, status)
+	}
+	if strings.Contains(status, ") stopped in the error state") || strings.Contains(rows["y"]+rows["z"], " error ") {
+		t.Fatalf("queued items read as errors:\n%s", status)
+	}
+}
+
+// afterRetry reports whether an event of a child came after the child was
+// retried.
+func afterRetry(events []chronicle.Event, e chronicle.Event) bool {
+	for _, r := range events {
+		if r.Kind == chronicle.Retried && r.Seq < e.Seq {
+			return true
+		}
+	}
+	return false
+}
+
 const lockedStep = `  a: {type: script, run: ARG, locks: [stand], on: {ok: done, fail: failed}}
 `
 

@@ -432,6 +432,9 @@ status.child.segment: segment
 status.child.item: item {item}
 status.child.needs: needs {items}
 status.child.slot: waits for a free place (parallel)
+status.child.queued: "waits for its turn to run again from {node}"
+status.child.before_resume: earlier run
+status.child.stopped_before: "stopped in the error state: {error}"
 status.child.campaign: campaign {id}
 status.child.why_failed: needs {item}, which failed
 status.child.why_not_run: needs {item}, which did not run
@@ -782,6 +785,8 @@ page.tile.child.why_failed: needs {item}, which failed
 page.tile.child.why_not_run: needs {item}, which did not run
 page.tile.child.needs: needs {items}
 page.tile.child.slot: waits for a free place
+page.tile.child.queued: waits for its turn to run again
+page.tile.child.stopped_before: "earlier run stopped in the error state: {error}"
 page.tile.child.error: "error: {error}"
 page.tile.child.halted: halted
 page.tile.child.kept: kept from attempt {n}

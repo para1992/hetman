@@ -138,6 +138,55 @@ nodes:
 	}
 }
 
+// After a retry of a for-each whose items all stopped in the error state,
+// the first item runs again and the others show as waiting for their turn,
+// not as failed; the error each stopped with folds under its tile.
+func TestForEachErroredItemsWaitForTheirTurnAfterARetry(t *testing.T) {
+	items := strings.ReplaceAll(`[{"id":"x","badonce":true,"wait":true},{"id":"y","badonce":true},{"id":"z","badonce":true}]`, "'", "''")
+	w := newSegmentWorld(t, `version: 0
+start: plan
+nodes:
+  plan: {type: script, run: `+arg("write", "items.json", items)+`, on: {ok: each, fail: failed}}
+  each: {type: foreach, segment: 'SEG', items: artifact.plan.items.json, parallel: 1, on: {done: done, failed: failed}}
+`, `version: 0
+flow: item
+start: work
+nodes:
+  work: {type: script, run: `+arg("item", "SYNC1")+`, on: {ok: done, fail: failed}}
+`)
+	runner, _ := w.process("run")
+	runner.Wait()
+	c := w.waitState(1, watchtower.StateError)
+	for _, t2 := range find(c.Columns, "each").Tiles {
+		if t2.Status != watchtower.StatusFailed || t2.Note != "page.tile.child.error" {
+			t.Fatalf("before the retry %+v", t2)
+		}
+	}
+	retry, out := w.process("retry")
+	defer func() {
+		w.release(1)
+		retry.Wait()
+	}()
+	w.waitFile(filepath.Join(w.sync(1), "started.x.2"))
+	c = w.campaign(1)
+	var got []string
+	for _, t := range find(c.Columns, "each").Tiles {
+		s := fmt.Sprintf("%s:%s:%s", t.Item, t.Status, t.Note)
+		for _, b := range t.Before {
+			s += fmt.Sprintf("[%s:%d:%s:%v:%v]", b.Status, b.Child, b.Note, b.Earlier, strings.HasPrefix(b.Args["error"], "work attempt 1"))
+		}
+		got = append(got, s)
+	}
+	want := "x:running: y:waiting:page.tile.child.queued[failed:3:page.tile.child.stopped_before:true:true] " +
+		"z:waiting:page.tile.child.queued[failed:4:page.tile.child.stopped_before:true:true]"
+	if strings.Join(got, " ") != want {
+		t.Fatalf("tiles %v, want %s\n%s", got, want, out)
+	}
+	if c.State != watchtower.StateRunning {
+		t.Fatalf("state %s", c.State)
+	}
+}
+
 func TestChildQuestionShownAndAnsweredThroughTheParent(t *testing.T) {
 	w := newSegmentWorld(t, `version: 0
 start: s

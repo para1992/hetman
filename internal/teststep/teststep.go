@@ -45,6 +45,9 @@ const TraceFile = "trace.txt"
 //	                    then exit 1 when "fail" is true, or when "failonce" is true
 //	                    and DIR/failed.<id> does not exist yet (it is written),
 //	                    else write DIR/finished.<id>
+//	                    An item with "badonce" true first writes a result file
+//	                    that is not JSON and exits 0, the first time only
+//	                    (DIR/bad.<id>), before anything else.
 //	                    An item with "meet": GROUP and "meetn": N first writes
 //	                    DIR/met.<GROUP>.<id> and waits until N items of the group
 //	                    have, so that they run together by construction; it exits
@@ -178,8 +181,14 @@ func Main(args []string) int {
 			Once  bool   `json:"failonce"`
 			Meet  string `json:"meet"`
 			MeetN int    `json:"meetn"`
+			Bad   bool   `json:"badonce"`
 		}
 		must(json.Unmarshal(data, &in))
+		if in.Bad && !exists(filepath.Join(dir, "bad."+in.ID)) {
+			must(os.WriteFile(filepath.Join(dir, "bad."+in.ID), nil, 0o644))
+			must(os.WriteFile(os.Getenv("HETMAN_RESULT_FILE"), []byte("not json"), 0o644))
+			return 0
+		}
 		must(os.WriteFile(filepath.Join(dir, "started."+in.ID+"."+os.Getenv("HETMAN_RUN_ID")), nil, 0o644))
 		if in.Meet != "" && !meet(dir, in.Meet, in.ID, in.MeetN) {
 			return 1

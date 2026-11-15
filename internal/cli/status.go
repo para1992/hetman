@@ -315,12 +315,20 @@ func (c *command) printChildren(tw io.Writer, events []chronicle.Event, node, in
 			continue
 		}
 		status, detail := childStatus(p, ch.State, c.childDriven(ch.ID))
-		if ch.KeptFrom > 0 {
+		switch {
+		case ch.KeptFrom > 0:
 			status, detail = p.T("status.st.finished"), p.T("status.child.kept", "outcome", ch.Outcome, "n", ch.KeptFrom)
+		case ch.Queued:
+			// The step runs the child again when its turn comes; the
+			// error it stopped with before is its earlier try.
+			status, detail = p.T("status.st.waiting"), p.T("status.child.queued", "node", ch.State.Node)
 		}
 		fmt.Fprintf(tw, "%s%s\t%s\t%s\t%s\t\t\t\n", indent, name, p.T("status.child.campaign", "id", ch.ID), status, detail)
+		if ch.Queued {
+			fmt.Fprintf(tw, "%s  %s\t\t\t%s\t\t\t\n", indent, p.T("status.child.before_resume"), p.T("status.child.stopped_before", "error", ch.State.Error))
+		}
 		printBefore(p, tw, ch, indent)
-		if ch.State.End == "" && ch.State.Running {
+		if ch.State.End == "" && ch.State.Running && !ch.Queued {
 			c.printChildren(tw, ch.Events, ch.State.Node, indent+"  ", depth+1)
 		}
 	}

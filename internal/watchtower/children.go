@@ -101,6 +101,13 @@ func (s *Server) childTiles(col *Column, o *orders.Orders, events []chronicle.Ev
 			}
 		case ch.KeptFrom > 0:
 			t.Status, t.Note, t.Args = StatusPassed, "page.tile.child.kept", map[string]string{"n": strconv.Itoa(ch.KeptFrom)}
+		case ch.Queued:
+			// The step runs the child again when its turn comes; the error it
+			// stopped with before folds under the tile as its earlier run.
+			t.Status, t.Node, t.Note = StatusWaiting, ch.State.Node, "page.tile.child.queued"
+			t.Attempts = ch.State.Attempts[ch.State.Node]
+			t.Before = append(t.Before, Tile{Item: ch.Item, Child: ch.ID, Node: ch.State.Node, Attempt: ch.Attempt, Earlier: true,
+				Status: StatusFailed, Note: "page.tile.child.stopped_before", Args: map[string]string{"error": ch.State.Error}})
 		default:
 			driven, _ := engine.Driven(o, ch.ID)
 			t.Status, t.Node, t.Note, t.Args = childTileStatus(ch.State, driven)

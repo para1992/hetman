@@ -121,6 +121,10 @@ type Child struct {
 	Attempt   int  // the attempt of the parent's node the child belongs to
 	KeptFrom  int  // for-each: the item reached done in this earlier attempt and was kept, not run again
 	RetriedIn bool // segment: the child of the attempt before, retried at its failed node
+	// Queued: the child stopped in the error state before its campaign was
+	// resumed, and the running step drives it again when its turn comes, so
+	// that error is no longer its state. State still holds it.
+	Queued bool
 
 	Before []Child // the children of earlier attempts for the same item, newest first; see AttachEarlier
 }
@@ -203,6 +207,7 @@ func ChildrenOf(ch *chronicle.Chronicle, events []chronicle.Event, node string) 
 			c.NotRun, c.NotRunNeeds, c.NotRunKind = ev.Error, ev.Needs, ev.Outcome
 		}
 	}
+	since := requeuedSince(events, node, attempt)
 	for i := range out {
 		c := &out[i]
 		c.Attempt = attempt
@@ -217,8 +222,47 @@ func ChildrenOf(ch *chronicle.Chronicle, events []chronicle.Event, node string) 
 		if c.Outcome == "" {
 			c.Outcome = c.State.End
 		}
+		c.Queued = requeued(since, c.State, evs)
 	}
 	return out, nil
+}
+
+// requeuedSince is the sequence number of the latest resume of a campaign
+// while the given attempt of a segment or for-each node runs and the
+// campaign is neither in the error state nor halted, or 0. The step drives
+// each of its unfinished children again after such a resume, lifting an
+// error stop left in a child from before it, so a child that stopped in the
+// error state before that resume waits for its turn rather than having
+// failed.
+func requeuedSince(events []chronicle.Event, node string, attempt int) int64 {
+	st := chronicle.Replay(events)
+	if st.End != "" || !st.Running || st.Node != node || st.Attempt != attempt || st.Error != "" || st.Halted || st.HaltRequested {
+		return 0
+	}
+	start := stepStart(events, node, attempt)
+	if start == nil {
+		return 0
+	}
+	for i := len(events) - 1; i >= 0 && events[i].Seq > start.Seq; i-- {
+		if events[i].Kind == chronicle.Resumed {
+			return events[i].Seq
+		}
+	}
+	return 0
+}
+
+// requeued reports whether a child in the error state stopped before the
+// resume of its campaign at sequence number since.
+func requeued(since int64, st chronicle.State, events []chronicle.Event) bool {
+	if since == 0 || st.End != "" || st.Error == "" {
+		return false
+	}
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Kind == chronicle.Stopped {
+			return events[i].Seq < since
+		}
+	}
+	return false
 }
 
 // attemptOf is the first attempt of a node in which a child was started,
@@ -293,6 +337,7 @@ func waiters(ch *chronicle.Chronicle, events []chronicle.Event, prefix string, d
 			}
 		}
 	}
+	since := requeuedSince(events, st.Node, st.Attempt)
 	var out []Waiter
 	for _, id := range st.Children {
 		evs, err := ch.Events(id)
@@ -302,7 +347,8 @@ func waiters(ch *chronicle.Chronicle, events []chronicle.Event, prefix string, d
 		cst := chronicle.Replay(evs)
 		path := prefix + label[id]
 		switch {
-		case cst.End != "":
+		case cst.End != "" || requeued(since, cst, evs):
+			// A child queued to run again does not hold the campaign up.
 			continue
 		case cst.Asking() || cst.Error != "" || cst.LockWait != "" || (cst.Waiting != "" && cst.WaitUntil.IsZero()):
 			out = append(out, Waiter{Campaign: id, Path: path, State: cst})
