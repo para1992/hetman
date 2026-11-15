@@ -50,6 +50,10 @@ commands:
   resume   continue a halted, stopped or interrupted campaign
   answer   answer the questions a campaign asks a person
   serve    show every campaign live on a web page (Watchtower)
+  task     queue internal tasks, list, show and cancel them, check the routing
+           file (hetman task help lists it all)
+  dispatch run a campaign of the routed flow for each queued task
+           (hetman dispatch -h lists its flags)
   scribe   set the flow up: a wizard, operations on the orders file, a
            sentence through a model, campaigns explained in plain words
            (hetman scribe help lists it all)
@@ -94,6 +98,10 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		return scribeCmd(args, stdout, stderr)
 	case "version":
 		return version(args, stdout, stderr)
+	case "task":
+		return taskCmd(args, stdout, stderr)
+	case "dispatch":
+		return dispatchCmd(args, stdout, stderr)
 	}
 	fs := flag.NewFlagSet("hetman "+cmd, flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -256,9 +264,29 @@ func (c *command) campaign(id int64) (chronicle.Campaign, error) {
 		if errors.Is(err, chronicle.ErrNoCampaign) {
 			return k, errors.New("no campaigns yet; start one with hetman run")
 		}
+		c.ordersOf(k)
 		return k, err
 	}
-	return c.chron.Campaign(id)
+	k, err := c.chron.Campaign(id)
+	if err == nil {
+		c.ordersOf(k)
+	}
+	return k, err
+}
+
+// ordersOf makes the command work with the orders file a campaign was
+// started from, when it is another flow in the same folder than the one
+// given with -f, so that it is driven and shown by its own nodes.
+func (c *command) ordersOf(k chronicle.Campaign) {
+	if k.Orders == "" || k.Orders == c.o.Path || filepath.Dir(k.Orders) != c.o.Dir {
+		return
+	}
+	o, err := orders.Load(k.Orders)
+	if err != nil {
+		fmt.Fprintf(c.stderr, "hetman: campaign %d was started from %s, which does not load (%v); using %s\n", k.ID, k.Orders, err, c.o.Path)
+		return
+	}
+	c.o = o
 }
 
 func (c *command) state(id int64) (chronicle.State, error) {

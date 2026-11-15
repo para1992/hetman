@@ -110,6 +110,11 @@ func (c *command) status(id int64, listEvents bool) int {
 		}
 		fmt.Fprintf(w, "language for the person: %s\n", code)
 	}
+	if len(events) > 0 {
+		if t := engine.TaskOf(events[0].Input); t != nil {
+			fmt.Fprintf(w, "task %d (kind %s), started by the dispatcher\n", t.ID, t.Kind)
+		}
+	}
 	fmt.Fprintf(w, "state: %s\n", c.describe(k.ID, st))
 
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)

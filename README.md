@@ -552,7 +552,8 @@ a step (`HETMAN_RUN_ID`, `HETMAN_NODE_ID`, `HETMAN_RUN_DIR`, `HETMAN_INPUT_FILE`
 
 `outcomes` is there for a human node, `questions` and `show` for a question, and
 `command` is the command that answers (for a question) or resumes (otherwise); `event`
-is the number to pass as `-ask`. The campaign never waits for the hook: it runs in the
+is the number to pass as `-ask`. For a campaign the dispatcher started (see Tasks and
+the dispatcher), `task` names its task: `{"id": 7, "kind": "reviewer-remark", "key": "..."}`. The campaign never waits for the hook: it runs in the
 background and is killed after `timeout` (30 seconds by default). Its output goes to
 `logs/notify.EVENT.log` in the campaign folder and how it ended to a `notified` event.
 A process that ends waits for hooks it started, up to their timeout. Any messenger can
@@ -734,6 +735,14 @@ hetman resume [-f FILE] [-c ID]         continue a halted, stopped or interrupte
 hetman answer [-f FILE] [-c ID] [-a ID=ANSWER ...] [-comment ID=TEXT ...] [-outcome NAME] [-ask N] [-by NAME]
                                         answer what a campaign asks a person
 hetman serve  [-f FILE] [-addr ADDRESS] show every campaign live on a web page (Watchtower)
+hetman task add    [-r FILE] -kind KIND [-key KEY] [-input FILE|-] [-force]
+                                        queue an internal task (see Tasks and the dispatcher)
+hetman task list   [-r FILE] [-state STATE]   list the tasks with their states
+hetman task show   [-r FILE] ID         show one task, its campaign and its input
+hetman task cancel [-r FILE] ID         cancel a queued task
+hetman task check  [-r FILE]            check the routing file and every flow it routes to
+hetman dispatch    [-r FILE] [-once] [-limit N] [-poll D]
+                                        run a campaign of the routed flow for each queued task
 hetman scribe [-f FILE]                 the setup wizard (see Setup assistant)
 hetman scribe OPERATION ARGS [-f FILE] [-dry-run] [-force]
                                         one operation on the orders file
@@ -750,6 +759,8 @@ hetman version                          print the version of hetman
 - `-c ID` is the campaign number; the latest campaign by default.
 - `-events` makes `status` also list every chronicle event.
 - `-addr ADDRESS` is where `serve` listens, `127.0.0.1:8740` by default.
+- `-r FILE` is the routing file of `task` and `dispatch`, `routes.yaml` in the current
+  folder by default.
 - `HETMAN_LANGUAGE=CODE` in the environment of `check` and `run` overrides the
   `language` key of the orders (see Language for the person).
 - `-dir DIR` is the folder `scribe skill` writes `SKILL.md` into,
@@ -852,6 +863,10 @@ one or by lost connectivity, is marked as such. A campaign waiting for a person 
 marked "waiting for a person", and so is the tile of the step that asks. Everything on it comes from the
 chronicle, as with `hetman status`, and updates while campaigns run.
 
+When the folder has a task queue (see Tasks and the dispatcher), a Tasks tab lists the
+tasks with their kind, state, campaign (a link), age and what a waiting one waits for.
+A campaign of another orders file of the same folder is shown with its own nodes.
+
 It has two controls, Halt and Resume, which do what `hetman halt` and
 `hetman resume` do, and an answer form. A campaign resumed from the page is run by the
 `hetman serve` process; stopping that process interrupts it, and `hetman resume`
@@ -865,6 +880,119 @@ Submitting the form goes through the same checks as `hetman answer`: answers tha
 not fit are shown in the form and change nothing. Recorded answers are continued by
 the process that drives the campaign, or by `hetman serve` when none does. Once
 answered, the card shows the answers, who gave them and when.
+
+## Tasks and the dispatcher
+
+Some work is too small for a ticket: a linter reported a finding on a commit, a
+reviewer left a remark. Hetman keeps its own queue for such tasks. Something outside
+(a scheduler, a script that watches a code review system) adds a task with one
+command; the dispatcher picks the flow by the task's kind and runs the task as an
+ordinary campaign of that flow. The work is always a campaign: it shows in
+`hetman status` and Watchtower, can be halted, resumed and answered, and follows its
+orders like any other.
+
+**Routing.** `routes.yaml`, in the same folder as the orders files it names, maps each
+kind of task to a flow:
+
+```yaml
+version: 0
+limit: 2                  # campaigns running at once over all routes (default 1)
+routes:
+  machine-finding:
+    orders: finding.yaml
+    priority: 10          # higher first (default 0)
+    limit: 1              # campaigns of this route at once (default: no limit of its own)
+  reviewer-remark:
+    orders: remark.yaml
+```
+
+Kinds use letters, digits, `_`, `-` and `.`. Every routed orders file must be in the
+folder of the routing file: the flows share the chronicle and the queue in its
+`.hetman/` (`chronicle.db` and `tasks.db`). `hetman task check` checks the routing file
+like `hetman check` checks orders, with `FILE:LINE:COLUMN` for unknown keys, bad values
+and missing orders files, and checks every routed orders file too; their problems are
+listed under the route that names them.
+
+**Adding tasks.** `hetman task add -kind KIND -input FILE` queues a task and prints its
+number; `-input -` reads the input from standard input, and without `-input` it is
+`{}`. The input is one JSON object. A kind with no route is refused and nothing is
+added. `-key KEY` gives a de-duplication key: while any task with the same key exists
+that was not cancelled, whether it is queued, running, waiting, finished or failed,
+adding it again does nothing, says which task has the key and in what state, and
+exits with 0. A cancelled task frees its key. `-force` adds the task even when its key
+is taken, for a deliberate repeat (the key then belongs to both, and a later add
+without `-force` is still a no-op).
+
+```sh
+$ echo '{"commit": "3f2a91c", "file": "notes.txt"}' | hetman task add -kind machine-finding -key lint:3f2a91c:notes.txt -input -
+task 1 queued (kind machine-finding)
+$ echo '{"commit": "3f2a91c", "file": "notes.txt"}' | hetman task add -kind machine-finding -key lint:3f2a91c:notes.txt -input -
+task 1 already has the key "lint:3f2a91c:notes.txt" and is queued; nothing added (-force adds it again)
+```
+
+**Running them.** `hetman dispatch` takes queued tasks by route priority, then age,
+and starts a campaign of the routed flow for each, with the task's input plus the
+field `hetman_task` (`{"id": 1, "kind": "machine-finding", "key": "..."}`), which
+prompt templates read as `{{input.hetman_task.kind}}` and scripts find in
+`HETMAN_INPUT_FILE`. A task input may not have that field itself. It runs up to
+`limit` campaigns at once (`-limit N` overrides the routing file) and at most a
+route's own `limit` of that route, and keeps looking for new tasks every second
+(`-poll`) until stopped; with `-once` it stops when nothing is left to start or
+running. One dispatcher runs per folder; a second one is refused. The routing file is
+read when the dispatcher starts; an orders file is read again whenever a campaign of it
+starts or continues.
+
+A campaign that waits for a person takes no place in the limits: the dispatcher lets
+go of it, and once the person has answered (`hetman answer`, or the page) it continues
+it in turn, before any new task. An answer from the page makes `hetman serve` drive the
+campaign at once, as for any campaign; the dispatcher leaves a campaign another process
+drives alone. A halted campaign, one stopped in the error state, or one waiting after a
+subscription limit or lost connectivity is left to a person: whoever resumes it drives
+it.
+
+When the dispatcher is stopped (Ctrl+C) or killed, the campaigns it drives are cut off
+as those of a stopped `hetman run`: the step that was running runs again, a finished
+step never does. A dispatcher started again continues them first, without starting any
+task a second time; a task whose campaign was being created at the moment of the kill
+gets that campaign, or a new one if it was never created.
+
+**Task states.** `hetman task list` and `hetman task show ID` show each task. A task is
+`queued` or `cancelled` until it is started; then its state is that of its campaign,
+read from the chronicle: `running` (also while the dispatcher is about to continue
+it), `waiting` (for a person: an answer, or a resume after a limit or lost
+connectivity; "waits for" says which), `halted`, `error`, `done` or `failed`. Only a
+queued task can be cancelled (`hetman task cancel ID`); a started one is halted like
+any campaign. `hetman task show` prints the campaign and the command that answers or
+resumes it.
+
+`examples/dispatch` routes two kinds: a machine finding fixed by a short loop with no
+person (a script applies one fix, a gate checks the file, back until it is clean), and
+a reviewer remark whose flow first asks a person what to do and then runs the same
+loop. `collect.sh` adds three tasks, one a duplicate:
+
+```sh
+$ go build -o examples/dispatch/bin/stub-adapter ./cmd/hetman-stub-adapter
+$ cd examples/dispatch
+$ sh collect.sh
+task 1 queued (kind machine-finding)
+task 2 queued (kind reviewer-remark)
+task 1 already has the key "lint:3f2a91c:notes.txt" and is queued; nothing added (-force adds it again)
+$ hetman dispatch -once
+...
+task 1: campaign 1 done
+task 2: campaign 2 waits for a person to decide at decide (fix, decline); answer with: hetman answer -f /path/to/examples/dispatch/remark.yaml -c 2
+nothing left to start; 1 task(s) wait for a person (hetman task list)
+$ hetman answer -f remark.yaml -c 2 -outcome fix -a how='drop the spaces'
+$ hetman dispatch -once
+task 2 (reviewer-remark): campaign 2 continues at decide
+...
+task 2: campaign 2 done
+```
+
+Watchtower shows the tasks of its folder under a Tasks tab next to the campaigns, with
+kind, state, campaign, age and what a waiting task waits for. Campaign commands
+(`status`, `halt`, `resume`, `answer`) given `-f` with another orders file of the same
+folder use the orders file the campaign was started from.
 
 ## Setup assistant
 

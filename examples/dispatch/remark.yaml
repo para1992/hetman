@@ -1,0 +1,41 @@
+# A reviewer remark: a person decides first what to do about it, then the
+# same fix loop as for a machine finding runs on its own. The dispatcher
+# starts it for tasks of the kind reviewer-remark (see routes.yaml). While
+# the campaign waits for the person it takes no place in the dispatcher's
+# limits; once answered, the dispatcher continues it.
+version: 0
+flow: remark
+start: decide
+
+notify: {run: [sh, notify.sh], timeout: 10s}
+
+executors:
+  stub: {run: [./bin/stub-adapter, plans/note.json]}
+
+checks:
+  clean: {run: [sh, checks/clean.sh], timeout: 30s}
+
+nodes:
+  decide:
+    type: human
+    ask:
+      - id: how
+        question: What should be done about the remark?
+        kind: text
+    on: {fix: apply, decline: done}
+  apply:
+    type: script
+    run: [sh, steps/apply.sh]
+    timeout: 1m
+    on: {ok: verify, fail: failed, timeout: failed}
+  verify:
+    type: gate
+    checks: [clean]
+    on: {pass: note, blocked: apply}
+  note:
+    type: agent
+    executor: stub
+    prompt: prompts/note.md
+    schema: schemas/note.json
+    timeout: 1m
+    on: {ok: done, fail: failed}

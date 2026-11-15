@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
+
+	"hetman/internal/dispatch"
 )
 
 // hub notices changes to the chronicle and wakes the connected streams.
@@ -66,7 +68,7 @@ func (s *Server) unsubscribe(ch chan struct{}) {
 func (s *Server) watch() {
 	t := time.NewTicker(s.poll())
 	defer t.Stop()
-	last := int64(-1)
+	last, lastTasks := int64(-1), int64(-1)
 	for tick := 1; ; tick++ {
 		select {
 		case <-t.C:
@@ -84,11 +86,12 @@ func (s *Server) watch() {
 		}
 		s.hub.mu.Unlock()
 		seq, err := s.Chron.LastSeq()
+		stamp := s.taskStamp()
 		s.hub.looks.Add(1)
-		if err == nil && seq == last && tick%s.recheckEvery() != 0 {
+		if err == nil && seq == last && stamp == lastTasks && tick%s.recheckEvery() != 0 {
 			continue
 		}
-		last = seq
+		last, lastTasks = seq, stamp
 		s.hub.mu.Lock()
 		for ch := range s.hub.subs {
 			select {
@@ -144,7 +147,8 @@ func (s *sse) ping() error {
 const pingEvery = 15 * time.Second
 
 // handleStream keeps a page current. Without a campaign parameter it sends
-// "list" events with the campaign list; with one it sends "campaign" events
+// "list" events with the campaign list and, once the folder has a task
+// queue, "tasks" events with the tasks; with one it sends "campaign" events
 // with the campaign view and "chronicle" events with the events not sent
 // yet. The first event of each kind after connecting carries everything
 // ("reset": true for the chronicle), so a reconnected page starts over.
@@ -165,7 +169,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	wake := s.subscribe()
 	defer s.unsubscribe(wake)
 	out := startSSE(w)
-	var lastView []byte
+	var lastView, lastTasks []byte
 	sentSeq := int64(-1)
 	update := func() error {
 		if id == 0 {
@@ -176,7 +180,21 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 			data, _ := json.Marshal(list)
 			if !bytes.Equal(data, lastView) {
 				lastView = data
-				return out.send("list", data)
+				if err := out.send("list", data); err != nil {
+					return err
+				}
+			}
+			tasks, err := s.taskViews()
+			if err != nil {
+				return err
+			}
+			if tasks == nil && lastTasks == nil {
+				return nil
+			}
+			data, _ = json.Marshal(nonNilTasks(tasks))
+			if !bytes.Equal(data, lastTasks) {
+				lastTasks = data
+				return out.send("tasks", data)
 			}
 			return nil
 		}
@@ -231,6 +249,13 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+func nonNilTasks(v []dispatch.View) []dispatch.View {
+	if v == nil {
+		return []dispatch.View{}
+	}
+	return v
 }
 
 func nonNil(e []Event) []Event {

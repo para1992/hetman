@@ -143,6 +143,9 @@ h1 { font-size: 19px; margin: 0 0 14px; font-weight: 650; }
 .list tbody tr:hover td { background: color-mix(in srgb, var(--accent) 5%, var(--panel)); }
 .list .id a { font-weight: 700; text-decoration: none; font-variant-numeric: tabular-nums; }
 .list .num { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--muted); }
+.list tbody tr.still { cursor: default; }
+.list .sub { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.list .waits { color: var(--muted); font-size: 13px; }
 
 .minipipe { display: inline-flex; align-items: center; flex-wrap: wrap; row-gap: 4px; }
 .minipipe .mp { display: inline-flex; align-items: center; position: relative; }

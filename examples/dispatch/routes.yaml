@@ -1,0 +1,28 @@
+# Routing for the dispatcher: which flow handles each kind of task.
+#
+# Build the stub adapter once, from the repository root:
+#
+#   go build -o examples/dispatch/bin/stub-adapter ./cmd/hetman-stub-adapter
+#
+# Then, in this folder:
+#
+#   hetman task check               checks this file and both flows
+#   sh collect.sh                   adds three tasks; the third is a duplicate
+#   hetman dispatch -once           runs them; stops once nothing is left to start
+#   hetman task list                shows each task with its campaign and state
+#   hetman answer -f remark.yaml -c N -outcome fix -a how='drop the spaces'
+#   hetman dispatch -once           continues the answered campaign
+#
+# The flows, the collector, the steps and the notification hook are POSIX
+# shell scripts run through sh (on Windows, from Git Bash or another shell
+# that has sh).
+version: 0
+limit: 2                  # campaigns running at once over all routes
+
+routes:
+  machine-finding:        # a linter reported something on a commit
+    orders: finding.yaml
+    priority: 10          # taken before reviewer remarks
+    limit: 1              # one finding fixed at a time
+  reviewer-remark:        # a reviewer left a remark
+    orders: remark.yaml

@@ -33,6 +33,7 @@ func (c *command) serve(addr string) int {
 		return c.fail(err)
 	}
 	srv := watchtower.New(ctx, c.o, c.chron)
+	defer srv.Close()
 	srv.Log = c.stdout
 	if host, _, err := net.SplitHostPort(addr); err == nil && host != "" {
 		srv.Hosts = []string{host}
