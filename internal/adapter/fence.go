@@ -25,11 +25,11 @@ func Fence(protect, writable []string) []string {
 	walk = func(p string, depth int) {
 		var inside []string
 		for _, w := range writable {
-			w = filepath.Clean(w)
-			if w == p {
+			r, ok := Rel(p, w)
+			if ok && r == "." {
 				return
 			}
-			if within(p, w) {
+			if ok {
 				inside = append(inside, w)
 			}
 		}
@@ -54,10 +54,4 @@ func Fence(protect, writable []string) []string {
 		walk(filepath.Clean(p), 0)
 	}
 	return out
-}
-
-// within reports whether path lies inside dir (not dir itself).
-func within(dir, path string) bool {
-	rel, err := filepath.Rel(dir, path)
-	return err == nil && rel != "." && filepath.IsLocal(rel)
 }

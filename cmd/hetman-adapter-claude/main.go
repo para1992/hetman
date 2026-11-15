@@ -169,8 +169,10 @@ func cutFlag(args []string, flag string) ([]string, bool) {
 	return out, found
 }
 
-func failure(kind, message string) adapter.Message {
-	return adapter.Message{Type: adapter.TypeError, Kind: kind, Message: message}
+// failure is an error message; denied lists the tool calls the client denied
+// in the step, when it ends because of them.
+func failure(kind, message string, denied ...string) adapter.Message {
+	return adapter.Message{Type: adapter.TypeError, Kind: kind, Message: message, Denied: denied}
 }
 
 // step runs a step and returns its final message. A session the client

@@ -340,6 +340,30 @@ func TestOpenNeeds(t *testing.T) {
 	}
 }
 
+// A symbolic link inside a folder does not let show lead out of it, and a
+// workdir that reaches the state folder through a link is refused.
+func TestLinksDoNotLeadOut(t *testing.T) {
+	dir := tempDir(t)
+	o := &orders.Orders{Dir: filepath.Join(dir, "flow"), Path: filepath.Join(dir, "flow", orders.DefaultFile)}
+	os.MkdirAll(filepath.Join(o.Dir, "docs"), 0o755)
+	os.WriteFile(filepath.Join(dir, "secret.txt"), []byte("x"), 0o644)
+	if err := os.Symlink(dir, filepath.Join(o.Dir, "out")); err != nil {
+		t.Skipf("no symbolic links here: %v", err)
+	}
+	if _, ok := ShowPath(o, nil, 1, "out/secret.txt"); ok {
+		t.Error("show followed a link out of the orders folder")
+	}
+	if p, ok := ShowPath(o, nil, 1, "docs/plan.md"); !ok || p != filepath.Join(o.Dir, "docs", "plan.md") {
+		t.Errorf("show of a plain file: %q %v", p, ok)
+	}
+	os.MkdirAll(filepath.Join(StateDir(o), "campaigns", "1"), 0o755)
+	os.Symlink(filepath.Join(StateDir(o), "campaigns", "1"), filepath.Join(dir, "sneaky"))
+	e := &Engine{Orders: o, Campaign: 1}
+	if _, err := e.workdir(&orders.Node{ID: "a", Workdir: filepath.Join(dir, "sneaky")}); err == nil || !strings.Contains(err.Error(), "hetman's own files") {
+		t.Errorf("workdir through a link into .hetman: %v", err)
+	}
+}
+
 func TestShowPath(t *testing.T) {
 	o := &orders.Orders{Dir: filepath.FromSlash("/flows/x")}
 	seg := &orders.Orders{Dir: filepath.FromSlash("/flows/x/segs")}

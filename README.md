@@ -1267,7 +1267,7 @@ Hetman reports each problem at its line of the orders file and rejects the file.
 - `log` lines are shown live as the step's log.
 - `session` reports the id of the conversation; send it only with the `resume`
   feature.
-- `result` may carry `"denied"`: the tool calls the client denied during the step,
+- `result` and `error` may carry `"denied"`: the tool calls the client denied during the step,
   each as one line naming the tool, what it was called on and the reason. Hetman
   records them with the attempt and shows them in `hetman status`, the explanation
   and the step card; an agent node with `fail_on_denied: true` fails such an

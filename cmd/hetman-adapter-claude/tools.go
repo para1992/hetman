@@ -142,21 +142,16 @@ func rulePath(p string) string {
 func fenceArgs(st adapter.Step) []string {
 	var a []string
 	for _, w := range st.Writable {
-		if w != "" && !inside(st.Workdir, w) {
+		if _, in := adapter.Rel(st.Workdir, w); w != "" && (st.Workdir == "" || !in) {
 			a = append(a, "--add-dir", w)
 		}
 	}
+	// A path behind a symbolic link is denied in both spellings, since the
+	// client may check either.
 	for _, p := range adapter.Fence(st.Protect, st.Writable) {
-		a = append(a, "--disallowedTools=Edit("+rulePath(p)+")", "--disallowedTools=Edit("+rulePath(p)+"/**)")
+		for _, q := range adapter.Spellings(p) {
+			a = append(a, "--disallowedTools=Edit("+rulePath(q)+")", "--disallowedTools=Edit("+rulePath(q)+"/**)")
+		}
 	}
 	return a
-}
-
-// inside reports whether path is dir or lies in it.
-func inside(dir, path string) bool {
-	if dir == "" {
-		return false
-	}
-	rel, err := filepath.Rel(dir, path)
-	return err == nil && filepath.IsLocal(rel) || rel == "."
 }

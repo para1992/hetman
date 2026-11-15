@@ -86,24 +86,32 @@ func stepProblems(o options, st adapter.Step, diag io.Writer) []adapter.CheckPro
 // relative to the working folder and to every folder above it; a pattern
 // with "/*" after it covers what lies inside. The client's patterns know
 // only "*" and "?" as wildcards, so a path holding either matches more.
+//
+// Either path may be reached through a symbolic link, and the client may
+// see either spelling (its worktree comes from the resolved working folder,
+// the path from what the model wrote), so every combination is written.
 func pathForms(workdir, p string) []string {
 	var out []string
 	seen := map[string]bool{}
-	for dir := filepath.Clean(workdir); ; {
-		if rel, err := filepath.Rel(dir, p); err == nil {
-			rel = filepath.ToSlash(rel)
-			for _, f := range []string{rel, rel + "/*"} {
-				if !seen[f] {
-					seen[f] = true
-					out = append(out, f)
+	for _, wd := range adapter.Spellings(workdir) {
+		for _, path := range adapter.Spellings(p) {
+			for dir := wd; ; {
+				if rel, err := filepath.Rel(dir, path); err == nil {
+					rel = filepath.ToSlash(rel)
+					for _, f := range []string{rel, rel + "/*"} {
+						if !seen[f] {
+							seen[f] = true
+							out = append(out, f)
+						}
+					}
 				}
+				up := filepath.Dir(dir)
+				if up == dir {
+					break
+				}
+				dir = up
 			}
 		}
-		up := filepath.Dir(dir)
-		if up == dir {
-			break
-		}
-		dir = up
 	}
 	return out
 }
@@ -139,8 +147,10 @@ func fence(st adapter.Step, rules []rule) []rule {
 	}
 	var outside []string
 	for _, w := range st.Writable {
-		if rel, err := filepath.Rel(st.Workdir, w); err != nil || !filepath.IsLocal(rel) && rel != "." {
-			outside = append(outside, filepath.ToSlash(w), filepath.ToSlash(w)+"/*")
+		if _, in := adapter.Rel(st.Workdir, w); !in {
+			for _, q := range adapter.Spellings(w) {
+				outside = append(outside, filepath.ToSlash(q), filepath.ToSlash(q)+"/*")
+			}
 		}
 	}
 	if len(outside) > 0 && len(rules) > 0 {

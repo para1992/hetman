@@ -2,6 +2,8 @@ package engine
 
 import (
 	"fmt"
+
+	"hetman/internal/adapter"
 	"os"
 	"path/filepath"
 
@@ -29,8 +31,12 @@ func (e *Engine) workdir(node *orders.Node) (string, error) {
 	if !fi.IsDir() {
 		return "", fmt.Errorf("%s: workdir %s is not a folder", node.ID, dir)
 	}
+	// Compared with symbolic links resolved too, so a link into the state
+	// folder does not get past the rule.
 	state, work := StateDir(e.top().Orders), WorkDir(e.top().Orders, e.Campaign)
-	if (dir == state || orders.Within(state, dir)) && dir != work && !orders.Within(work, dir) {
+	_, inState := adapter.Rel(state, dir)
+	_, inWork := adapter.Rel(work, dir)
+	if inState && !inWork {
 		return "", fmt.Errorf("%s: workdir %s lies in %s, which holds hetman's own files", node.ID, dir, state)
 	}
 	return dir, nil

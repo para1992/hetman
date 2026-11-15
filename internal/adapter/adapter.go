@@ -244,8 +244,9 @@ type Message struct {
 	Kind    string          `json:"kind,omitempty"`     // error
 	Message string          `json:"message,omitempty"`  // error
 	RetryAt string          `json:"retry_at,omitempty"` // error of kind limit: RFC 3339 time
-	// Denied lists, on a result, the tool calls the client denied during
-	// the step, each as the tool, what it was called on and the reason.
+	// Denied lists, on a result or an error, the tool calls the client
+	// denied during the step, each as the tool, what it was called on and
+	// the reason.
 	Denied []string `json:"denied,omitempty"`
 }
 

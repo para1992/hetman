@@ -110,6 +110,46 @@ func TestFence(t *testing.T) {
 	}
 }
 
+// A working folder reached through a symbolic link, as the temporary folder
+// is on macOS: the client reports resolved paths, and the log still shows
+// them relative to the folder; the denied calls come with the error; the
+// protection denies both spellings.
+func TestWorkdirBehindALink(t *testing.T) {
+	dir := t.TempDir()
+	real, link := filepath.Join(dir, "real"), filepath.Join(dir, "link")
+	os.MkdirAll(filepath.Join(real, ".hetman", "campaigns", "1", "work"), 0o755)
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("no symbolic links here: %v", err)
+	}
+	rec := filepath.Join(dir, "record.jsonl")
+	t.Setenv(envRecord, rec)
+	st := testStep(link)
+	st.Tools = []string{"Read", "Edit(src/**)"}
+	st.Protect = []string{filepath.Join(link, ".hetman")}
+	st.Writable = []string{filepath.Join(link, ".hetman", "campaigns", "1", "work")}
+	msgs := stepRun(t, "denied", st)
+	if log := logText(msgs); !strings.Contains(log, "denied: Write plan.md: outside the paths of Edit(src/**)") {
+		t.Errorf("log:\n%s", log)
+	}
+	f := final(msgs)
+	if !strings.Contains(f.Message, "(Write plan.md: ") || len(f.Denied) != 1 || !strings.HasPrefix(f.Denied[0], "Write plan.md: ") {
+		t.Errorf("final %+v", f)
+	}
+	args := strings.Join(recorded(t, rec)[0].Args, "\n")
+	resolved, _ := filepath.EvalSymlinks(real)
+	for _, base := range []string{link, resolved} {
+		if want := "--disallowedTools=Edit(" + rulePath(filepath.Join(base, ".hetman", "campaigns", "1", "lock")); strings.Contains(args, want) {
+			t.Errorf("a path that does not exist is denied: %s", want)
+		}
+		if want := "--disallowedTools=Edit(" + rulePath(filepath.Join(base, ".hetman", "campaigns", "1")) + ")"; strings.Contains(args, want) {
+			t.Errorf("the way to the work folder is denied:\n%s", args)
+		}
+	}
+	if strings.Contains(args, "--add-dir") {
+		t.Errorf("the work folder inside the working folder was added:\n%s", args)
+	}
+}
+
 // A denied tool call is logged with the tool, its target and the client's
 // reason; an answer without JSON after a denial is permanent, since a retry
 // meets the same denial.

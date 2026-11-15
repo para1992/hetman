@@ -103,6 +103,33 @@ func TestFenceConfiguration(t *testing.T) {
 	}
 }
 
+// A working folder reached through a symbolic link: paths the client
+// reports resolved are shown relative to it, and the edit rules name the
+// protected paths in every spelling the client may use.
+func TestWorkdirBehindALink(t *testing.T) {
+	dir := t.TempDir()
+	real, link := filepath.Join(dir, "real"), filepath.Join(dir, "link")
+	os.MkdirAll(filepath.Join(real, "flow", ".hetman"), 0o755)
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("no symbolic links here: %v", err)
+	}
+	resolved, _ := filepath.EvalSymlinks(real)
+	s := newStream(adapter.Step{Workdir: link}, nil)
+	if got := s.rel(filepath.Join(resolved, "src", "a.go")); got != filepath.Join("src", "a.go") {
+		t.Errorf("rel %q", got)
+	}
+	if got := s.short("wrote " + filepath.Join(resolved, "a.go")); got != "wrote a.go" {
+		t.Errorf("short %q", got)
+	}
+	forms := strings.Join(pathForms(link, filepath.Join(link, "flow", ".hetman")), " ")
+	rel, _ := filepath.Rel("/", filepath.Join(resolved, "flow", ".hetman"))
+	for _, want := range []string{"flow/.hetman/*", filepath.ToSlash(rel) + "/*"} {
+		if !strings.Contains(" "+forms+" ", " "+want+" ") {
+			t.Errorf("forms lack %s: %s", want, forms)
+		}
+	}
+}
+
 // A denied tool call is logged with the tool, its target and the client's
 // reason; an answer without JSON after a denial is permanent.
 func TestDeniedCall(t *testing.T) {
@@ -112,7 +139,7 @@ func TestDeniedCall(t *testing.T) {
 		strings.Contains(log, "relevant rules") {
 		t.Errorf("log:\n%s", log)
 	}
-	if f := final(msgs); f.Kind != adapter.ErrPermanent || !strings.Contains(f.Message, "the client denied 1 tool call(s)") {
+	if f := final(msgs); f.Kind != adapter.ErrPermanent || !strings.Contains(f.Message, "the client denied 1 tool call(s)") || len(f.Denied) != 1 {
 		t.Errorf("final %+v", f)
 	}
 }

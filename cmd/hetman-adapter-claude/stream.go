@@ -236,7 +236,7 @@ func (s *stream) finish(exit int, stderr string) attemptResult {
 		if len(s.denied) > 0 {
 			// The same calls are denied again on a retry.
 			return attemptResult{final: failure(adapter.ErrPermanent, fmt.Sprintf("the client denied %d tool call(s) (%s) and the answer holds no JSON object: %s",
-				len(s.denied), clip(strings.Join(s.denied, "; "), 600), clip(oneLine(r.Result), 300)))}
+				len(s.denied), clip(strings.Join(s.denied, "; "), 600), clip(oneLine(r.Result), 300)), s.denied...)}
 		}
 		return attemptResult{final: failure(adapter.ErrTransient, "the answer holds no JSON object: "+clip(oneLine(r.Result), 300))}
 	}
@@ -269,11 +269,13 @@ func (s *stream) describeTool(name string, input json.RawMessage) string {
 }
 
 // rel shows a path inside the working folder relative to it.
+// The client reports paths with symbolic links resolved, so a working
+// folder reached through a link is compared in both spellings.
 func (s *stream) rel(p string) string {
 	if s.workdir == "" || !filepath.IsAbs(p) {
 		return p
 	}
-	if r, err := filepath.Rel(s.workdir, p); err == nil && r != ".." && !strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+	if r, ok := adapter.Rel(s.workdir, p); ok {
 		return r
 	}
 	return p
@@ -282,8 +284,10 @@ func (s *stream) rel(p string) string {
 // short drops the working folder from paths in a text and clips it.
 func (s *stream) short(text string) string {
 	if s.workdir != "" {
-		for _, sep := range []string{"/", string(filepath.Separator)} {
-			text = strings.ReplaceAll(text, strings.TrimRight(s.workdir, sep)+sep, "")
+		for _, dir := range adapter.Spellings(s.workdir) {
+			for _, sep := range []string{"/", string(filepath.Separator)} {
+				text = strings.ReplaceAll(text, strings.TrimRight(dir, sep)+sep, "")
+			}
 		}
 	}
 	return clip(text, 2000)
