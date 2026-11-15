@@ -80,6 +80,7 @@ type Orders struct {
 	Later      Problems // ParseBuilding only: placeholders naming a node the orders do not have yet
 
 	programs []program // the program of every run list, in file order
+	loaded   string    // the stamp of the files as they were read; empty when not read by Load
 }
 
 // program is the first item of a run list and where it is written.
@@ -282,17 +283,19 @@ func (ps Problems) Error() string {
 	return strings.Join(lines, "\n")
 }
 
-// Load reads and checks the config at path.
+// Load reads and checks the config at path. The orders remember how their
+// files looked when they were read (see Stamp).
 func Load(path string) (*Orders, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
 	}
+	seen := map[string]string{abs: fileStamp(abs)}
 	data, err := os.ReadFile(abs)
 	if err != nil {
 		return nil, err
 	}
-	return Parse(abs, data)
+	return parseWith(abs, data, nil, []string{filepath.Clean(abs)}, false, seen)
 }
 
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
@@ -313,17 +316,20 @@ func Parse(path string, data []byte) (*Orders, error) {
 // template or schema whose absolute path is a key of files is read from
 // there instead of the disk.
 func ParseOverlay(path string, data []byte, files map[string][]byte) (*Orders, error) {
-	return parse(path, data, files, []string{filepath.Clean(path)})
+	return parse(path, data, files, []string{filepath.Clean(path)}, nil)
 }
 
 // parse checks one orders file; stack holds the files whose segments led to
 // it, itself last, so that a segment running itself is found.
-func parse(path string, data []byte, files map[string][]byte, stack []string) (*Orders, error) {
-	return parseWith(path, data, files, stack, false)
+func parse(path string, data []byte, files map[string][]byte, stack []string, seen map[string]string) (*Orders, error) {
+	return parseWith(path, data, files, stack, false, seen)
 }
 
-func parseWith(path string, data []byte, files map[string][]byte, stack []string, building bool) (*Orders, error) {
-	p := &parser{file: path, overlay: files, stack: stack, building: building}
+// parseWith checks one orders file. seen, when not nil, gathers the stamp
+// of every file just before it is read; the orders then keep the stamp of
+// all their files from it.
+func parseWith(path string, data []byte, files map[string][]byte, stack []string, building bool, seen map[string]string) (*Orders, error) {
+	p := &parser{file: path, overlay: files, stack: stack, building: building, seen: seen}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		msg := err.Error()
@@ -357,6 +363,9 @@ func parseWith(path string, data []byte, files map[string][]byte, stack []string
 	}
 	sort.SliceStable(p.programs, func(i, j int) bool { return p.programs[i].line < p.programs[j].line })
 	o.programs = p.programs
+	if seen != nil {
+		o.loaded = o.stampFrom(seen)
+	}
 	return o, nil
 }
 
@@ -366,6 +375,7 @@ type parser struct {
 	programs []program
 	overlay  map[string][]byte // files read instead of the disk
 	stack    []string          // the orders files being read, outermost first
+	seen     map[string]string // stamps of the files read, taken before reading; nil when not kept
 
 	topWorkdir bool // the top level has a workdir key, valid or not
 	building   bool // placeholders naming a node not there yet go to Later

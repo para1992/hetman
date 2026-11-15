@@ -78,7 +78,7 @@ type Server struct {
 
 	mu      sync.Mutex
 	orders  *orders.Orders
-	stamp   string // the modification times and sizes of the orders file and its segment files
+	stamp   string // the stamp of the files of the orders (orders.Orders.Stamp): orders file, segments, prompts, schemas, programs
 	problem string
 	others  map[string]loaded // other orders files of the folder, by path
 	tasks   *dispatch.Queue   // the task queue of the folder, once it exists
@@ -90,28 +90,17 @@ type Server struct {
 // Campaigns resumed from the page are driven until ctx is cancelled.
 func New(ctx context.Context, o *orders.Orders, ch *chronicle.Chronicle) *Server {
 	s := &Server{OrdersPath: o.Path, Chron: ch, ctx: ctx, orders: o}
-	s.stamp, _ = stamp(o.Path, o)
+	s.stamp = loadedStamp(o)
 	return s
 }
 
-// stamp sums up the modification time and size of an orders file and of the
-// segment files the orders o read from it run, so that a change to any of
-// them is noticed.
-func stamp(path string, o *orders.Orders) (string, error) {
-	fi, err := os.Stat(path)
-	if err != nil {
-		return "", err
+// loadedStamp is the stamp of the files of o as they were read, or as they
+// are now for orders that do not keep it.
+func loadedStamp(o *orders.Orders) string {
+	if st := o.Stamp(); st != "" {
+		return st
 	}
-	s := fmt.Sprintf("%s %d %d;", path, fi.ModTime().UnixNano(), fi.Size())
-	if o != nil {
-		for _, id := range o.Order {
-			if n := o.Nodes[id]; n.Segment != nil {
-				sub, _ := stamp(n.SegmentPath, n.Segment)
-				s += sub
-			}
-		}
-	}
-	return s, nil
+	return o.StampNow()
 }
 
 // Wait waits until the campaigns driven by this server have stopped, which
@@ -125,23 +114,25 @@ func (s *Server) poll() time.Duration {
 	return 250 * time.Millisecond
 }
 
-// currentOrders returns the orders, read again when the file has changed.
+// currentOrders returns the orders, read again when any of their files has
+// changed: the orders file, a segment, a prompt template, a schema or a
+// program.
 // While the file does not load, the last good orders are kept and the
 // problem is reported on the page.
 func (s *Server) currentOrders() (*orders.Orders, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	now, err := stamp(s.OrdersPath, s.orders)
-	if err != nil {
+	if _, err := os.Stat(s.OrdersPath); err != nil {
 		return s.orders, err.Error()
 	}
+	now := s.orders.StampNow()
 	if now == s.stamp {
 		return s.orders, s.problem
 	}
 	o, err := orders.Load(s.OrdersPath)
 	s.stamp = now
 	if err == nil {
-		s.stamp, _ = stamp(s.OrdersPath, o)
+		s.stamp = loadedStamp(o)
 	}
 	if err != nil {
 		s.problem = loadProblem + err.Error()

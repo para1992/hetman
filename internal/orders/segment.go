@@ -137,6 +137,7 @@ func (p *parser) loadSegment(node *Node, n *yaml.Node, what string) {
 	data, ok := p.overlay[path]
 	if !ok {
 		var err error
+		p.note(path)
 		if data, err = os.ReadFile(path); err != nil {
 			if os.IsNotExist(err) {
 				p.errorf(n, "%s: segment file %q does not exist (looked for %s)", what, rel, path)
@@ -146,7 +147,7 @@ func (p *parser) loadSegment(node *Node, n *yaml.Node, what string) {
 			return
 		}
 	}
-	seg, err := parse(path, data, p.overlay, append(append([]string{}, p.stack...), path))
+	seg, err := parse(path, data, p.overlay, append(append([]string{}, p.stack...), path), p.seen)
 	if err != nil {
 		ps, isProblems := err.(Problems)
 		if !isProblems {

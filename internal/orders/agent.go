@@ -208,6 +208,7 @@ func (p *parser) readFile(n *yaml.Node, what string) (string, []byte, bool) {
 	data, ok := p.overlay[path]
 	var err error
 	if !ok {
+		p.note(path)
 		data, err = os.ReadFile(path)
 	}
 	if err != nil {

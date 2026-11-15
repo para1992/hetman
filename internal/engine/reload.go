@@ -2,7 +2,6 @@ package engine
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"hetman/internal/orders"
@@ -17,27 +16,24 @@ import (
 // the campaign a person started, read afresh, through the nodes that led
 // to it. Orders that do not pass the check now are not used; the campaign
 // goes on with the version it read before and says so.
-
-// stamp sums up the files of orders as their sizes and times of change.
-func stamp(o *orders.Orders) string {
-	var b strings.Builder
-	for _, f := range o.Files() {
-		if fi, err := os.Stat(f); err == nil {
-			fmt.Fprintf(&b, "%s\x00%d\x00%d\n", f, fi.Size(), fi.ModTime().UnixNano())
-		} else {
-			fmt.Fprintf(&b, "%s\x00-\n", f)
-		}
-	}
-	return b.String()
-}
+//
+// What a campaign compares with is how the files looked when its orders
+// were read (orders.Orders.Stamp), so orders read long before the campaign
+// moves are read again when a file changed in between.
 
 // refresh reads the orders again when their files changed.
 func (e *Engine) refresh() {
 	top := e.top()
-	s := stamp(top.Orders)
+	s := top.Orders.StampNow()
 	if e.stamp == "" {
-		e.stamp = s
-		return
+		// The orders may have been read well before this campaign moves,
+		// as by the page server, which keeps them between requests; they
+		// are compared with their files as they were read, not as they are
+		// now, so that an edit made in between is not missed.
+		if e.stamp = top.Orders.Stamp(); e.stamp == "" {
+			e.stamp = s
+			return
+		}
 	}
 	if s == e.stamp {
 		return

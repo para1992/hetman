@@ -157,6 +157,26 @@ func TestDeniedCallsAndFailOnDenied(t *testing.T) {
 	want(t, f.finished(), []string{"a#1 /denied", "a#2 ok/"})
 }
 
+// Orders read some time before a campaign moves, as a long-lived process
+// such as the page server keeps them, are read again when a prompt template
+// or a schema changed in between, though no orders file did.
+func TestEditBeforeTheFirstMoveIsNotMissed(t *testing.T) {
+	f := setupAgent(t, unableAgent(""), map[string]string{"p.md": "Old wording.", "s.json": okSchema,
+		"plan.json": `{"trace": "trace.jsonl", "nodes": {"a": [[{"result": {"outcome": "ok"}}]]}}`}, "")
+	newSchema := strings.Replace(okSchema, `"summary": {"type": "string"}`, `"summary": {"type": "string", "description": "new"}`, 1)
+	if err := os.WriteFile(filepath.Join(f.e.Orders.Dir, "p.md"), []byte("New wording, longer than before."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.e.Orders.Dir, "s.json"), []byte(newSchema), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.drive(Done)
+	steps := f.steps()
+	if len(steps) != 1 || !strings.HasPrefix(steps[0].Prompt, "New wording") || !strings.Contains(string(steps[0].Schema), `"description":"new"`) {
+		t.Fatalf("steps %+v", steps)
+	}
+}
+
 // An edit to a segment reaches its running child at the next step: here
 // the first step of the child rewrites the segment, and the second step
 // runs with the model the new version names.

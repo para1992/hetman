@@ -116,8 +116,7 @@ func (s *Server) handleRoles(w http.ResponseWriter, r *http.Request) {
 
 type loaded struct {
 	o     *orders.Orders
-	stamp time.Time
-	size  int64
+	stamp string // the stamp of the files of o as they were read
 }
 
 // ordersFor is ordersOf for a campaign id.
@@ -149,13 +148,12 @@ func (s *Server) ordersOf(k chronicle.Campaign) (*orders.Orders, string) {
 	if k.Orders == "" || k.Orders == o.Path || filepath.Dir(k.Orders) != o.Dir {
 		return o, problem
 	}
-	fi, err := os.Stat(k.Orders)
-	if err != nil {
+	if _, err := os.Stat(k.Orders); err != nil {
 		return o, "the orders file of this campaign is gone, so the served orders are shown: " + err.Error()
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if c, ok := s.others[k.Orders]; ok && c.stamp.Equal(fi.ModTime()) && c.size == fi.Size() {
+	if c, ok := s.others[k.Orders]; ok && c.o.StampNow() == c.stamp {
 		return c.o, ""
 	}
 	other, err := orders.Load(k.Orders)
@@ -168,6 +166,6 @@ func (s *Server) ordersOf(k chronicle.Campaign) (*orders.Orders, string) {
 	if s.others == nil {
 		s.others = map[string]loaded{}
 	}
-	s.others[k.Orders] = loaded{o: other, stamp: fi.ModTime(), size: fi.Size()}
+	s.others[k.Orders] = loaded{o: other, stamp: loadedStamp(other)}
 	return other, ""
 }

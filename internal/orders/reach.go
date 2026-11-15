@@ -58,7 +58,7 @@ func noNode(name, head, rest string) error {
 // names a node the orders do not have yet is not a problem but is listed in
 // Later, for the editor to show as a warning. Load and Parse still reject it.
 func ParseBuilding(path string, data []byte, files map[string][]byte) (*Orders, error) {
-	return parseWith(path, data, files, []string{filepath.Clean(path)}, true)
+	return parseWith(path, data, files, []string{filepath.Clean(path)}, true, nil)
 }
 
 // Limit caps how many times a transition may be taken in one campaign.
