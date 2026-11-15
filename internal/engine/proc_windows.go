@@ -12,12 +12,65 @@ import (
 
 func configure(*exec.Cmd) {}
 
-// killTree kills the process and all of its descendants with the system
-// taskkill tool, falling back to killing the process alone.
-func killTree(p *os.Process) {
-	kill := exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(p.Pid))
+// procTree is a started process with a job object of its own that every
+// process it starts inherits, so that the whole tree can be killed even
+// after the process itself has exited. Without the job object (it could
+// not be made) only a running tree can be killed, found by parent ids.
+type procTree struct {
+	p     *os.Process
+	mu    sync.Mutex
+	job   windows.Handle
+	ended bool
+}
+
+// track puts a started process into a new job object. A process it started
+// in the moment before is not in the job.
+func track(p *os.Process) *procTree {
+	t := &procTree{p: p}
+	job, err := windows.CreateJobObject(nil, nil)
+	if err != nil {
+		return t
+	}
+	h, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, uint32(p.Pid))
+	if err != nil {
+		windows.CloseHandle(job)
+		return t
+	}
+	defer windows.CloseHandle(h)
+	if err := windows.AssignProcessToJobObject(job, h); err != nil {
+		windows.CloseHandle(job)
+		return t
+	}
+	t.job = job
+	return t
+}
+
+// kill kills the running process and all of its descendants.
+func (t *procTree) kill() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.ended {
+		return
+	}
+	if t.job != 0 && windows.TerminateJobObject(t.job, 1) == nil {
+		return
+	}
+	kill := exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(t.p.Pid))
 	if err := kill.Run(); err != nil {
-		p.Kill()
+		t.p.Kill()
+	}
+}
+
+// end kills what is left of the tree once the process has exited and
+// been waited for, and releases the job object.
+func (t *procTree) end() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.ended = true
+	if t.job != 0 {
+		windows.TerminateJobObject(t.job, 1)
+		windows.CloseHandle(t.job)
+		t.job = 0
 	}
 }
 

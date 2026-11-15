@@ -41,6 +41,10 @@
 //	{"progress": true}                   send a progress message
 //	{"sleep": "2s"}                      wait (a cancel message ends the wait)
 //	{"touch": "path"}                    create an empty file, for tests to wait on
+//	{"spawn": ["program", "arg", ...], "await": "path"}
+//	                                     start a program and leave it running, as a
+//	                                     client's tool may; with "await", wait up to 10s
+//	                                     for the file at path to appear first
 //	{"write": "path", "text": "..."}     write a file, as an agent working in the folder would
 //	{"require_session": "id"}            go on only if the start message continues session id;
 //	                                     otherwise send a permanent error and stop
@@ -76,6 +80,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -149,6 +154,8 @@ type Move struct {
 	Stderr   string          `json:"stderr"`
 	Sleep    string          `json:"sleep"`
 	Touch    string          `json:"touch"`
+	Spawn    []string        `json:"spawn"`
+	Await    string          `json:"await"`
 	Result   json.RawMessage `json:"result"`
 	Error    string          `json:"error"`
 	Message  string          `json:"message"`
@@ -478,6 +485,21 @@ func (s *stub) do(m Move, step adapter.Step) (int, bool) {
 		}
 	case m.Touch != "":
 		os.WriteFile(local(step.Workdir, m.Touch), nil, 0o644)
+	case len(m.Spawn) > 0:
+		cmd := exec.Command(m.Spawn[0], m.Spawn[1:]...)
+		cmd.Dir = step.Workdir
+		if err := cmd.Start(); err != nil {
+			fmt.Fprintf(s.stderr, "stub: cannot spawn: %v\n", err)
+			return 2, true
+		}
+		if m.Await != "" {
+			path := local(step.Workdir, m.Await)
+			for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+				if _, err := os.Stat(path); err == nil {
+					break
+				}
+			}
+		}
 	case len(m.Result) > 0:
 		s.send(adapter.Message{Type: adapter.TypeResult, Output: m.Result, Denied: m.Denied})
 		return m.Code, true

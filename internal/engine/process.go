@@ -39,7 +39,7 @@ type procResult struct {
 
 // runProcess starts argv directly (no shell) and waits for it to exit. Output
 // goes to log. Exceeding timeout or cancelling ctx kills the whole process
-// tree. started is called with the process id once the process runs.
+// tree; so does the process exiting, for what it left running. started is called with the process id once the process runs.
 // Waiting is event driven: the process exit, the timer and ctx are selected
 // on together.
 func runProcess(ctx context.Context, argv []string, dir string, env []string, log *os.File, timeout time.Duration, started func(pid int)) procResult {
@@ -52,10 +52,12 @@ func runProcess(ctx context.Context, argv []string, dir string, env []string, lo
 	if err := cmd.Start(); err != nil {
 		return procResult{startErr: err}
 	}
+	tree := track(cmd.Process)
 	started(cmd.Process.Pid)
 	exited := make(chan struct{})
 	go func() {
 		cmd.Wait()
+		tree.end()
 		close(exited)
 	}()
 	var expired <-chan time.Time
@@ -74,7 +76,7 @@ func runProcess(ctx context.Context, argv []string, dir string, env []string, lo
 	case <-ctx.Done():
 		r.interrupted = true
 	}
-	killTree(cmd.Process)
+	tree.kill()
 	<-exited
 	r.exit = cmd.ProcessState.ExitCode()
 	return r

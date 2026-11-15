@@ -35,13 +35,25 @@ import (
 	"sync"
 
 	"hetman/internal/adapter"
+	"hetman/internal/proctree"
 )
 
 // adapterName is the name the adapter describes itself with.
 const adapterName = "codex"
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+	os.Exit(serve(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+}
+
+// serve runs the adapter and then kills whatever the client left running.
+// The adapter is made a subreaper where the system has them, so that a
+// process the client started stays its descendant even after leaving the
+// client's process group and session, as a sandbox helper may.
+func serve(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	proctree.Subreaper()
+	code := run(args, stdin, stdout, stderr)
+	proctree.KillDescendants(os.Getpid())
+	return code
 }
 
 // options are the adapter's command-line options.

@@ -104,10 +104,12 @@ func runAdapter(ctx context.Context, p adapterProc) adapterRun {
 		r.startErr = err
 		return r
 	}
+	tree := track(cmd.Process)
 	p.started(cmd.Process.Pid)
 	exited := make(chan struct{})
 	go func() {
 		cmd.Wait()
+		tree.end()
 		close(exited)
 	}()
 
@@ -155,7 +157,7 @@ func runAdapter(ctx context.Context, p adapterProc) adapterRun {
 	defer func() { stopTimer(overall); stopTimer(idle); stopTimer(grace); stopTimer(drain) }()
 
 	kill := func() {
-		killTree(cmd.Process)
+		tree.kill()
 		<-exited
 	}
 	exitedC := (<-chan struct{})(exited)
@@ -282,8 +284,9 @@ func queryWithin(ctx context.Context, argv, extra []string, dir string, env []st
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("cannot start %s: %v", argv[0], err)
 	}
+	tree := track(cmd.Process)
 	exited := make(chan error, 1)
-	go func() { exited <- cmd.Wait() }()
+	go func() { err := cmd.Wait(); tree.end(); exited <- err }()
 	t := time.NewTimer(limit)
 	defer t.Stop()
 	select {
@@ -292,11 +295,11 @@ func queryWithin(ctx context.Context, argv, extra []string, dir string, env []st
 			return nil, fmt.Errorf("%s %s failed: %v %s", argv[0], extra[0], err, bytes.TrimSpace(stderr.Bytes()))
 		}
 	case <-t.C:
-		killTree(cmd.Process)
+		tree.kill()
 		<-exited
 		return nil, fmt.Errorf("%s %s did not finish within %s", argv[0], extra[0], limit)
 	case <-ctx.Done():
-		killTree(cmd.Process)
+		tree.kill()
 		<-exited
 		return nil, errors.New("interrupted")
 	}

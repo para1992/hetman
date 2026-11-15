@@ -401,14 +401,15 @@ func (e *Engine) runHook(h *orders.Notify, ev chronicle.Event, reason string, pa
 		fmt.Fprintln(log, "hetman: cannot start the notification hook:", err)
 		return "error", nil, err.Error()
 	}
+	tree := track(cmd.Process)
 	exited := make(chan struct{})
-	go func() { cmd.Wait(); close(exited) }()
+	go func() { cmd.Wait(); tree.end(); close(exited) }()
 	t := time.NewTimer(h.Timeout)
 	defer t.Stop()
 	select {
 	case <-exited:
 	case <-t.C:
-		killTree(cmd.Process)
+		tree.kill()
 		<-exited
 		fmt.Fprintf(log, "\nhetman: killed after timeout %s\n", h.Timeout)
 		return orders.Timeout, nil, "killed after " + h.Timeout.String()

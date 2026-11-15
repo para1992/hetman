@@ -32,7 +32,8 @@ const TraceFile = "trace.txt"
 //	input [MODE]        copy the file named by HETMAN_INPUT_FILE to
 //	                    work/seen.<node>[.<check>].<attempt>.json; MODE "tamper"
 //	                    then overwrites that file, "delete" removes it
-//	spawn TIME          start a grandchild that writes a heartbeat file, then sleep TIME
+//	spawn TIME          start a grandchild that writes a heartbeat file, wait for
+//	                    the file, then sleep TIME
 //	heartbeat FILE      rewrite FILE with a counter every 20ms, forever
 //	notice DIR          write standard input to DIR/notice.<HETMAN_REASON>.<node>.json
 //	sleep TIME          sleep, then exit with 0
@@ -122,6 +123,9 @@ func Main(args []string) int {
 		child := exec.Command(self, "step", "heartbeat", filepath.Join(runDir, "heartbeat"))
 		child.Env = os.Environ()
 		must(child.Start())
+		for deadline := time.Now().Add(10 * time.Second); !exists(filepath.Join(runDir, "heartbeat")) && time.Now().Before(deadline); {
+			time.Sleep(20 * time.Millisecond)
+		}
 		d, _ := time.ParseDuration(arg(args, 1))
 		time.Sleep(d)
 		return 0

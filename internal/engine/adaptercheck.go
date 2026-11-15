@@ -233,8 +233,9 @@ func checkSteps(ctx context.Context, argv []string, dir string, env []string, st
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("cannot start %s: %v", argv[0], err)
 	}
+	tree := track(cmd.Process)
 	exited := make(chan error, 1)
-	go func() { exited <- cmd.Wait() }()
+	go func() { err := cmd.Wait(); tree.end(); exited <- err }()
 	t := time.NewTimer(checkTimeout)
 	defer t.Stop()
 	select {
@@ -243,11 +244,11 @@ func checkSteps(ctx context.Context, argv []string, dir string, env []string, st
 			return nil, fmt.Errorf("%s %s failed: %v %s", argv[0], adapter.CheckFlag, err, bytes.TrimSpace(stderr.Bytes()))
 		}
 	case <-t.C:
-		killTree(cmd.Process)
+		tree.kill()
 		<-exited
 		return nil, fmt.Errorf("%s %s did not finish within %s", argv[0], adapter.CheckFlag, checkTimeout)
 	case <-ctx.Done():
-		killTree(cmd.Process)
+		tree.kill()
 		<-exited
 		return nil, errors.New("interrupted")
 	}

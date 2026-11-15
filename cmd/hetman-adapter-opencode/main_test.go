@@ -35,7 +35,7 @@ const (
 
 func TestMain(m *testing.M) {
 	if os.Getenv(envSelf) == "1" && len(os.Args) > 1 && os.Args[1] == "adapter" {
-		os.Exit(run(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+		os.Exit(serve(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
 	if sc := os.Getenv(envFake); sc != "" {
 		os.Exit(fakeClient(sc))

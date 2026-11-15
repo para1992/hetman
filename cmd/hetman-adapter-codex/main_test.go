@@ -42,7 +42,7 @@ const newThread = "00000000-0000-7000-8000-0000000000aa"
 
 func TestMain(m *testing.M) {
 	if os.Getenv(envSelf) == "1" && len(os.Args) > 1 && os.Args[1] == "adapter" {
-		os.Exit(run(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+		os.Exit(serve(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
 	if sc := os.Getenv(envFake); sc != "" {
 		os.Exit(fakeClient(sc))
@@ -184,9 +184,16 @@ func fakeClient(scenario string) int {
 		}
 		return replay("ok", thread, 0)
 	}
+	if play, ok := extraScenarios[scenario]; ok {
+		return play(thread)
+	}
 	fmt.Fprintf(os.Stderr, "fake: unknown scenario %q\n", scenario)
 	return 2
 }
+
+// extraScenarios are scenarios of the fake client that only some systems
+// have, by name, each given the thread id.
+var extraScenarios = map[string]func(thread string) int{}
 
 // replay writes a recorded output, when there is one, and its standard
 // error, when there is one, and returns code.
