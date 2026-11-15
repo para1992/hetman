@@ -109,7 +109,7 @@ func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"result": AnswerRecorded})
 		return
 	}
-	o, _ := s.currentOrders()
+	o := s.ordersFor(id)
 	release, err := engine.Lock(o, id)
 	switch {
 	case errors.Is(err, engine.ErrLocked):

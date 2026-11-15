@@ -1,0 +1,11 @@
+{
+  "nodes": {
+    "note": [
+      [
+        {"log": "writing the note"},
+        {"sleep": "1s"},
+        {"result": {"outcome": "ok", "summary": "Removed the trailing whitespace from notes.txt."}}
+      ]
+    ]
+  }
+}

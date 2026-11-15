@@ -1,0 +1,34 @@
+# A machine finding: a script fixes one occurrence per attempt and a gate
+# checks the file, so the loop runs until the finding is gone; then an
+# agent step (the stub adapter here) writes a short note. No person is
+# involved. The dispatcher starts it for tasks of the kind machine-finding
+# (see routes.yaml); the task input names the file.
+version: 0
+flow: finding
+start: apply
+
+notify: {run: [sh, notify.sh], timeout: 10s}
+
+executors:
+  stub: {run: [./bin/stub-adapter, plans/note.json]}
+
+checks:
+  clean: {run: [sh, checks/clean.sh], timeout: 30s}
+
+nodes:
+  apply:
+    type: script
+    run: [sh, steps/apply.sh]
+    timeout: 1m
+    on: {ok: verify, fail: failed, timeout: failed}
+  verify:
+    type: gate
+    checks: [clean]
+    on: {pass: note, blocked: apply}
+  note:
+    type: agent
+    executor: stub
+    prompt: prompts/note.md
+    schema: schemas/note.json
+    timeout: 1m
+    on: {ok: done, fail: failed}

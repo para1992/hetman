@@ -28,6 +28,7 @@ import (
 
 	"hetman/internal/ask"
 	"hetman/internal/chronicle"
+	"hetman/internal/dispatch"
 	"hetman/internal/engine"
 	"hetman/internal/explain"
 	"hetman/internal/i18n"
@@ -70,6 +71,8 @@ type Server struct {
 	stamp   time.Time
 	size    int64
 	problem string
+	others  map[string]loaded // other orders files of the folder, by path
+	tasks   *dispatch.Queue   // the task queue of the folder, once it exists
 
 	hub hub
 }
@@ -157,6 +160,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/campaigns/{id}/file", s.handleFile)
 	mux.HandleFunc("GET /api/campaigns/{id}/log", s.handleLog)
 	mux.HandleFunc("GET /api/stream", s.handleStream)
+	mux.HandleFunc("GET /api/tasks", s.handleTasks)
 	mux.Handle("POST /api/campaigns/{id}/halt", s.control(s.handleHalt))
 	mux.Handle("POST /api/campaigns/{id}/resume", s.control(s.handleResume))
 	mux.HandleFunc("GET /api/campaigns/{id}/show", s.handleShow)
@@ -259,7 +263,6 @@ func campaignID(r *http.Request) (int64, error) {
 
 // summaries returns the rows of the campaign list.
 func (s *Server) summaries() ([]Summary, error) {
-	o, _ := s.currentOrders()
 	list, err := s.Chron.Campaigns(listLimit)
 	if err != nil {
 		return nil, err
@@ -270,6 +273,7 @@ func (s *Server) summaries() ([]Summary, error) {
 		if err != nil {
 			return nil, err
 		}
+		o, _ := s.ordersOf(k)
 		out = append(out, s.build(o, k, events).Summary)
 	}
 	return out, nil
@@ -286,7 +290,7 @@ func (s *Server) campaign(p *i18n.Printer, id int64) (*Campaign, []chronicle.Eve
 	if err != nil {
 		return nil, nil, err
 	}
-	o, problem := s.currentOrders()
+	o, problem := s.ordersOf(k)
 	c := s.build(o, k, events)
 	c.OrdersProblem = problemIn(p, problem)
 	c.Words = explain.In(p, k, events, explain.Summary, "", time.Local)
@@ -455,7 +459,7 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	o, _ := s.currentOrders()
+	o := s.ordersFor(id)
 	release, _, err := engine.Resume(o, s.Chron, id)
 	if err != nil {
 		writeError(w, err)

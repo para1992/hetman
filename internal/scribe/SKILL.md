@@ -301,6 +301,39 @@ nodes:
   or resumes). Offer one only if the person wants to be told in a messenger; it is a
   script they supply or ask you to write, which never blocks the campaign.
 
+### Tasks and the dispatcher
+
+Small internal work with no ticket anywhere (a linter finding on a commit, a remark a
+reviewer left) can be queued as tasks; the dispatcher runs each one as an ordinary
+campaign of the flow its kind is routed to. Suggest it only when the person has such
+work arriving from a script or a scheduler. A routing file, `routes.yaml` next to the
+orders files, maps each kind to a flow:
+
+```yaml
+version: 0
+limit: 2                       # campaigns running at once; 1 when left out
+routes:
+  machine-finding:
+    orders: finding.yaml       # must be in the same folder as routes.yaml
+    priority: 10               # higher is taken first; 0 when left out
+    limit: 1                   # campaigns of this route at once; no own limit when left out
+  reviewer-remark:
+    orders: remark.yaml
+```
+
+- Every routed orders file is an ordinary flow; write it as any other. Its campaigns
+  get the task's input plus `hetman_task` (`id`, `kind`, `key`), so a prompt can say
+  `{{input.hetman_task.kind}}` and a script reads it from `HETMAN_INPUT_FILE`. A task
+  input must not have that field itself.
+- `hetman task check` checks the routing file and every flow it routes to. The routing
+  file has no scribe operations; edit it by hand and check it.
+- Tasks are added with `hetman task add -kind KIND [-key KEY] -input FILE` (`-input -`
+  reads standard input). A key makes a repeat a no-op while a task with that key exists
+  that was not cancelled; `-force` adds it anyway.
+- `hetman dispatch` runs the queue (`-once` stops when nothing is left to start). A
+  campaign that waits for a person takes no place in the limits; it is answered as
+  usual and the dispatcher continues it.
+
 ## Changing the file: use the operations
 
 Hetman has a fixed set of operations on `orders.yaml`, run as commands. Use them
