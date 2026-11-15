@@ -85,6 +85,20 @@ type Campaign struct {
 	Ask           *Ask                 `json:"ask,omitempty"`      // the question open now
 	Words         []explain.Section    `json:"words,omitempty"`    // the campaign in plain words
 	Language      *Language            `json:"language,omitempty"` // the language for the person recorded at the start
+	Retry         string               `json:"retry,omitempty"`    // the node a retry runs again; empty when nothing failed
+	Rewind        []string             `json:"rewind,omitempty"`   // the nodes a rewind may send the campaign back to
+	Returns       []Return             `json:"returns,omitempty"`  // every retry and rewind, oldest first
+
+	returned map[string]bool // nodes sent back to that have not run since
+}
+
+// Return is a person sending the campaign back to a node.
+type Return struct {
+	Kind string    `json:"kind"` // retried or rewound
+	Node string    `json:"node"`
+	At   time.Time `json:"at"`
+	By   string    `json:"by,omitempty"`
+	Via  string    `json:"via,omitempty"`
 }
 
 // Language is the language for the person a campaign started with.
@@ -138,6 +152,8 @@ type Column struct {
 	Model       string `json:"model,omitempty"`
 	Effort      string `json:"effort,omitempty"`
 	MaxAttempts int    `json:"maxAttempts,omitempty"`
+	Used        int    `json:"used,omitempty"`  // the current node: failed attempts that count against this visit's budget
+	Again       bool   `json:"again,omitempty"` // ran after the node of the latest retry or rewind and before it: runs again when reached
 }
 
 // Tile is one check of a gate, the single command of a step, or one child
@@ -148,11 +164,13 @@ type Tile struct {
 	Status   string            `json:"status"`
 	Outcome  string            `json:"outcome,omitempty"`
 	Attempts int               `json:"attempts"`
-	Item     string            `json:"item,omitempty"`  // for-each: the item id
-	Child    int64             `json:"child,omitempty"` // the child campaign; 0 for an item not started
-	Node     string            `json:"node,omitempty"`  // where the child is
-	Note     string            `json:"note,omitempty"`  // what the child waits for, or why an item does not run: a message key of the page
-	Args     map[string]string `json:"args,omitempty"`  // the parameters of Note
+	Item     string            `json:"item,omitempty"`    // for-each: the item id
+	Child    int64             `json:"child,omitempty"`   // the child campaign; 0 for an item not started
+	Node     string            `json:"node,omitempty"`    // where the child is
+	Note     string            `json:"note,omitempty"`    // what the child waits for, or why an item does not run: a message key of the page
+	Args     map[string]string `json:"args,omitempty"`    // the parameters of Note
+	Attempt  int               `json:"attempt,omitempty"` // the attempt of the node the child belongs to
+	Earlier  bool              `json:"earlier,omitempty"` // the child belongs to an earlier attempt and is never driven again
 }
 
 // Exit is one transition out of a node.
@@ -279,7 +297,20 @@ func eventsJSON(events []chronicle.Event) []Event {
 func build(k chronicle.Campaign, events []chronicle.Event, o *orders.Orders, campaignDir string, driven func() bool) *Campaign {
 	st := chronicle.Replay(events)
 	c := &Campaign{Summary: Summary{ID: k.ID, Flow: k.Flow, Node: st.Node, HaltRequested: st.HaltRequested && !st.Halted,
-		Error: st.Error, Started: k.Started}, Orders: k.Orders, End: st.End, Nodes: map[string][]Attempt{}}
+		Error: st.Error, Started: k.Started}, Orders: k.Orders, End: st.End, Nodes: map[string][]Attempt{},
+		returned: map[string]bool{}}
+	// A child campaign is retried and rewound through the campaign a person
+	// started, so only that one offers either.
+	if o != nil && k.Parent == 0 {
+		if n := engine.RetryNode(events); n != "" && o.Nodes[n] != nil {
+			c.Retry = n
+		}
+		for _, n := range engine.Visited(events) {
+			if o.Nodes[n] != nil {
+				c.Rewind = append(c.Rewind, n)
+			}
+		}
+	}
 	if len(events) > 0 && events[0].Language != "" {
 		l, _ := language.Lookup(events[0].Language)
 		c.Language = &Language{Code: events[0].Language, English: l.English, Native: l.Native}
@@ -340,9 +371,23 @@ func build(k chronicle.Campaign, events []chronicle.Event, o *orders.Orders, cam
 	cur := map[string]*Attempt{}
 	asks := map[int64]*Ask{}
 	transitions := map[string][]chronicle.Event{}
-	for _, e := range events {
+	lastStart := map[string]int{}
+	// The latest retry or rewind, and the last start of its node before it:
+	// the nodes that started in between run again when the flow reaches them.
+	lastReturn, returnFrom, returnTo := -1, -1, ""
+	for i, e := range events {
 		switch e.Kind {
+		case chronicle.Retried, chronicle.Rewound:
+			c.Returns = append(c.Returns, Return{Kind: e.Kind, Node: e.Node, At: e.At, By: e.By, Via: e.Via})
+			c.returned[e.Node] = true
+			lastReturn, returnTo = i, e.Node
+			returnFrom = -1
+			if at, ok := lastStart[e.Node]; ok {
+				returnFrom = at
+			}
 		case chronicle.StepStarted:
+			lastStart[e.Node] = i
+			c.returned[e.Node] = false
 			if _, ok := c.Nodes[e.Node]; !ok {
 				seen = append(seen, e.Node)
 			}
@@ -476,10 +521,19 @@ func build(k chronicle.Campaign, events []chronicle.Event, o *orders.Orders, cam
 	}
 
 	c.Columns = layout(o, st, transitions, seen)
+	mark := func(col *Column) {
+		fill(col, c, st, soft)
+		if at, ran := lastStart[col.Node]; ran && at > returnFrom && at < lastReturn && col.Node != returnTo && !col.Current {
+			col.Again = true
+		}
+		if col.Current {
+			col.Used = st.Failures
+		}
+	}
 	for i := range c.Columns {
-		fill(&c.Columns[i], c, st, soft)
+		mark(&c.Columns[i])
 		for j := range c.Columns[i].Side {
-			fill(&c.Columns[i].Side[j], c, st, soft)
+			mark(&c.Columns[i].Side[j])
 		}
 	}
 	for _, col := range c.Columns {
@@ -587,7 +641,7 @@ func fill(col *Column, c *Campaign, st chronicle.State, soft map[string]bool) {
 	case len(list) > 0:
 		col.Status = list[len(list)-1].Status
 		if col.Current && col.Status != StatusRunning && !st.HasOutcome && c.State != StateError &&
-			list[len(list)-1].Transition != "" {
+			(list[len(list)-1].Transition != "" || c.returned[col.Node]) {
 			// The node is the position again after a return for rework.
 			col.Status = StatusWaiting
 		}

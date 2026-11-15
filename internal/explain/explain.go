@@ -228,6 +228,8 @@ func (x *explainer) where() []string {
 	default:
 		if e := x.lastStep(st.Node); e != nil && e.Kind == chronicle.StepInterrupted {
 			s = p.T("explain.where.interrupted", "node", st.Node, "attempt", e.Attempt, "at", x.at(e.At))
+		} else if b := x.lastSentBack(); b != nil && (x.last(chronicle.Transition, "") == nil || b.Seq > x.last(chronicle.Transition, "").Seq) {
+			s = p.T("explain.where."+b.Kind, "who", x.who(b), "via", x.via(b), "node", b.Node, "at", x.at(b.At))
 		} else if t := x.last(chronicle.Transition, ""); t != nil {
 			s = p.T("explain.where.moved", "node", st.Node, "at", x.at(t.At))
 		} else {
@@ -263,6 +265,16 @@ func (x *explainer) children(st chronicle.State) string {
 		}
 	}
 	return strings.Join(parts, ", ")
+}
+
+// lastSentBack is the newest retry or rewind.
+func (x *explainer) lastSentBack() *chronicle.Event {
+	for i := len(x.events) - 1; i >= 0; i-- {
+		if e := &x.events[i]; e.Kind == chronicle.Retried || e.Kind == chronicle.Rewound {
+			return e
+		}
+	}
+	return nil
 }
 
 // lastStep is the newest step event at a node.
@@ -404,8 +416,15 @@ func (x *explainer) history() []string {
 			s = p.T("explain.halted", "node", e.Node)
 		case chronicle.Resumed:
 			s = p.T("explain.resumed")
+			if e.Child != 0 {
+				s = p.T("explain.retried_child", "who", x.who(e), "via", x.via(e), "child", e.Child, "node", e.To)
+			}
+		case chronicle.ItemKept:
+			s = p.T("explain.item_kept", "node", e.Node, "item", e.Item, "child", e.Child)
 		case chronicle.ChildStarted:
-			if e.Item != "" {
+			if e.Outcome == chronicle.Retried {
+				s = p.T("explain.child_retried", "node", e.Node, "child", e.Child, "at", e.To)
+			} else if e.Item != "" {
 				s = p.T("explain.child_started_item", "node", e.Node, "item", e.Item, "child", e.Child)
 			} else {
 				s = p.T("explain.child_started", "node", e.Node, "child", e.Child)
@@ -416,6 +435,8 @@ func (x *explainer) history() []string {
 			s = p.T("explain.item_not_run"+"_"+e.Outcome, "node", e.Node, "item", e.Item, "needs", e.Needs)
 		case chronicle.LockWaiting:
 			s = p.T("explain.lock_waited", "node", e.Node, "lock", e.Lock, "holder", e.Holder)
+		case chronicle.Retried, chronicle.Rewound:
+			s = p.T("explain."+e.Kind, "who", x.who(e), "via", x.via(e), "node", e.Node)
 		default:
 			continue
 		}
@@ -479,6 +500,15 @@ func (x *explainer) rework() []string {
 			}
 			count[e.To]++
 			backs = append(backs, back{e: e, why: x.why(i, e), into: e.To})
+		case chronicle.Retried, chronicle.Rewound:
+			if !x.wanted(e.Node) {
+				continue
+			}
+			if count[e.Node] == 0 {
+				order = append(order, e.Node)
+			}
+			count[e.Node]++
+			backs = append(backs, back{e: e, into: e.Node})
 		}
 	}
 	if len(backs) == 0 {
@@ -493,7 +523,9 @@ func (x *explainer) rework() []string {
 	}
 	for _, b := range backs {
 		args := []any{"node", b.e.Node, "outcome", b.e.Outcome, "to", b.into, "why", b.why}
-		if b.why != "" {
+		if b.e.Kind == chronicle.Retried || b.e.Kind == chronicle.Rewound {
+			lines = append(lines, x.at(b.e.At)+"  "+p.T("explain."+b.e.Kind, "who", x.who(b.e), "via", x.via(b.e), "node", b.e.Node))
+		} else if b.why != "" {
 			lines = append(lines, x.at(b.e.At)+"  "+p.T("explain.back_why", args...))
 		} else {
 			lines = append(lines, x.at(b.e.At)+"  "+p.T("explain.back", args...))

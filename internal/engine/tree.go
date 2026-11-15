@@ -94,6 +94,10 @@ type Child struct {
 	NotRunNeeds, NotRunKind string
 	Events                  []chronicle.Event // the child's events
 	State                   chronicle.State   // the child's state
+
+	Attempt   int  // the attempt of the parent's node the child belongs to
+	KeptFrom  int  // for-each: the item reached done in this earlier attempt and was kept, not run again
+	RetriedIn bool // segment: the child of the attempt before, retried at its failed node
 }
 
 // ChildrenOf lists the children of the latest attempt of a segment or
@@ -135,9 +139,13 @@ func ChildrenOf(ch *chronicle.Chronicle, events []chronicle.Event, node string) 
 		}
 		switch ev.Kind {
 		case chronicle.ChildStarted:
-			get(ev.Item).ID = ev.Child
+			c := get(ev.Item)
+			c.ID, c.RetriedIn = ev.Child, ev.Outcome == chronicle.Retried
 		case chronicle.ItemFinished:
 			get(ev.Item).Outcome = ev.Outcome
+		case chronicle.ItemKept:
+			c := get(ev.Item)
+			c.ID, c.Outcome, c.KeptFrom = ev.Child, ev.Outcome, attemptOf(events, ev.Child, attempt)
 		case chronicle.ItemNotRun:
 			c := get(ev.Item)
 			c.NotRun, c.NotRunNeeds, c.NotRunKind = ev.Error, ev.Needs, ev.Outcome
@@ -145,6 +153,7 @@ func ChildrenOf(ch *chronicle.Chronicle, events []chronicle.Event, node string) 
 	}
 	for i := range out {
 		c := &out[i]
+		c.Attempt = attempt
 		if c.ID == 0 {
 			continue
 		}
@@ -156,6 +165,49 @@ func ChildrenOf(ch *chronicle.Chronicle, events []chronicle.Event, node string) 
 		if c.Outcome == "" {
 			c.Outcome = c.State.End
 		}
+	}
+	return out, nil
+}
+
+// attemptOf is the first attempt of a node in which a child was started,
+// before the given one.
+func attemptOf(events []chronicle.Event, child int64, before int) int {
+	for _, ev := range events {
+		if ev.Kind == chronicle.ChildStarted && ev.Child == child && ev.Attempt < before {
+			return ev.Attempt
+		}
+	}
+	return 0
+}
+
+// EarlierChildren lists the children of the attempts of a segment or
+// for-each node before its latest one that the latest does not carry on:
+// they stay in the chronicle and are never driven again.
+func EarlierChildren(ch *chronicle.Chronicle, events []chronicle.Event, node string) ([]Child, error) {
+	latest := 0
+	for _, ev := range events {
+		if ev.Kind == chronicle.StepStarted && ev.Node == node {
+			latest = ev.Attempt
+		}
+	}
+	carried := map[int64]bool{}
+	for _, ev := range events {
+		if ev.Node == node && ev.Attempt == latest && (ev.Kind == chronicle.ChildStarted || ev.Kind == chronicle.ItemKept) {
+			carried[ev.Child] = true
+		}
+	}
+	var out []Child
+	for _, ev := range events {
+		if ev.Kind != chronicle.ChildStarted || ev.Node != node || ev.Attempt >= latest || carried[ev.Child] {
+			continue
+		}
+		evs, err := ch.Events(ev.Child)
+		if err != nil {
+			return nil, err
+		}
+		st := chronicle.Replay(evs)
+		out = append(out, Child{Item: ev.Item, ID: ev.Child, Attempt: ev.Attempt, Events: evs, State: st, Outcome: st.End})
+		carried[ev.Child] = true
 	}
 	return out, nil
 }

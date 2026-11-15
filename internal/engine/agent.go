@@ -98,14 +98,20 @@ func (e *Engine) describe(ctx context.Context, x *orders.Executor) (adapter.Desc
 }
 
 // visitStart returns the index of the first event of the current visit of
-// a node: the event after the transition that made it the position, or 0.
+// a node: the event after the transition, retry or rewind that made it the
+// position, or 0.
 func visitStart(events []chronicle.Event, node string) int {
 	for i := len(events) - 1; i >= 0; i-- {
-		if events[i].Kind == chronicle.Transition && events[i].To == node {
+		if events[i].Kind == chronicle.Transition && events[i].To == node || sentBack(events[i]) && events[i].Node == node {
 			return i + 1
 		}
 	}
 	return 0
+}
+
+// sentBack reports whether an event is a person sending the campaign back.
+func sentBack(e chronicle.Event) bool {
+	return e.Kind == chronicle.Retried || e.Kind == chronicle.Rewound
 }
 
 // carryOver is what an attempt takes from the attempts before it in the
@@ -593,6 +599,14 @@ func rework(events []chronicle.Event, node string) string {
 	}
 	t := events[at]
 	var b strings.Builder
+	if sentBack(t) {
+		what := "asked for this step to be retried"
+		if t.Kind == chronicle.Rewound {
+			what = "sent the campaign back to this step; every step after it runs again"
+		}
+		fmt.Fprintf(&b, "This step runs again: a person %s.\n", what)
+		return b.String()
+	}
 	fmt.Fprintf(&b, "This step runs again: step %q finished with outcome %q and sent the flow back here.\n", t.Node, t.Outcome)
 	fin := lastFinished(events[:at], t.Node)
 	if fin == nil {

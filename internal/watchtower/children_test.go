@@ -75,6 +75,9 @@ nodes:
 		t.Fatalf("tiles %v, want %v\n%s", got, want, w.dump())
 	}
 	child := w.campaignN(2)
+	if child.Retry != "" || len(child.Rewind) > 0 {
+		t.Fatalf("a child page offers retry %q or rewind %v", child.Retry, child.Rewind)
+	}
 	if child.Parent != 1 || child.Top != 1 || child.Path != "each/a" || find(child.Columns, "work") == nil || child.State != watchtower.StateRunning {
 		t.Fatalf("child view %+v", child.Summary)
 	}
@@ -88,8 +91,12 @@ nodes:
 	}
 	w.release(1)
 	runner.Wait()
-	if c := w.waitState(1, watchtower.StateFailed); find(c.Columns, "each").Tiles[0].Status != watchtower.StatusPassed {
-		t.Fatalf("after the end: %+v", find(c.Columns, "each").Tiles)
+	c = w.waitState(1, watchtower.StateFailed)
+	if find(c.Columns, "each").Tiles[0].Status != watchtower.StatusPassed || c.Retry != "each" {
+		t.Fatalf("after the end: retry %q, tiles %+v", c.Retry, find(c.Columns, "each").Tiles)
+	}
+	if tile := find(c.Columns, "each").Tiles[0]; tile.Attempt != 1 || tile.Earlier {
+		t.Fatalf("tile %+v", tile)
 	}
 }
 

@@ -44,3 +44,21 @@ func TestWaitingForALock(t *testing.T) {
 		t.Fatalf("explanation:\n%s", got)
 	}
 }
+
+func TestRetriedChildrenAreTold(t *testing.T) {
+	var j journal
+	j.start("each")
+	j.add(chronicle.Event{Kind: chronicle.ItemKept, Node: "each", Attempt: 2, Outcome: "done", Details: chronicle.Details{Item: "a", Child: 4}})
+	j.add(chronicle.Event{Kind: chronicle.ChildStarted, Node: "s", Attempt: 2, Outcome: chronicle.Retried, Details: chronicle.Details{Child: 7, To: "y"}})
+	j.add(chronicle.Event{Kind: chronicle.Resumed, Node: "s", Details: chronicle.Details{Child: 9, To: "leaf", By: "olena", Via: "command"}})
+	got := explainAll(j)
+	for _, want := range []string{
+		"each kept item a (campaign 4), done in an earlier attempt.",
+		"s ran its segment again in campaign 7, from its failed step y.",
+		"olena from the command line retried campaign 9 at leaf; the campaign continues its running step.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("explanation lacks %q:\n%s", want, got)
+		}
+	}
+}

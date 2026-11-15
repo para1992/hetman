@@ -345,6 +345,39 @@ adapter does not describe itself properly, or a prompt template reads a run inpu
 field that does not exist. Fix the cause and resume. The orders file is read again
 on every resume.
 
+**Retry and rewind.** `hetman retry` runs the failed step of a campaign again with a
+fresh attempt budget and continues from there. It applies to a campaign that ended in
+`failed` (the step whose outcome led there runs again), one stopped in the error
+state (the step it stopped at), and one whose current step failed its last allowed
+attempt before its transition was recorded. `hetman rewind -to NODE` sends a campaign
+back to a node it has already been at, whether it ended or not; that node and every
+step after it run again. Each is one chronicle event (`retried`, `rewound`) with who
+asked and from where; nothing recorded before it changes, so every earlier attempt,
+answer and outcome stays visible. Replaying the events makes the node the position
+again as if the flow had just moved there: the end, an error stop, a halt, a wait and
+an open question are left behind, and the attempt budget of the visit starts afresh.
+Attempt numbers keep counting, so the logs, results and prompts of earlier attempts
+are never written over. Nothing in the work folder is deleted or restored: the steps
+that run again find the files as the last step left them, and `outputs/NODE.json`
+keeps the last accepted output of a node until it runs again. An agent step that runs
+again because of a retry or rewind gets a `{{rework}}` saying a person sent it back.
+Both are refused, and record nothing, while a process drives the campaign (halt it
+first), and for a node the campaign never visited or that is no longer in the orders.
+The command that asks then drives the campaign, as `resume` does.
+
+With segments and for-each, retry and rewind act on the campaign a person started;
+asked of a child campaign they are refused and name that campaign. They are also
+refused while any unfinished child is driven. Sending a campaign back to a segment or
+for-each node, or to a node before it, runs that node again as a new attempt with new
+children; the children of earlier attempts keep their history, stay listed (marked
+with their attempt), and are never driven again. A retry of a for-each node runs the
+list of the attempt before again, keeps the items that reached `done` there
+(`item_kept`) and runs the others as new children. A retry of a segment node whose
+child failed or stopped in the error state retries that child at its own failed node.
+A campaign stopped in the error state because a child did is retried inside the
+deepest child that stopped by itself; the campaign keeps its running step and
+continues it.
+
 ## Agent steps
 
 An agent node hands one step to a coding agent. The agent gets a prompt, works, and
@@ -954,6 +987,9 @@ hetman run    [-f FILE] [-input FILE]   start a new campaign and run it
 hetman status [-f FILE] [-c ID] [-events]  show where a campaign is
 hetman halt   [-f FILE] [-c ID]         halt a campaign after its current step
 hetman resume [-f FILE] [-c ID]         continue a halted, stopped or interrupted campaign
+hetman retry  [-f FILE] [-c ID] [-by NAME]  run the failed step again with a fresh attempt budget
+hetman rewind -to NODE [-f FILE] [-c ID] [-by NAME]
+                                        send a campaign back to a node it visited
 hetman answer [-f FILE] [-c ID] [-a ID=ANSWER ...] [-comment ID=TEXT ...] [-outcome NAME] [-ask N] [-by NAME]
                                         answer what a campaign asks a person
 hetman serve  [-f FILE] [-addr ADDRESS] show every campaign live on a web page (Watchtower)
@@ -980,6 +1016,8 @@ hetman version                          print the version of hetman
 - `-input FILE` is a JSON file holding one object, the run input of the campaign.
 - `-c ID` is the campaign number; the latest campaign by default.
 - `-events` makes `status` also list every chronicle event.
+- `-to NODE` is the node `rewind` sends the campaign back to; `-by NAME` records who
+  asked for a retry or rewind (the user name of this computer by default).
 - `-addr ADDRESS` is where `serve` listens, `127.0.0.1:8740` by default.
 - `-r FILE` is the routing file of `task` and `dispatch`, `routes.yaml` in the current
   folder by default.
@@ -1096,10 +1134,49 @@ When the folder has a task queue (see Tasks and the dispatcher), a Tasks tab lis
 tasks with their kind, state, campaign (a link), age and what a waiting one waits for.
 A campaign of another orders file of the same folder is shown with its own nodes.
 
-It has two controls, Halt and Resume, which do what `hetman halt` and
-`hetman resume` do, and an answer form. A campaign resumed from the page is run by the
-`hetman serve` process; stopping that process interrupts it, and `hetman resume`
-continues it.
+
+It has the controls Halt, Resume and Retry, which do what `hetman halt`,
+`hetman resume` and `hetman retry` do, a Rewind button on the card of every step the
+campaign has visited, and an answer form. A campaign resumed, retried, rewound or
+started from the page is run by the `hetman serve` process; stopping that process
+interrupts it, and `hetman resume` continues it. The pipeline counts every attempt of a
+step across retries and rewinds, shows how much of the attempt budget the current
+agent step has used in this visit, and marks the steps that ran before the latest
+retry or rewind and run again when the flow reaches them; the card of a step says who
+sent the campaign back to it and when, and the plain-words tab tells it too.
+
+**Starting a campaign.** The list of campaigns has a Start button. It offers the
+orders file the server was started with and every other orders file in the same
+folder that passes the check, shows the language for the person the campaign will
+get, and takes the run input as a JSON object typed or pasted into the form. The page
+checks that it is one object before sending it, and remembers the last input of each
+orders file in that browser. The server checks the orders and their programs as
+`hetman run` does; their problems are shown instead of starting.
+
+**Editing the flow.** Each orders file of the folder has a Flow view: its pipeline,
+and for each node the operations of `hetman scribe` that make sense there (add a step
+after or before, add a gate, remove, rename, change or remove a transition, set the
+timeout, change a setting of an agent step, add a question, add a check to a gate or
+remove one, mark a check soft or required), each as a small form filled with the
+node names, checks and executors of the file. Every change is shown first, in plain
+words and as the diff `hetman scribe` prints, with the problems of the orders check;
+nothing is written until the person confirms, and a change whose result does not
+pass the check cannot be written. The change is made again on the file when it is
+written, and refused if the file changed since it was shown. When the orders name an
+executor and model for Scribe, a line takes one sentence and shows the operation it
+becomes for confirmation, or the interpretations to choose from when it is unclear;
+the sentence goes to the model only when the person presses the button. Campaigns of
+the file that have not ended read the changed file when they continue, and the page
+says so before the change is written.
+
+**Safety.** Everything that changes state (halt, resume, answer, start, retry, rewind,
+the previews, writing a change, a sentence to Scribe) needs a request from the page
+itself: the browser's `Origin` and `Sec-Fetch-Site` headers must name the server and
+the `X-Hetman-Control` header must be set, which a form or a script on another site
+cannot do. The page writes only the orders files of the server's folder, the starter
+prompt and schema files an operation creates inside that folder, and the prompt
+templates of the flow's agent steps that a rename changes; never a file outside the
+folder or under its `.hetman` directory. It never creates a new orders file.
 
 The card of a step that asks shows the files to look at, the questions, and, while
 they are open, a form: yes or no and a comment for each question of a gate; the

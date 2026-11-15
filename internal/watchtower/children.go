@@ -1,6 +1,7 @@
 package watchtower
 
 import (
+	"strconv"
 	"strings"
 
 	"hetman/internal/chronicle"
@@ -92,10 +93,25 @@ func (s *Server) childTiles(col *Column, o *orders.Orders, events []chronicle.Ev
 			if len(ch.Needs) > 0 {
 				t.Note, t.Args = "page.tile.child.needs", map[string]string{"items": strings.Join(ch.Needs, ", ")}
 			}
+		case ch.KeptFrom > 0:
+			t.Status, t.Note, t.Args = StatusPassed, "page.tile.child.kept", map[string]string{"n": strconv.Itoa(ch.KeptFrom)}
 		default:
 			driven, _ := engine.Driven(o, ch.ID)
 			t.Status, t.Node, t.Note, t.Args = childTileStatus(ch.State, driven)
 			t.Attempts = ch.State.Attempts[ch.State.Node]
+		}
+		t.Attempt = ch.Attempt
+		tiles = append(tiles, t)
+	}
+	// The children of earlier attempts stay on the page; they are never
+	// driven again.
+	earlier, _ := engine.EarlierChildren(s.Chron, events, col.Node)
+	for _, ch := range earlier {
+		t := Tile{Item: ch.Item, Child: ch.ID, Outcome: ch.Outcome, Attempt: ch.Attempt, Earlier: true,
+			Note: "page.tile.child.earlier", Args: map[string]string{"n": strconv.Itoa(ch.Attempt)}}
+		t.Status, _, _, _ = childTileStatus(ch.State, false)
+		if t.Status == StatusRunning || t.Status == StatusWaiting || t.Status == StatusAsking {
+			t.Status = StatusInterrupted
 		}
 		tiles = append(tiles, t)
 	}

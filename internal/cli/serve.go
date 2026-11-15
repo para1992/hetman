@@ -36,6 +36,7 @@ func (c *command) serve(addr string) int {
 	defer srv.Close()
 	srv.Log = c.stdout
 	srv.Lang = c.p.Lang()
+	srv.Language = languageFor
 	if host, _, err := net.SplitHostPort(addr); err == nil && host != "" {
 		srv.Hosts = []string{host}
 	}

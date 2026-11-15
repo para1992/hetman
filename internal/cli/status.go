@@ -275,10 +275,26 @@ func (c *command) printChildren(tw io.Writer, events []chronicle.Event, node, in
 			continue
 		}
 		status, detail := childStatus(p, ch.State, c.childDriven(ch.ID))
+		if ch.KeptFrom > 0 {
+			status, detail = p.T("status.st.finished"), p.T("status.child.kept", "outcome", ch.Outcome, "n", ch.KeptFrom)
+		}
 		fmt.Fprintf(tw, "%s%s\t%s\t%s\t%s\t\t\t\n", indent, name, p.T("status.child.campaign", "id", ch.ID), status, detail)
 		if ch.State.End == "" && ch.State.Running {
 			c.printChildren(tw, ch.Events, ch.State.Node, indent+"  ", depth+1)
 		}
+	}
+	earlier, _ := engine.EarlierChildren(c.chron, events, node)
+	for _, ch := range earlier {
+		name := p.T("status.child.segment")
+		if ch.Item != "" {
+			name = p.T("status.child.item", "item", ch.Item)
+		}
+		state := ch.State.End
+		if state == "" {
+			state = p.T("status.d.at", "node", ch.State.Node)
+		}
+		fmt.Fprintf(tw, "%s%s\t%s\t%s\t%s\t\t\t\n", indent, name, p.T("status.child.campaign", "id", ch.ID),
+			p.T("status.child.earlier", "n", ch.Attempt), state)
 	}
 }
 

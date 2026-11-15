@@ -227,6 +227,9 @@ nodes:
 	if halt := w.call(1, "halt", "-c", "2"); !strings.Contains(halt, "halt or resume campaign 1") {
 		t.Fatalf("halting the child directly:\n%s", halt)
 	}
+	if retry := w.call(1, "retry", "-c", "2"); !strings.Contains(retry, "campaign 2 is run by campaign 1; retry or rewind campaign 1") {
+		t.Fatalf("retrying the child directly:\n%s", retry)
+	}
 	answered := w.call(0, "answer", "-a", "why=fine", "-outcome", "go")
 	if !strings.Contains(answered, "answers recorded for campaign 1 at pick") {
 		t.Fatalf("answer:\n%s", answered)

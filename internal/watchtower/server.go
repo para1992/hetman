@@ -1,6 +1,8 @@
 // Package watchtower serves the web page that shows the campaigns of one
 // orders file live, and lets a person halt and resume them and answer the
-// questions a campaign asks.
+// questions a campaign asks. It also starts campaigns, retries and rewinds
+// them, and changes the flow through the operations of the orders editor
+// (control.go).
 //
 // Everything shown is derived from the chronicle, as the command line does.
 // The page is kept current with server-sent events; changes are noticed by
@@ -34,6 +36,7 @@ import (
 	"hetman/internal/i18n"
 	"hetman/internal/language"
 	"hetman/internal/orders"
+	"hetman/internal/scribe"
 )
 
 //go:embed assets
@@ -62,6 +65,13 @@ type Server struct {
 	// Lang is the language the page starts in and the progress lines are
 	// written in; empty for English.
 	Lang string
+	// Language gives the code of the language for the person a campaign
+	// started now gets, as the run command decides it; nil uses the
+	// language key of the orders.
+	Language func(*orders.Orders) (string, error)
+	// NewModel makes the model a sentence to Scribe is sent to; nil asks
+	// the executor and model the orders name for Scribe.
+	NewModel func(*orders.Orders) scribe.Model
 
 	ctx    context.Context
 	drives sync.WaitGroup
@@ -185,6 +195,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/campaigns/{id}/resume", s.control(s.handleResume))
 	mux.HandleFunc("GET /api/campaigns/{id}/show", s.handleShow)
 	mux.Handle("POST /api/campaigns/{id}/answer", s.control(s.handleAnswer))
+	s.controlRoutes(mux)
 	return s.guard(mux)
 }
 

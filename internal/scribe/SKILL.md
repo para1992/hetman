@@ -348,7 +348,7 @@ nodes:
   campaigns or other hetman processes using the same folder. Locks used inside a
   segment must sort after the locks of the node that runs that segment (rename them,
   for example with a prefix, so they do); `hetman check` says so when they do not.
-- People answer, halt and resume a segment through the campaign that runs it.
+- People answer, halt, resume, retry and rewind a segment through the campaign that runs it. A retried for-each runs only the items that did not reach done.
 
 ### Tasks and the dispatcher
 

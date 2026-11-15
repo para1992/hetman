@@ -72,6 +72,9 @@ explain.item_finished: "{node}: item {item} (campaign {child}) ended {outcome}."
 explain.item_not_run_failed: "{node}: item {item} was not run: it needs {needs}, which failed."
 explain.item_not_run_not_run: "{node}: item {item} was not run: it needs {needs}, which did not run."
 explain.lock_waited: "{node} waited for the lock {lock}, held by {holder}."
+explain.item_kept: "{node} kept item {item} (campaign {child}), done in an earlier attempt."
+explain.child_retried: "{node} ran its segment again in campaign {child}, from its failed step {at}."
+explain.retried_child: "{who}{via} retried campaign {child} at {node}; the campaign continues its running step."
 explain.nothing_ran_at: Nothing ran at {node}.
 explain.nothing_ran: Nothing has run yet.
 explain.never_back_to: The flow never went back to {node}.
@@ -213,6 +216,8 @@ engine.item_finished: "{node}: item {item} {outcome} (campaign {child})"
 engine.item_not_run_failed: "{node}: item {item} will not run: needs {needs}, which failed"
 engine.item_not_run_not_run: "{node}: item {item} will not run: needs {needs}, which did not run"
 engine.foreach_finished: "{node} finished: {outcome} ({done} of {n} item(s) done, {took})"
+engine.item_kept: "{node}: item {item} is kept from attempt {attempt} (campaign {child}, done)"
+engine.segment_retried: "{node} retries its campaign {child} at {at}"
 
 # ---- the command line
 
@@ -225,6 +230,8 @@ cli.usage: |
     status   show where a campaign is
     halt     halt a campaign after its current step
     resume   continue a halted, stopped or interrupted campaign
+    retry    run the failed step of a campaign again with a fresh attempt budget
+    rewind   send a campaign back to a node it visited; the steps after it run again
     answer   answer the questions a campaign asks a person
     serve    show every campaign live on a web page (Watchtower)
     task     queue internal tasks, list, show and cancel them, check the routing
@@ -236,12 +243,16 @@ cli.usage: |
              (hetman scribe help lists it all)
     version  print the version of hetman
 
-  flags (check, run, status, halt, resume, serve):
+  flags (check, run, status, halt, resume, retry, rewind, serve):
     -f FILE  orders file (default orders.yaml)
   flags (run):
     -input FILE  JSON file with the run input, an object prompt templates can refer to
-  flags (status, halt, resume, answer):
+  flags (status, halt, resume, retry, rewind, answer):
     -c ID    campaign id (default: the latest campaign)
+  flags (retry, rewind):
+    -by NAME  who asks (default: the user name of this computer)
+  flags (rewind):
+    -to NODE  the node to go back to; the campaign must have visited it
   flags (answer; without -a, -comment and -outcome it asks in the terminal):
     -a ID=ANSWER       answer one question (yes or no, an option, or text); repeat for each
     -comment ID=TEXT   comment on one answer; repeat as needed
@@ -260,7 +271,7 @@ cli.usage: |
     HETMAN_LANGUAGE=CODE  the language for the person, overriding the language key of the orders
                           for campaigns started now; a campaign keeps the language it started with
 
-  exit codes of run and resume: 0 done, 1 failed, 3 halted, 4 error, 5 waiting for a person, 130 interrupted
+  exit codes of run, resume, retry and rewind: 0 done, 1 failed, 3 halted, 4 error, 5 waiting for a person, 130 interrupted
 cli.unknown_command: "hetman: unknown command {command}"
 cli.unexpected_argument: "hetman {command}: unexpected argument {arg}"
 cli.orders_rejected: "orders rejected: {n} problem(s)"
@@ -401,6 +412,8 @@ status.child.halted: before {node}
 status.child.lock: "{lock} at {node} (held by {holder})"
 status.child.waiting: "{wait} at {node}"
 status.child.running: "{node} (attempt {attempt})"
+status.child.kept: "{outcome} (kept from attempt {n})"
+status.child.earlier: "attempt {n}, not run again"
 status.waiter.at: "{path} (campaign {id})"
 status.waiter.asking: "{at} waits for a person at {node}: hetman answer"
 status.waiter.error: "{at} stopped in the error state: {error}"
@@ -736,6 +749,9 @@ page.tile.child.why_not_run: needs {item}, which did not run
 page.tile.child.needs: needs {items}
 page.tile.child.error: "error: {error}"
 page.tile.child.halted: halted
+page.tile.child.kept: kept from attempt {n}
+page.tile.child.attempt: attempt {n}
+page.tile.child.earlier: earlier attempt {n}, not run again
 page.child.runs_this: "{parent} runs this one at {path}"
 page.child.parent: "↑ campaign #{id}"
 page.child.part_of: "(part of {top})"
@@ -829,6 +845,141 @@ flag.err.twice: "{id} is given twice"
 flag.err.on: use OUTCOME=TARGET
 cli.input_not_object: "must hold one JSON object: {error}"
 cli.input_null: must hold one JSON object, not null
+
+# ---- retry and rewind (hetman retry, hetman rewind, the page)
+
+engine.refuse.driven: "campaign {id} is being driven by a process; halt it first (hetman halt -c {id}), then retry or rewind once it has halted"
+engine.refuse.nothing_failed: "campaign {id} has nothing to retry: it did not end in failed, is not stopped in the error state and its current step has not failed; rewind sends it back to a node it visited"
+engine.refuse.not_visited: "campaign {id} has never been at {node}; it can only be sent back to a node it has visited"
+engine.refuse.not_in_orders: "{node} is not in the orders {path} now"
+engine.refuse.child: "campaign {id} is run by campaign {top}; retry or rewind campaign {top}"
+engine.refuse.child_driven: "campaign {id} cannot be sent back while its child campaign {child} is being driven by a process; halt it first (hetman halt -c {id}), then retry or rewind once it has halted"
+explain.where.retried: "{who}{via} asked at {at} for {node} to run again with a fresh attempt budget; it has not started since."
+explain.where.rewound: "{who}{via} sent it back to {node} at {at}; {node} and every step after it run again."
+explain.retried: "{who}{via} asked for {node} to run again with a fresh attempt budget."
+explain.rewound: "{who}{via} sent the campaign back to {node}; the steps after it run again."
+cli.retry_done: campaign {id} runs {node} again with a fresh attempt budget
+cli.rewind_done: campaign {id} is sent back to {node}; the steps after it run again
+cli.rewind_needs_to: "hetman rewind: give the node to go back to with -to NODE"
+flag.again_by: "who asks (default: the user name of this computer)"
+flag.to: the node to go back to; the campaign must have visited it
+
+# ---- the page: starting a campaign, retry and rewind, the flow editor
+
+page.cancel: Cancel
+page.start.button: Start a campaign
+page.start.title: Start a campaign
+page.start.flow: Orders file
+page.start.language: "Language for the person:"
+page.start.language_fact: "language for the person {language}"
+page.start.no_language: none (English, no language instruction)
+page.start.input: Run input
+page.start.input_placeholder: '{"ticket": "ABC-1"}'
+page.start.input_hint: One JSON object that prompt templates and scripts can read; leave it empty for none. The last input of each orders file is kept in this browser.
+page.start.not_json: "The run input is not JSON: {error}"
+page.start.not_object: The run input must be one JSON object, not a list, a number, a text or null.
+page.start.problems: "The orders do not pass the check; nothing was started:"
+page.start.go: Start
+page.start.starting: Starting…
+page.start.started: Campaign {id} started. This server drives it.
+page.retry: Retry
+page.retry.title: Run {node} again with a fresh attempt budget, then continue
+page.retry.none: Nothing failed to retry
+page.rewind: Rewind to {node}
+page.rewind.title: Send the campaign back to {node}; {node} and every step after it run again
+page.rewind.confirm: "Send the campaign back to {node}? {node} and every step after it run again. Earlier attempts, answers and outcomes stay in the chronicle; files in the work folder stay as they are."
+page.rewind.driven: A process drives the campaign now; halt it first.
+page.return.retried: "{who} asked for this step to run again with a fresh attempt budget{via}, {at}."
+page.return.rewound: "{who} sent the campaign back to this step{via}, {at}."
+page.return.who: A person
+page.toast.retry_done: Retrying {node}. This server now drives the campaign.
+page.toast.rewind_done: Sent back to {node}. This server now drives the campaign.
+page.toast.retry_failed: "retry refused: {error}"
+page.toast.rewind_failed: "rewind refused: {error}"
+page.col.budget: "attempt budget: {used} of {max} used"
+page.col.again: ran before the latest return
+page.col.again_title: This step ran before the campaign was last sent back; it runs again when the flow reaches it.
+page.flow.edit: Flow {file}
+page.flow.edit_title: Show and change the flow of {file}
+page.flow.title: Flow
+page.flow.hint: Choose a step to change it. Every change is shown first and written only when you confirm it.
+page.flow.cannot_read: "Cannot read the flow: {error}"
+page.flow.no_node: There is no node {node} in this file now.
+page.flow.active:
+  one: "One campaign of these orders has not ended ({ids}): it reads the changed file when it continues."
+  other: "{n} campaigns of these orders have not ended ({ids}): they read the changed file when they continue."
+page.scribe.label: Tell Scribe
+page.scribe.placeholder: add a gate with the lint check after build
+page.scribe.hint: One sentence becomes one change, shown below for you to confirm. The sentence is sent to the model named in the orders only when you press the button.
+page.scribe.ask: Ask Scribe
+page.scribe.asking: Asking…
+page.scribe.unclear: "The sentence can mean different things. Did you mean:"
+page.scribe.invalid: "Scribe could not use the model's answer; nothing was changed: {error}"
+page.scribe.failed: "Scribe could not ask the model; nothing was changed: {error}"
+page.edit.operations: Changes
+page.edit.show: Show the change
+page.edit.nothing_yet: Nothing is written yet.
+page.edit.change: The change
+page.edit.cannot: "This change cannot be made: {error}"
+page.edit.already: The file already says this; there is nothing to write.
+page.edit.warnings: "Warnings:"
+page.edit.problems: "The changed orders do not pass the check, so nothing can be written:"
+page.edit.refused: "The page does not write this change:"
+page.edit.confirm: Write the change
+page.edit.writing: Writing…
+page.edit.written: The change is written to {file}.
+page.edit.unchanged: "{file} already says this; nothing was written."
+page.edit.not_written: "Nothing was written: {error}"
+page.edit.stale: The file changed since the change was shown; show the change again.
+page.op.add_after: Add a step after this one
+page.op.add_before: Add a step before this one
+page.op.add_gate: Add a gate after this one
+page.op.remove: Remove this node
+page.op.rename: Rename
+page.op.link: Change a transition
+page.op.unlink: Remove a transition
+page.op.timeout: Set the timeout
+page.op.agent: Change an agent setting
+page.op.ask: Add a question
+page.op.gate_add: Add a check to this gate
+page.op.gate_remove: Remove a check from this gate
+page.op.soft: Mark a check soft or required
+page.field.type: Type
+page.field.node: Name of the new node
+page.field.run: Command
+page.field.checks: Checks
+page.field.executor: Executor
+page.field.model: Model
+page.field.outcomes: Outcomes
+page.field.starters: Create starter prompt and schema files
+page.field.via: After the outcome
+page.field.main_outcome: the main outcome
+page.field.name: New name
+page.field.outcome: Outcome
+page.field.target: Leads to
+page.field.value: Value
+page.field.field: Setting
+page.field.id: Question id
+page.field.question: Question
+page.field.kind: Kind of answer
+page.field.options: Options
+page.field.check: Check
+page.field.at: Position
+page.field.soft: The check
+page.field.value.soft: soft (only warns)
+page.field.value.required: required (blocks the gate)
+page.field.hint.run: The program and its arguments, as on the command line; quotes keep spaces inside an argument.
+page.field.hint.outcomes: Separated by commas; an agent step without outcomes gets ok.
+page.field.hint.via: Which outcome of this step leads to the new one.
+page.field.hint.value: A duration such as 30s, 5m or 1h; empty removes the setting.
+page.field.hint.at: From 1; empty for the end.
+page.field.hint.starters: Only files that do not exist yet are created, next to the orders.
+page.field.hint.options: Separated by commas.
+page.kv.type: Type
+page.kv.run: Command
+page.kv.timeout: Timeout
+page.kv.attempts: Attempts
+page.kv.questions: Questions
 
 # ---- tasks and the dispatcher (hetman task, hetman dispatch, the Tasks tab)
 

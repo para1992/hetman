@@ -42,18 +42,44 @@ func (e *Engine) compositeStep(ctx context.Context, node *orders.Node, attempt i
 	if !resumed {
 		ev := chronicle.Event{Kind: chronicle.StepStarted, Node: node.ID, Attempt: attempt}
 		problem := ""
+		var kept map[string]int64
+		var prev *chronicle.Event
 		if node.Type == orders.ForEach {
-			list, err := e.readItems(node, events)
-			if err != nil {
-				problem = err.Error()
-			} else {
-				ev.Items = list
+			// A retry runs the list of the attempt before again and keeps the
+			// items that reached done there.
+			if retriedVisit(events, node.ID) != nil {
+				if prev = previousAttempt(events, node.ID, attempt); prev != nil && len(prev.Items) > 0 {
+					ev.Items, kept = prev.Items, keptItems(events, node.ID, prev)
+				}
+			}
+			if ev.Items == nil {
+				list, err := e.readItems(node, events)
+				if err != nil {
+					problem = err.Error()
+				} else {
+					ev.Items = list
+				}
 			}
 		}
 		if err := e.record(ev); err != nil {
 			return err
 		}
 		e.say("engine.started", "node", node.ID, "attempt", attempt)
+		if len(kept) > 0 {
+			var list []Item
+			json.Unmarshal(ev.Items, &list)
+			for _, it := range list {
+				child, ok := kept[it.ID]
+				if !ok {
+					continue
+				}
+				e.say("engine.item_kept", "node", node.ID, "item", it.ID, "child", child, "attempt", prev.Attempt)
+				if err := e.record(chronicle.Event{Kind: chronicle.ItemKept, Node: node.ID, Attempt: attempt, Outcome: orders.Done,
+					Details: chronicle.Details{Item: it.ID, Child: child}}); err != nil {
+					return err
+				}
+			}
+		}
 		if problem != "" {
 			// The list cannot be run; the step fails with the reason, so the
 			// flow can lead back to the step that wrote it.
@@ -94,6 +120,12 @@ func (e *Engine) runSegment(ctx context.Context, node *orders.Node, attempt int,
 		}
 	}
 	if child == 0 {
+		var err error
+		if child, err = e.retrySegmentChild(node, attempt, events); err != nil {
+			return err
+		}
+	}
+	if child == 0 {
 		input, err := e.segmentInput(node, events)
 		if err != nil {
 			e.say("engine.composite_failed", "node", node.ID, "error", err)
@@ -130,6 +162,46 @@ const (
 	NotRunSkipped = "not_run" // an item it needs was not run
 )
 
+// retrySegmentChild continues the child of the attempt before when this
+// visit of a segment node is a retry and that child failed or stopped in the
+// error state: the child is retried at its own failed node and becomes the
+// child of this attempt. It returns 0 when a new child must start instead.
+func (e *Engine) retrySegmentChild(node *orders.Node, attempt int, events []chronicle.Event) (int64, error) {
+	retried := retriedVisit(events, node.ID)
+	prev := previousAttempt(events, node.ID, attempt)
+	if retried == nil || prev == nil {
+		return 0, nil
+	}
+	var child int64
+	for _, ev := range events {
+		if ev.Kind == chronicle.ChildStarted && ev.Node == node.ID && ev.Attempt == prev.Attempt {
+			child = ev.Child
+		}
+	}
+	if child == 0 {
+		return 0, nil
+	}
+	cevents, err := e.Chron.Events(child)
+	if err != nil {
+		return 0, err
+	}
+	cst := chronicle.Replay(cevents)
+	at := RetryNode(cevents)
+	if (cst.End != orders.Failed && cst.Error == "") || at == "" || node.Segment.Nodes[at] == nil {
+		return 0, nil
+	}
+	if _, err := e.Chron.Append(chronicle.Event{Campaign: child, Kind: chronicle.Retried, Node: at,
+		Details: chronicle.Details{By: retried.By, Via: retried.Via}}); err != nil {
+		return 0, err
+	}
+	if err := e.record(chronicle.Event{Kind: chronicle.ChildStarted, Node: node.ID, Attempt: attempt, Outcome: chronicle.Retried,
+		Details: chronicle.Details{Child: child, To: at}}); err != nil {
+		return 0, err
+	}
+	e.say("engine.segment_retried", "node", node.ID, "child", child, "at", at)
+	return child, nil
+}
+
 // childDone is how the drive of one child of a for-each ended.
 type childDone struct {
 	item  string
@@ -160,6 +232,8 @@ func (e *Engine) runForEach(ctx context.Context, node *orders.Node, attempt int,
 			child[ev.Item] = ev.Child
 		case chronicle.ItemFinished:
 			outcome[ev.Item] = ev.Outcome
+		case chronicle.ItemKept:
+			outcome[ev.Item], child[ev.Item] = orders.Done, ev.Child
 		case chronicle.ItemNotRun:
 			notRun[ev.Item] = true
 		}

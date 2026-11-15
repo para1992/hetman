@@ -149,24 +149,31 @@ var pageKey = regexp.MustCompile(`'(page\.[a-z0-9_.]*)'`)
 
 func TestPageTexts(t *testing.T) {
 	en := Catalogues()[Source]
-	src, err := os.ReadFile(filepath.FromSlash("../watchtower/assets/app.js"))
-	if err != nil {
-		t.Fatal(err)
+	scripts, err := filepath.Glob(filepath.FromSlash("../watchtower/assets/*.js"))
+	if err != nil || len(scripts) == 0 {
+		t.Fatalf("no scripts of the page: %v", err)
 	}
-	for i, line := range strings.Split(string(src), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "//") || strings.Contains(line, keep) {
-			continue
+	for _, path := range scripts {
+		src, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
 		}
-		for _, re := range pageStray {
-			if m := re.FindString(line); m != "" {
-				t.Errorf("app.js:%d: text outside the catalogue: %s", i+1, m)
+		name := filepath.Base(path)
+		for i, line := range strings.Split(string(src), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "//") || strings.Contains(line, keep) {
+				continue
 			}
-		}
-		for _, m := range pageKey.FindAllStringSubmatch(line, -1) {
-			if k := m[1]; !strings.HasSuffix(k, ".") {
-				if _, ok := en[k]; !ok {
-					t.Errorf("app.js:%d: key %s is not in the English catalogue", i+1, k)
+			for _, re := range pageStray {
+				if m := re.FindString(line); m != "" {
+					t.Errorf("%s:%d: text outside the catalogue: %s", name, i+1, m)
+				}
+			}
+			for _, m := range pageKey.FindAllStringSubmatch(line, -1) {
+				if k := m[1]; !strings.HasSuffix(k, ".") {
+					if _, ok := en[k]; !ok {
+						t.Errorf("%s:%d: key %s is not in the English catalogue", name, i+1, k)
+					}
 				}
 			}
 		}

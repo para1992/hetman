@@ -8,6 +8,15 @@
   const app = document.getElementById('app');
   const SVG = 'http://www.w3.org/2000/svg';
 
+  // The controls that change state (control.js) plug in through these
+  // hooks and use the helpers listed at the end.
+  const W = window.Watchtower = {
+    hooks: {
+      listTop: () => null, campaignButtons: () => null, cardTop: () => [], columnNote: () => null,
+      openFlow: () => {}, renderFlow: () => {},
+    },
+  };
+
   // ---- small DOM helpers -------------------------------------------------
 
   function h(tag, attrs, ...kids) {
@@ -253,6 +262,7 @@
       const tab = ['pipeline', 'timeline', 'chronicle', 'words'].includes(parts[2]) ? parts[2] : 'pipeline';
       return { view: 'campaign', id: Number(parts[1]), tab: tab, node: tab === 'pipeline' ? parts[3] || '' : '' };
     }
+    if (parts[0] === 'flow' && parts[1]) return { view: 'flow', file: parts[1], node: parts[2] || '' };
     if (parts[0] === 'tasks') return { view: 'tasks' };
     return { view: 'list' };
   }
@@ -269,7 +279,7 @@
     const lists = (v) => v === 'list' || v === 'tasks';
     if (lists(prev.view) && lists(S.route.view)) {
       render();
-    } else if (prev.view !== S.route.view || prev.id !== S.route.id) {
+    } else if (prev.view !== S.route.view || prev.id !== S.route.id || prev.file !== S.route.file) {
       S.campaign = null;
       S.events = [];
       S.open.clear();
@@ -277,6 +287,7 @@
       closeLogs();
       app.replaceChildren(h('p', { class: 'empty', text: t('page.loading') }));
       connect();
+      if (S.route.view === 'flow') W.hooks.openFlow(S.route.file);
     } else {
       if (prev.node !== S.route.node) closeLogs();
       render();
@@ -330,6 +341,7 @@
     const focusKey = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.fkey : '';
     const keep = saveScroll();
     if (S.route.view === 'list') renderList();
+    else if (S.route.view === 'flow') W.hooks.renderFlow();
     else if (S.route.view === 'tasks') renderTasks();
     else if (S.campaign) renderCampaign();
     restoreScroll(keep);
@@ -423,7 +435,7 @@
     document.title = t('page.brand');
     if (!S.list) return;
     if (S.list.length === 0) {
-      app.replaceChildren(listTabs('list') || h('h1', { text: t('page.list.title') }),
+      app.replaceChildren(listTabs('list') || h('h1', { text: t('page.list.title') }), W.hooks.listTop(),
         h('p', { class: 'empty' }, tn('page.list.empty', { command: h('code', { text: 'hetman run' }) }))); // i18n: keep (a command)
       return;
     }
@@ -437,7 +449,7 @@
         h('td', { class: 'num dur' }, liveDur(k.started, k.ended)),
         h('td', { class: 'marks' }, miniPipe(k)));
     });
-    app.replaceChildren(listTabs('list') || h('h1', { text: t('page.list.title') }),
+    app.replaceChildren(listTabs('list') || h('h1', { text: t('page.list.title') }), W.hooks.listTop(),
       h('table', { class: 'list' },
         h('thead', null, h('tr', null, ['campaign', 'flow', 'state', 'started', 'duration', 'steps'].map((c) => h('th', { text: t('page.list.col.' + c) })))),
         h('tbody', null, rows)));
@@ -495,7 +507,8 @@
             t('page.halt')),
           h('button', { class: 'btn primary', 'data-fkey': 'resume', disabled: !canResume, title: t('page.resume.title'), onclick: () => control('resume') },
             sv('svg', { viewBox: '0 0 16 16', 'aria-hidden': 'true' }, sv('path', { d: 'M4.5 2.8v10.4L13 8z' })),
-            t('page.resume')))),
+            t('page.resume')),
+          W.hooks.campaignButtons(c))),
       h('div', { class: 'facts' },
         h('span', null, tn('page.fact.started', { time: h('b', { text: fmtTime(c.started) }) })),
         h('span', null, tn('page.fact.duration', { time: h('b', null, liveDur(c.started, c.ended)) })),
@@ -617,7 +630,7 @@
     const head = h('div', { class: 'col-head' },
       h('span', { class: 'name', title: col.node, text: col.node }),
       h('span', { class: 'tag', text: col.known ? col.type : t('page.not_in_orders') }));
-    const tiles = h('div', { class: 'tiles' }, col.tiles.map((t, i) => tile(c, col, t, i, last)));
+    const tiles = h('div', { class: 'tiles' }, col.tiles.map((t, i) => tile(c, col, t, i, last)), W.hooks.columnNote(c, col));
     const exits = (col.exits || []).filter((x) => !x.main).map((x) =>
       h('div', { class: 'exit' + (x.taken ? ' taken' : ''), title: x.taken ? t('page.exit.taken', { n: x.taken }) : t('page.exit.not_taken') },
         x.outcome, h('span', { class: 'arrow', text: '→' }), x.to, x.taken ? ' ×' + x.taken : ''));
@@ -639,6 +652,7 @@
       // A child campaign of a segment or for-each step; it opens the child.
       label = t.item || tt('page.child.campaign', { id: t.child });
       if (t.item && t.child) tag = h('span', { class: 'tag', text: '#' + t.child });
+      if (col.attempts > 1 && t.attempt && !t.earlier) sub.push(tt('page.tile.child.attempt', { n: t.attempt }));
       if (t.outcome) sub.push(t.outcome);
       else if (t.node) sub.push(t.node);
       const note = t.note ? tt(t.note, t.args) : '';
@@ -681,7 +695,7 @@
     return h('button', {
       class: 'tile st-' + t.status, type: 'button', 'data-fkey': 'tile-' + col.node + '-' + i,
       title: col.node + (t.check ? ' / ' + t.check : '') + ': ' + statusText(t.status),
-      onclick: () => { location.hash = href(c.id, 'pipeline', col.node); },
+      onclick: () => { location.hash = c.nodeHref ? c.nodeHref(col.node) : href(c.id, 'pipeline', col.node); },
     },
     mark(t.status),
     h('span', { class: 'label', text: label }),
@@ -712,6 +726,7 @@
     const attempts = (c.nodes[node] || []).slice().reverse();
     const status = col ? col.status : attempts.length ? attempts[0].status : 'notrun';
     const body = h('div', { class: 'card-body', 'data-scroll': 'card' });
+    body.append(...W.hooks.cardTop(c, node));
     if (col && col.exits && col.exits.length) {
       body.append(h('h3', { text: t('page.card.transitions') }), h('div', { class: 'routes' }, col.exits.map((x) =>
         h('span', { class: 'tag' }, x.outcome + ' → ' + x.to + (x.taken ? ' ' + t('page.card.taken', { n: x.taken }) : '')))));
@@ -1126,6 +1141,8 @@
     const c = S.campaign;
     if (S.route.view === 'campaign' && S.route.tab === 'timeline' && c && !c.ended) render();
   }, 1000);
+
+  Object.assign(W, { lang: () => I.lang, app, S, h, sv, t, tn, tk, mark, toast, render, details, href, pipeline, legend, column, kv, fmtTime, statusText });
 
   window.addEventListener('hashchange', onRoute);
   loadTexts(savedLang()).catch(() => { /* English keys are shown */ }).then(onRoute);

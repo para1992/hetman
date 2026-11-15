@@ -12,10 +12,15 @@ func TestUkrainianCampaign(t *testing.T) {
 	t.Setenv(languageEnv, "uk")
 	w := newAskingWorld(t)
 	engineProc, out := w.process("run")
-	defer func() {
-		engineProc.Process.Kill()
-		engineProc.Wait()
-	}()
+	stopped := false
+	stop := func() {
+		if !stopped {
+			stopped = true
+			engineProc.Process.Kill()
+			engineProc.Wait()
+		}
+	}
+	defer stop()
 	w.waitAsked(0)
 	code, answered, errOut := runIn(t, "answer", "-f", w.orders, "-a", "scope=no", "-a", "risk=yes", "-by", "olena")
 	if code != exitDone || !strings.Contains(answered, "відповіді записано: похід 1, крок g") ||
@@ -60,9 +65,9 @@ func TestUkrainianCampaign(t *testing.T) {
 		}
 	}
 
-	// The engine still writes to out; stop it before reading.
-	engineProc.Process.Kill()
-	engineProc.Wait()
+	// The output buffer is written by the process until it exits, so it
+	// is read only after the engine is stopped.
+	stop()
 	progress := out.String()
 	for _, want := range []string{"похід 1 розпочато (потік test, мова uk Ukrainian (українська))", "[1] a: спроба 1 почалася",
 		"[1] a -> g", "[1] g чекає на людину (2 запитання); відповісти: hetman answer"} {
