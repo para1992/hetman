@@ -333,6 +333,60 @@ func (e *editing) inputUnset() error {
 	return nil
 }
 
+// startLabelKey is the top-level key that names the work a person starts.
+const startLabelKey = "start_label"
+
+// startLabel names the work a person starts, as one text or per language,
+// the way input-set writes a field label.
+func (e *editing) startLabel() error {
+	op := e.op
+	if strings.TrimSpace(op.Value) == "" {
+		return fmt.Errorf("start-label needs a text, such as New task")
+	}
+	if err := checkLanguage(op.Language); err != nil {
+		return err
+	}
+	root := e.root()
+	_, cur := lookup(root, startLabelKey)
+	switch {
+	case op.Language == "" && cur != nil && cur.Kind == yaml.MappingNode:
+		return fmt.Errorf("the start label is written per language (%s); name the language", strings.Join(keys(cur), ", "))
+	case op.Language == "":
+		e.set(root, startLabelKey, str(op.Value), topOrder)
+	case cur != nil && cur.Kind == yaml.MappingNode:
+		e.set(cur, op.Language, str(op.Value), nil)
+	case cur != nil && cur.Kind == yaml.ScalarNode && op.Language != language.Default:
+		// The text written for every language is kept as the English one.
+		e.set(root, startLabelKey, mapping(true, str(language.Default), str(cur.Value), str(op.Language), str(op.Value)), topOrder)
+	default:
+		e.set(root, startLabelKey, words(op.Value, op.Language), topOrder)
+	}
+	return nil
+}
+
+// startUnlabel removes the start label, or its text in one language.
+func (e *editing) startUnlabel() error {
+	op := e.op
+	if err := checkLanguage(op.Language); err != nil {
+		return err
+	}
+	root := e.root()
+	_, cur := lookup(root, startLabelKey)
+	switch {
+	case cur == nil:
+		return nil
+	case op.Language == "":
+		e.unset(root, startLabelKey)
+	case cur.Kind != yaml.MappingNode:
+		return fmt.Errorf("the start label is one text for every language; remove it without language")
+	case len(cur.Content) == 2 && cur.Content[0].Value == op.Language:
+		e.unset(root, startLabelKey)
+	default:
+		e.unset(cur, op.Language)
+	}
+	return nil
+}
+
 // inputWords describes an operation on the run input.
 func inputWords(p *i18n.Printer, op Op) string {
 	field := p.T("op.words.input_field", "name", op.Name)

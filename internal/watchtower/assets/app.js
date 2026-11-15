@@ -13,7 +13,7 @@
   const W = window.Watchtower = {
     hooks: {
       listTop: () => null, campaignButtons: () => null, cardTop: () => [], columnNote: () => null,
-      openFlow: () => {}, renderFlow: () => {},
+      openFlow: () => {}, renderFlow: () => {}, campaignNote: () => null, afterRender: () => {},
     },
   };
 
@@ -343,16 +343,30 @@
   function render() {
     const focusKey = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.fkey : '';
     const keep = saveScroll();
-    if (S.route.view === 'list') renderList();
-    else if (S.route.view === 'flow') W.hooks.renderFlow();
-    else if (S.route.view === 'tasks') renderTasks();
-    else if (S.route.view === 'roles') renderRoles();
-    else if (S.campaign) renderCampaign();
+    try {
+      if (S.route.view === 'list') renderList();
+      else if (S.route.view === 'flow') W.hooks.renderFlow();
+      else if (S.route.view === 'tasks') renderTasks();
+      else if (S.route.view === 'roles') renderRoles();
+      else if (S.campaign) renderCampaign();
+    } catch (e) {
+      failed(e);
+      return;
+    }
     restoreScroll(keep);
     if (focusKey) {
       const el = app.querySelector('[data-fkey="' + CSS.escape(focusKey) + '"]');
       if (el) el.focus({ preventScroll: true });
     }
+    W.hooks.afterRender();
+  }
+
+  // failed shows a view that could not be rendered as a message on the
+  // page, never as a blank area; the details go to the console.
+  function failed(e) {
+    console.error(e);
+    app.replaceChildren(h('nav', { class: 'crumbs' }, h('a', { href: '#/', text: '← ' + t('page.all_campaigns') })),
+      h('div', { class: 'problem', role: 'alert', text: t('page.view.failed', { error: (e && e.message) || String(e) }) }));
   }
 
   function saveScroll() {
@@ -481,8 +495,10 @@
     document.title = t('page.brand');
     if (!S.list) return;
     if (S.list.length === 0) {
-      app.replaceChildren(listTabs('list') || h('h1', { text: t('page.list.title') }), W.hooks.listTop(),
-        h('p', { class: 'empty' }, tn('page.list.empty', { command: h('code', { text: 'hetman run' }) }))); // i18n: keep (a command)
+      const top = W.hooks.listTop();
+      app.replaceChildren(listTabs('list') || h('h1', { text: t('page.list.title') }), top,
+        W.canStart && W.canStart() ? h('p', { class: 'empty', text: t('page.list.empty_start') })
+          : h('p', { class: 'empty' }, tn('page.list.empty', { command: h('code', { text: 'hetman run' }) }))); // i18n: keep (a command)
       return;
     }
     const rows = S.list.map((k) => {
@@ -563,6 +579,7 @@
           code: c.language.english ? ' ' + c.language.code : '' })) : null,
         pos ? h('span', null, pos) : null),
       c.error ? h('div', { class: 'problem' }, h('b', { text: t('page.error_state') + ' ' }), c.error, '\n' + t(c.hint === 'retry' ? 'page.error_fix_retry' : 'page.error_fix')) : null,
+      W.hooks.campaignNote(c),
       waitNote(c),
       c.ordersProblem ? h('div', { class: 'problem soft', text: c.ordersProblem }) : null,
       h('nav', { class: 'tabs' }, ['pipeline', 'timeline', 'chronicle', 'words'].map((x) =>

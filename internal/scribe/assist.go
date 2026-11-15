@@ -348,6 +348,7 @@ const fieldHelp = `  node: a node id (for new and add: the new node's id); type:
   kind one of text, longtext, number, yesno, choice, list, objects; label and hint what the person reads (in language when given),
   required true for a field that needs an answer, default its value when none is given (a list: items separated by commas),
   ask false for a fixed value that is never asked; field (input-set, input-unset) is label, hint, required, default or ask;
+  value (start-label): the short name of the work a person starts, such as New task, shown on the page's start button;
   language: the code of the language for the person, one of ` + "%s" + `.
 `
 

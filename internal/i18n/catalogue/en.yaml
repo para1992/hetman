@@ -1341,10 +1341,24 @@ op.words.input_set: "set the {what} of {field} to {value}"
 op.words.input_set_in: "set the {what} of {field} in the language {language} to {value}"
 op.words.input_unset: "remove the {what} of {field}"
 op.words.input_unset_in: "remove the {what} of {field} in the language {language}"
-page.input.hint: "Fill in the run input; fields marked * are required. The values last sent are kept in this browser."
+op.summary.start-label: "name the work a person starts, such as New task: the start button and form title of the web page; with language it is written per language"
+op.summary.start-unlabel: "remove the name of the work a person starts, so the page says start a campaign; with language only that language's text"
+op.words.start_label: "name the work a person starts {value}"
+op.words.start_label_in: "name the work a person starts {value} in the language {language}"
+op.words.start_unlabel: remove the name of the work a person starts
+op.words.start_unlabel_in: "remove the name of the work a person starts in the language {language}"
+page.input.hint: "Describe the work below and press the button at the bottom. Fields with * must be filled in. What you send is remembered in this browser for next time."
 page.input.remove: Remove
-page.input.add_item: Add an item
+page.input.list_hint: Write each one on its own line.
 page.input.item: "{label} {n}"
 page.input.remove_item: Remove this item
-page.input.add_object: "Add to {label}"
-page.input.problems: "The run input is not complete; nothing was started:"
+page.input.add_object: "+ Add another ({label})"
+page.input.add_first: "+ Add {label}"
+page.input.problems: "Some fields need attention; nothing was started yet:"
+page.start.flow_named: "Flow: {flow}"
+page.start.part_of: "part of {file}"
+page.start.part_of_title: "{file} runs this file as one of its steps; it is not started on its own."
+page.start.begun: "Work has started. The steps below run one after another and this page follows them as they go. You may close it: the work goes on while hetman serve keeps running."
+page.start.begun_close: Got it
+page.list.empty_start: No campaigns yet. Use the button above to start the first one.
+page.view.failed: "This part of the page could not be shown: {error}. Reload the page; if it happens again, the browser console has the details."

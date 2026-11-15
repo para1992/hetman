@@ -19,6 +19,7 @@
 version: 0
 flow: tasks-demo
 start: build-all
+start_label: {en: New tasks, uk: Нові завдання}   # the page's start button and form title
 
 input:
   project:

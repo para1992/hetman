@@ -1605,15 +1605,20 @@ sent the campaign back to it and when, and the plain-words tab tells it too.
 
 **Starting a campaign.** The list of campaigns has a Start button. It offers the
 orders file the server was started with and every other orders file in the same
-folder that passes the check, shows the language for the person the campaign will
-get, and takes the run input as a JSON object typed or pasted into the form. The page
+folder that passes the check (the choice is shown only when there is more than one),
+shows the language for the person the campaign will get when the orders set one, and
+takes the run input as a JSON object typed or pasted into the form. The page
 checks that it is one object before sending it, and remembers the last input of each
 orders file in that browser. The server checks the orders and their programs as
 `hetman run` does; their problems are shown instead of starting. For orders with an
 `input` section (see Starting work without writing JSON) the page shows a form made
-from it instead: a field per entry, items of a list added and removed in the page;
-the server checks the result with the same code as `hetman run` and names every field
-that does not fit.
+from it instead: a field per entry, a list of texts as one box with an item per line,
+a required list of objects opened with its first item; the server checks the result
+with the same code as `hetman run`, and each problem is shown next to the field it
+names. An orders file that another one in the folder runs as a segment is marked as
+part of it and not offered for starting. A top-level `start_label`, such as
+`start_label: {en: New task, uk: Нове завдання}` (one short line, or one per
+language), names the button and the form title; `hetman scribe start-label` sets it.
 
 **Editing the flow.** Each orders file of the folder has a Flow view: its pipeline,
 and for each node the operations of `hetman scribe` that make sense there (add a step
@@ -1875,6 +1880,9 @@ hetman scribe input-set NAME FIELD VALUE [-of LIST] [-language CODE]
                                              set its label, hint, required, default or ask
 hetman scribe input-unset NAME FIELD [-of LIST] [-language CODE]
                                              remove its label, hint or default
+hetman scribe start-label TEXT [-language CODE]
+                                             name the work a person starts, such as 'New task'
+hetman scribe start-unlabel [-language CODE] remove that name
 ```
 
 `TYPE` is `script`, `gate`, `agent`, `human`, `segment` or `foreach`. The node flags

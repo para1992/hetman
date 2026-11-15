@@ -295,7 +295,10 @@ nodes:
   language; the person's language is shown, else English, else the first written),
   `required`, `default` and `ask: false` (needs a default). Field names use letters,
   digits, `_` and `-`, no dots. An absent field gets its default. Declare the section
-  with the `input-*` operations below rather than by hand.
+  with the `input-*` operations below rather than by hand. A top-level `start_label`
+  (one short line, or one per language like a label), such as `{en: New task, uk:
+  Нове завдання}`, names the work a person starts: the page's start button and form
+  title say it instead of "Start a campaign". Set it with `start-label`.
 - **Language for the person.** `language: CODE` at the top level makes what the flow
   addresses to a person (questions, summaries, plans, other documents a person reads)
   come in that language, while code, comments, identifiers, commit messages, file
@@ -537,6 +540,10 @@ hetman scribe input-set NAME FIELD VALUE [-of LIST] [-language CODE]
                                              FIELD: label, hint, required, default or ask
 hetman scribe input-unset NAME FIELD [-of LIST] [-language CODE]
                                              FIELD: label, hint or default
+hetman scribe start-label TEXT [-language CODE]
+                                             name the work a person starts, such as 'New task':
+                                             the page's start button and form title
+hetman scribe start-unlabel [-language CODE] remove that name
 ```
 
 Node flags: `-run 'CMD ARGS'` (one string, split at spaces; quote an argument that has

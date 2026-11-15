@@ -61,6 +61,13 @@ type FlowFile struct {
 	// Input describes the run input as a form, in the language of the
 	// request; absent when the orders describe none.
 	Input []FormField `json:"input,omitempty"`
+	// StartLabel names the work a person starts with this file, such as
+	// New task, in the language of the request; empty when the orders give
+	// none.
+	StartLabel string `json:"startLabel,omitempty"`
+	// PartOf is the orders file of the folder that runs this one as a
+	// segment; such a file is not started on its own.
+	PartOf string `json:"partOf,omitempty"`
 
 	path string
 	o    *orders.Orders
@@ -73,7 +80,7 @@ func (s *Server) flowFiles() []FlowFile {
 	dir := filepath.Dir(s.OrdersPath)
 	own := filepath.Base(s.OrdersPath)
 	entries, _ := os.ReadDir(dir)
-	var out []FlowFile
+	out := []FlowFile{}
 	for _, e := range entries {
 		name := e.Name()
 		ext := strings.ToLower(filepath.Ext(name))
@@ -100,7 +107,50 @@ func (s *Server) flowFiles() []FlowFile {
 		out = append(out, f)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Own && !out[j].Own })
+	markSegments(out)
 	return out
+}
+
+// markSegments marks the files that another file of the list runs as a
+// segment, directly or through segments of its own, with that file.
+func markSegments(files []FlowFile) {
+	byPath := map[string]int{}
+	for i, f := range files {
+		byPath[cleanPath(f.path)] = i
+	}
+	for _, f := range files {
+		if f.o == nil {
+			continue
+		}
+		seen := map[*orders.Orders]bool{}
+		var walk func(o *orders.Orders)
+		walk = func(o *orders.Orders) {
+			if seen[o] {
+				return
+			}
+			seen[o] = true
+			for _, n := range o.Nodes {
+				if n.Segment == nil {
+					continue
+				}
+				if i, ok := byPath[cleanPath(n.Segment.Path)]; ok && files[i].File != f.File && files[i].PartOf == "" {
+					files[i].PartOf = f.File
+				}
+				walk(n.Segment)
+			}
+		}
+		walk(f.o)
+	}
+}
+
+func cleanPath(p string) string {
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
+	}
+	if real, err := filepath.EvalSymlinks(p); err == nil {
+		p = real
+	}
+	return filepath.Clean(p)
 }
 
 func (s *Server) flowFile(name string) (FlowFile, error) {
@@ -123,9 +173,13 @@ func (s *Server) handleFlows(w http.ResponseWriter, r *http.Request) {
 	files := s.flowFiles()
 	code := s.printer(r).Lang()
 	for i, f := range files {
-		if f.o != nil && f.o.Input != nil {
+		if f.o == nil {
+			continue
+		}
+		if f.o.Input != nil {
 			files[i].Input = formFields(f.o.Input.Fields, code)
 		}
+		files[i].StartLabel = f.o.StartLabel.In(code)
 	}
 	writeJSON(w, http.StatusOK, files)
 }
@@ -188,14 +242,25 @@ func (s *Server) handleFlow(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
 	}
-	fl := Flow{FlowFile: f, Fields: map[string][]string{"set": edit.SetFields(), "unset": edit.UnsetFields()},
-		Base: fingerprint(f.path), Active: s.active(f.path)}
+	// Every list of the answer is a list, empty when there is nothing, so
+	// that the page never meets null where it expects one.
+	fl := Flow{FlowFile: f, Fields: map[string][]string{"set": strs(edit.SetFields()), "unset": strs(edit.UnsetFields())},
+		Base: fingerprint(f.path), Active: s.active(f.path), Columns: []Column{}, Nodes: []FlowNode{}, Checks: []FlowCheck{},
+		Executors: []string{}, Roles: []FlowRole{}, Modes: strs(orders.SelectModes)}
+	if fl.Active == nil {
+		fl.Active = []int64{}
+	}
 	if o := f.o; o != nil {
-		fl.Columns = build(chronicle.Campaign{Flow: o.Flow, Orders: o.Path}, nil, o, "", func() bool { return false }).Columns
+		if cols := build(chronicle.Campaign{Flow: o.Flow, Orders: o.Path}, nil, o, "", func() bool { return false }).Columns; cols != nil {
+			fl.Columns = cols
+		}
 		for _, id := range o.Order {
 			n := o.Nodes[id]
-			fn := FlowNode{ID: id, Type: n.Type, On: n.On, Run: n.Run, Checks: n.Checks, Executor: n.Executor, Role: n.Role,
+			fn := FlowNode{ID: id, Type: n.Type, On: map[string]string{}, Outcomes: []string{}, Run: n.Run, Checks: n.Checks, Executor: n.Executor, Role: n.Role,
 				Model: n.Model, Effort: n.Effort, Attempts: n.MaxAttempts, Show: n.Show}
+			for out, to := range n.On {
+				fn.On[out] = to
+			}
 			if n.Timeout > 0 {
 				fn.Timeout = n.Timeout.String()
 			}
@@ -218,9 +283,8 @@ func (s *Server) handleFlow(w http.ResponseWriter, r *http.Request) {
 			fl.Executors = append(fl.Executors, name)
 		}
 		sort.Strings(fl.Executors)
-		fl.Roles = []FlowRole{}
 		for name, r := range o.Roles {
-			fr := FlowRole{Name: name, Select: r.Select}
+			fr := FlowRole{Name: name, Select: r.Select, Clients: []FlowClient{}}
 			for _, c := range r.Clients {
 				fr.Clients = append(fr.Clients, FlowClient{Executor: c.Executor, Model: c.Model, Effort: c.Effort})
 			}
@@ -228,8 +292,17 @@ func (s *Server) handleFlow(w http.ResponseWriter, r *http.Request) {
 		}
 		sort.Slice(fl.Roles, func(i, j int) bool { return fl.Roles[i].Name < fl.Roles[j].Name })
 	}
-	fl.Modes = orders.SelectModes
+	if f.o != nil {
+		fl.StartLabel = f.o.StartLabel.In(s.printer(r).Lang())
+	}
 	writeJSON(w, http.StatusOK, fl)
+}
+
+func strs(list []string) []string {
+	if list == nil {
+		return []string{}
+	}
+	return list
 }
 
 func contains(list []string, s string) bool {
@@ -342,7 +415,7 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.As(err, &inv):
 			p := s.printer(r)
-			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": inv.Localize(p), "fields": inv.Lines(p)})
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": inv.Localize(p), "fields": inv.Lines(p), "at": fieldProblems(p, o.Input, inv)})
 			return
 		case err != nil:
 			writeError(w, err)

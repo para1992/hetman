@@ -8,6 +8,51 @@ import (
 	"hetman/internal/runinput"
 )
 
+// The start label is set as one text, kept as English when a language is
+// added, removed one language at a time, and passes the orders check.
+func TestStartLabelOperations(t *testing.T) {
+	d := fixture(t)
+	for _, op := range []Op{
+		{Op: OpStartLabel, Value: "New task"},
+		{Op: OpStartLabel, Value: "Нове завдання", Language: "uk"},
+	} {
+		if err := op.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.Apply(op); err != nil {
+			t.Fatalf("%s: %v", op.Words(), err)
+		}
+	}
+	o, err := d.Check()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.StartLabel.In("uk") != "Нове завдання" || o.StartLabel.In("en") != "New task" {
+		t.Fatalf("label %+v\n%s", o.StartLabel, d.Text())
+	}
+	if !strings.Contains(string(d.Text()), "start_label: {en: New task, uk: Нове завдання}\n") {
+		t.Fatalf("text:\n%s", d.Text())
+	}
+	if err := d.Apply(Op{Op: OpStartLabel, Value: "Job"}); err == nil || !strings.Contains(err.Error(), "name the language") {
+		t.Fatalf("plain over per language: %v", err)
+	}
+	if err := d.Apply(Op{Op: OpUnlabel, Language: "en"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Apply(Op{Op: OpUnlabel, Language: "uk"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(d.Text()), "start_label") {
+		t.Fatalf("not removed:\n%s", d.Text())
+	}
+	if err := (Op{Op: OpUnlabel, Value: "x"}).Validate(); err == nil {
+		t.Fatal("start-unlabel took a value")
+	}
+	if w := (Op{Op: OpStartLabel, Value: "New task", Language: "uk"}).Words(); !strings.Contains(w, `"New task"`) || !strings.Contains(w, "uk") {
+		t.Fatalf("words %q", w)
+	}
+}
+
 // The input operations build the description of a task list from nothing,
 // change it and take it apart; every step passes the orders check.
 func TestInputOperations(t *testing.T) {

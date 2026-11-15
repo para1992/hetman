@@ -15,6 +15,10 @@ import (
 // inputKey is the top-level key that describes the run input.
 const inputKey = "input"
 
+// startLabelKey is the top-level key that names the work a person starts:
+// one text, or a text per language like a field label.
+const startLabelKey = "start_label"
+
 // inputFieldKeys are the keys of one field of the input section.
 var inputFieldKeys = []string{"kind", "label", "hint", "required", "default", "ask", "options", "fields"}
 
@@ -173,6 +177,30 @@ func (p *parser) inputWords(n *yaml.Node, what string) runinput.Words {
 	}
 	return w
 }
+
+// startLabel reads the name of the work a person starts. It is shown on a
+// button, so each text is one short line.
+func (p *parser) startLabel(n *yaml.Node) runinput.Words {
+	w := p.inputWords(n, startLabelKey)
+	texts := []string{w.Plain}
+	for _, s := range w.ByLang {
+		texts = append(texts, s)
+	}
+	for _, s := range texts {
+		switch {
+		case strings.ContainsAny(s, "\r\n"):
+			p.errorf(n, "%s must be one line, such as New task", startLabelKey)
+			return runinput.Words{}
+		case len([]rune(s)) > maxStartLabel:
+			p.errorf(n, "%s must be short: it is shown on a button (at most %d characters, got %d)", startLabelKey, maxStartLabel, len([]rune(s)))
+			return runinput.Words{}
+		}
+	}
+	return w
+}
+
+// maxStartLabel is the longest start label, in characters.
+const maxStartLabel = 60
 
 func (p *parser) inputBool(n *yaml.Node, what string) bool {
 	if n.Kind != yaml.ScalarNode || n.Tag != "!!bool" {

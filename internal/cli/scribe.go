@@ -57,6 +57,8 @@ var opUsage = []struct{ op, form, example string }{
 	{edit.OpInputRm, "input-remove NAME [-of LIST]", "hetman scribe input-remove criteria -of tasks"},
 	{edit.OpInputSet, "input-set NAME FIELD VALUE [-of LIST] [-language CODE]", "hetman scribe input-set tasks label 'Tasks' -language en"},
 	{edit.OpInputUnset, "input-unset NAME FIELD [-of LIST] [-language CODE]", "hetman scribe input-unset id hint -of tasks"},
+	{edit.OpStartLabel, "start-label TEXT [-language CODE]", "hetman scribe start-label 'New task'"},
+	{edit.OpUnlabel, "start-unlabel [-language CODE]", "hetman scribe start-unlabel"},
 }
 
 // optBool is a flag that may be given as -name, -name=true or -name=false,

@@ -42,6 +42,12 @@ const (
 	OpInputUnset = "input-unset"  // remove the label, hint or default of a run input field
 )
 
+// Operations on the name of the work a person starts from the page.
+const (
+	OpStartLabel = "start-label"   // name it, such as New task
+	OpUnlabel    = "start-unlabel" // remove that name
+)
+
 // Op is one operation on an orders file. Only the fields its operation
 // takes may be set; Validate says which.
 type Op struct {
@@ -165,6 +171,10 @@ var Specs = []Spec{
 		"set the label, hint, required (true or false), default or ask (true or false) of a run input field; a label or hint with language is written per language"},
 	{OpInputUnset, []string{"name", "field"}, []string{"name", "field"}, []string{"of", "language"},
 		"remove the label, hint or default of a run input field; with language only that language's text"},
+	{OpStartLabel, []string{"value"}, []string{"value"}, []string{"language"},
+		"name the work a person starts, such as New task: the start button and form title of the web page; with language it is written per language"},
+	{OpUnlabel, nil, nil, []string{"language"},
+		"remove the name of the work a person starts, so the page says start a campaign; with language only that language's text"},
 }
 
 // InputKinds are the kinds of a run input field.
@@ -387,6 +397,16 @@ func (op Op) WordsIn(p *i18n.Printer) string {
 		return p.T("op.words.unlanguage")
 	case OpInputAdd, OpInputRm, OpInputSet, OpInputUnset:
 		return inputWords(p, op)
+	case OpStartLabel:
+		if op.Language != "" {
+			return p.T("op.words.start_label_in", "value", strconv.Quote(op.Value), "language", op.Language)
+		}
+		return p.T("op.words.start_label", "value", strconv.Quote(op.Value))
+	case OpUnlabel:
+		if op.Language != "" {
+			return p.T("op.words.start_unlabel_in", "language", op.Language)
+		}
+		return p.T("op.words.start_unlabel")
 	case OpAssistant:
 		key := "op.words.assistant"
 		if op.Effort != "" {

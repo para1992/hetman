@@ -50,6 +50,19 @@ nodes:
 	if code != http.StatusUnprocessableEntity || len(fields) != 2 || fields[0] != "tasks[1].criteria — обов'язкове поле" {
 		t.Fatalf("refused: %d %v", code, res)
 	}
+	// Each problem is also placed at its field, named by the labels of the
+	// form, so the page can show it beside the field.
+	at, _ := res["at"].([]any)
+	if len(at) != 2 {
+		t.Fatalf("at %v", res["at"])
+	}
+	first := at[0].(map[string]any)
+	if first["path"] != "tasks[1].criteria" || first["text"] != "Завдання 1 › criteria — обов'язкове поле" || first["short"] != "criteria — обов'язкове поле" {
+		t.Fatalf("first %v", first)
+	}
+	if second := at[1].(map[string]any); second["path"] != "size" || !strings.Contains(second["text"].(string), "size") {
+		t.Fatalf("second %v", second)
+	}
 	if code, res := w.post("/api/flows/orders.yaml/start", map[string]any{}, pageHeaders); code != http.StatusUnprocessableEntity ||
 		!strings.Contains(res["error"].(string), "tasks is required") {
 		t.Fatalf("no input: %d %v", code, res)

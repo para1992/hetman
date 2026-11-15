@@ -106,3 +106,33 @@ func TestInputSectionRejected(t *testing.T) {
 		}
 	}
 }
+
+// The name of the work a person starts is one text, or one per language,
+// short and on one line.
+func TestStartLabel(t *testing.T) {
+	o, err := Parse("/x/orders.yaml", []byte(inputHead+"start_label: {en: New task, uk: Нове завдання}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.StartLabel.In("uk") != "Нове завдання" || o.StartLabel.In("de") != "New task" {
+		t.Fatalf("label %+v", o.StartLabel)
+	}
+	if o, err := Parse("/x/orders.yaml", []byte(inputHead+"start_label: New task\n")); err != nil || o.StartLabel.In("uk") != "New task" {
+		t.Fatalf("plain: %v %+v", err, o)
+	}
+	if o, err := Parse("/x/orders.yaml", []byte(inputHead)); err != nil || !o.StartLabel.Empty() {
+		t.Fatalf("none: %v", err)
+	}
+	for _, c := range []struct{ text, want string }{
+		{`start_label: ""`, "must not be empty"},
+		{`start_label: {xx: New}`, "xx"},
+		{"start_label: \"one\\ntwo\"", "one line"},
+		{"start_label: " + strings.Repeat("x", 61), "must be short"},
+		{"start_label: [a]", "must be a text"},
+	} {
+		_, err := Parse("/x/orders.yaml", []byte(inputHead+c.text+"\n"))
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v", c.text, err)
+		}
+	}
+}

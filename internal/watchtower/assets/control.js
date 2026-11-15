@@ -65,36 +65,56 @@
 
   // ---- the campaign list: start a campaign, open the editor --------------
 
+  // startable are the orders files a person may start from the page: they
+  // pass the check and no other file of the folder runs them as a segment.
+  function startable() {
+    return (C.flows || []).filter((f) => !f.problem && !f.partOf);
+  }
+
+  // startWords is what the flow author calls the work a person starts,
+  // when every file that can be started calls it the same.
+  function startWords(list) {
+    const words = new Set(list.map((f) => f.startLabel || ''));
+    return words.size === 1 && list[0].startLabel ? list[0].startLabel : '';
+  }
+
   function listTop() {
     if (!C.flows) {
       loadFlows();
       return null;
     }
-    const usable = C.flows.filter((f) => !f.problem);
+    const usable = startable();
     const bar = h('div', { class: 'ctl-bar' },
-      h('button', { class: 'btn primary', type: 'button', 'data-fkey': 'start-open', disabled: !usable.length,
-        onclick: () => { C.start = C.start ? null : newStart(usable[0]); W.render(); } }, t('page.start.button')),
-      C.flows.map((f) => h('a', { class: 'btn', href: flowHref(f.file), title: t('page.flow.edit_title', { file: f.file }) },
-        t('page.flow.edit', { file: f.file }))));
+      h('button', { class: 'btn primary', type: 'button', 'data-fkey': 'start-open', disabled: !usable.length, 'aria-expanded': C.start ? 'true' : 'false',
+        onclick: () => {
+          C.start = C.start ? null : newStart(usable[0]);
+          if (C.start) C.focus = 'first';
+          W.render();
+        } }, startWords(usable) || t('page.start.button')),
+      C.flows.map((f) => h('a', { class: 'btn' + (f.partOf ? ' ctl-part' : ''), href: flowHref(f.file),
+        title: f.partOf ? t('page.start.part_of_title', { file: f.partOf }) : t('page.flow.edit_title', { file: f.file }) },
+      t('page.flow.edit', { file: f.file }), f.partOf ? h('span', { class: 'ctl-part-of', text: t('page.start.part_of', { file: f.partOf }) }) : null)));
     return h('div', null, bar, C.start ? startForm(usable) : null);
   }
 
   function newStart(f) {
     const file = f ? f.file : '';
     return { file: file, input: stored('hetman.input.' + file), values: f && f.input ? formValues(f) : null,
-      error: '', problems: [], fields: [], busy: false };
+      error: '', problems: [], fields: [], at: [], busy: false };
   }
 
   // ---- the run input as a form, made from the input section of the orders
 
   // formValues are the values of the form: the ones last sent from this
-  // browser, else the defaults the orders give.
+  // browser, else the defaults the orders give. A required list of objects
+  // starts with one item, so that its fields are there to fill in.
   function formValues(f) {
+    let v = null;
     try {
       const kept = JSON.parse(stored('hetman.form.' + f.file) || 'null');
-      if (kept && typeof kept === 'object' && !Array.isArray(kept)) return kept;
+      if (kept && typeof kept === 'object' && !Array.isArray(kept)) v = kept;
     } catch (e) { /* not kept */ }
-    return fieldDefaults(f.input);
+    return prepare(f.input, v || fieldDefaults(f.input));
   }
 
   function fieldDefaults(fields) {
@@ -102,82 +122,118 @@
     for (const fd of fields) {
       if (fd.default === undefined) continue;
       if (fd.kind === 'yesno') v[fd.name] = fd.default ? 'yes' : 'no';
-      else if (fd.kind === 'list') v[fd.name] = fd.default.slice();
+      else if (fd.kind === 'list') v[fd.name] = fd.default.join('\n');
       else v[fd.name] = String(fd.default);
+    }
+    return prepare(fields, v);
+  }
+
+  // prepare brings values into the shape the form edits: a list of texts
+  // is one text with an item per line, and a required list of objects
+  // holds at least one item.
+  function prepare(fields, v) {
+    for (const fd of fields) {
+      const x = v[fd.name];
+      if (fd.kind === 'list' && Array.isArray(x)) v[fd.name] = x.join('\n');
+      if (fd.kind !== 'objects') continue;
+      const items = Array.isArray(x) ? x.filter((it) => it && typeof it === 'object') : [];
+      for (const it of items) prepare(fd.fields, it);
+      if (fd.required && !items.length) items.push(fieldDefaults(fd.fields));
+      v[fd.name] = items;
     }
     return v;
   }
 
+  // errorsAt are the problems the server placed at a field path, such as
+  // tasks[2].title; a list of texts also takes those of its items.
+  function errorsAt(path, kind) {
+    const at = (C.start && C.start.at) || [];
+    return at.filter((p) => p.path === path || (kind === 'list' && p.path.startsWith(path + '[')));
+  }
+
+  function fieldErrors(errs) {
+    return errs.map((p) => h('div', { class: 'err field-err', text: p.short || p.text }));
+  }
+
   // formField renders one field; v holds the values of the object it
-  // belongs to, key prefixes its focus keys.
-  function formField(fd, v, key) {
+  // belongs to, key prefixes its focus keys and at is the path of that
+  // object as the server names it ('' for the input itself).
+  function formField(fd, v, key, at) {
     const fkey = key + fd.name;
+    const path = at ? at + '.' + fd.name : fd.name;
     const label = fd.label + (fd.required ? ' *' : '');
-    const hint = fd.hint ? h('div', { class: 'hint', text: fd.hint }) : null;
+    const errs = errorsAt(path, fd.kind);
+    const hints = [fd.hint ? h('div', { class: 'hint', text: fd.hint }) : null];
     const setv = (e) => { v[fd.name] = e.target.value; };
+    const common = { 'data-fkey': fkey, 'aria-label': fd.label, 'aria-invalid': errs.length ? 'true' : null, class: errs.length ? 'invalid' : null };
     let input;
     switch (fd.kind) {
       case 'longtext':
-        input = h('textarea', { rows: 4, 'data-fkey': fkey, 'aria-label': fd.label, oninput: setv });
+        input = h('textarea', Object.assign({ rows: 4, oninput: setv }, common));
         input.value = v[fd.name] || '';
+        break;
+      case 'list':
+        // A list of texts is one box, an item per line.
+        input = h('textarea', Object.assign({ rows: 3, oninput: setv }, common));
+        input.value = Array.isArray(v[fd.name]) ? v[fd.name].join('\n') : v[fd.name] || '';
+        hints.push(h('div', { class: 'hint', text: t('page.input.list_hint') }));
         break;
       case 'yesno':
       case 'choice': {
-        const opts = fd.kind === 'yesno' ? [['yes', t('page.form.yes')], ['no', t('page.form.no')]] : fd.options.map((o) => [o, o]);
-        input = h('select', { 'data-fkey': fkey, 'aria-label': fd.label, onchange: setv },
+        const opts = fd.kind === 'yesno' ? [['yes', t('page.form.yes')], ['no', t('page.form.no')]] : (fd.options || []).map((o) => [o, o]);
+        input = h('select', Object.assign({ onchange: setv }, common),
           h('option', { value: '', selected: !v[fd.name] }, '—'),
           opts.map(([val, text]) => h('option', { value: val, selected: v[fd.name] === val }, text)));
         break;
       }
-      case 'list':
-        return formList(fd, v, fkey, label, hint);
       case 'objects':
-        return formObjects(fd, v, fkey, label, hint);
+        return formObjects(fd, v, fkey, label, hints, path, errs);
       default:
-        input = h('input', { type: fd.kind === 'number' ? 'number' : 'text', step: fd.kind === 'number' ? 'any' : null,
-          'data-fkey': fkey, 'aria-label': fd.label, oninput: setv });
+        input = h('input', Object.assign({ type: fd.kind === 'number' ? 'number' : 'text', step: fd.kind === 'number' ? 'any' : null,
+          inputmode: fd.kind === 'number' ? 'decimal' : null, oninput: setv }, common));
         input.value = v[fd.name] || '';
     }
-    return h('label', { class: 'row form-field' }, h('span', { class: 'lbl', text: label }), input, hint);
+    return h('label', { class: 'row form-field' }, h('span', { class: 'lbl', text: label }), input, hints, fieldErrors(errs));
   }
 
-  function formList(fd, v, fkey, label, hint) {
+  function formObjects(fd, v, fkey, label, hints, path, errs) {
     const items = Array.isArray(v[fd.name]) ? v[fd.name] : (v[fd.name] = []);
-    return h('fieldset', { class: 'form-list' }, h('legend', { text: label }), hint,
+    const first = (fd.fields || [])[0];
+    const add = () => {
+      items.push(fieldDefaults(fd.fields || []));
+      if (first) C.focus = fkey + '.' + (items.length - 1) + '.' + first.name;
+      W.render();
+    };
+    // A required list keeps its one item: removing it would only bring
+    // back an empty one.
+    const removable = !fd.required || items.length > 1;
+    return h('fieldset', { class: 'form-list' + (errs.length ? ' invalid' : '') }, h('legend', { text: label }), hints, fieldErrors(errs),
       items.map((item, i) => {
-        const input = h('input', { type: 'text', 'data-fkey': fkey + '.' + i, 'aria-label': fd.label + ' ' + (i + 1),
-          oninput: (e) => { items[i] = e.target.value; } });
-        input.value = item;
-        return h('div', { class: 'form-item' }, input,
-          h('button', { class: 'btn', type: 'button', title: t('page.input.remove'), 'aria-label': t('page.input.remove'),
-            onclick: () => { items.splice(i, 1); W.render(); } }, '×'));
+        const itemPath = path + '[' + (i + 1) + ']';
+        const itemErrs = errorsAt(itemPath, 'objects');
+        return h('fieldset', { class: 'form-object' + (itemErrs.length ? ' invalid' : '') },
+          h('legend', { text: t('page.input.item', { label: fd.label, n: i + 1 }) }),
+          fieldErrors(itemErrs),
+          (fd.fields || []).map((sub) => formField(sub, item, fkey + '.' + i + '.', itemPath)),
+          removable ? h('div', { class: 'send' }, h('button', { class: 'btn', type: 'button', 'data-fkey': fkey + '.' + i + '.remove',
+            onclick: () => { items.splice(i, 1); W.render(); } }, t('page.input.remove_item'))) : null);
       }),
-      h('button', { class: 'btn', type: 'button', 'data-fkey': fkey + '.add',
-        onclick: () => { items.push(''); W.render(); } }, t('page.input.add_item')));
-  }
-
-  function formObjects(fd, v, fkey, label, hint) {
-    const items = Array.isArray(v[fd.name]) ? v[fd.name] : (v[fd.name] = []);
-    return h('fieldset', { class: 'form-list' }, h('legend', { text: label }), hint,
-      items.map((item, i) => h('fieldset', { class: 'form-object' },
-        h('legend', { text: t('page.input.item', { label: fd.label, n: i + 1 }) }),
-        fd.fields.map((sub) => formField(sub, item, fkey + '.' + i + '.')),
-        h('div', { class: 'send' }, h('button', { class: 'btn', type: 'button',
-          onclick: () => { items.splice(i, 1); W.render(); } }, t('page.input.remove_item'))))),
-      h('button', { class: 'btn', type: 'button', 'data-fkey': fkey + '.add',
-        onclick: () => { items.push(fieldDefaults(fd.fields)); W.render(); } }, t('page.input.add_object', { label: fd.label })));
+      h('button', { class: 'btn', type: 'button', 'data-fkey': fkey + '.add', onclick: add },
+        t(items.length ? 'page.input.add_object' : 'page.input.add_first', { label: fd.label })));
   }
 
   // formInput turns the values of the form into the run input: empty
-  // answers are left out, numbers and yes/no become JSON values. The server
-  // checks the result with the same code as hetman run.
+  // answers are left out, numbers and yes/no become JSON values, a list of
+  // texts is split into its lines. The server checks the result with the
+  // same code as hetman run.
   function formInput(fields, v) {
     const out = {};
     for (const fd of fields) {
       const x = v[fd.name];
       switch (fd.kind) {
         case 'list': {
-          const items = (x || []).map((s) => s.trim()).filter((s) => s);
+          const lines = Array.isArray(x) ? x : String(x || '').split('\n');
+          const items = lines.map((s) => String(s).trim()).filter((s) => s);
           if (items.length) out[fd.name] = items;
           break;
         }
@@ -206,12 +262,18 @@
     const st = C.start;
     const f = usable.find((x) => x.file === st.file) || usable[0];
     if (!f) return null;
-    const pick = h('select', { 'data-fkey': 'start-file', onchange: (e) => { C.start = newStart(usable.find((x) => x.file === e.target.value)); W.render(); } },
-      usable.map((x) => h('option', { value: x.file, selected: x.file === f.file }, x.file + ' · ' + x.flow)));
+    // A person who can start only one thing is not asked which file.
+    const which = usable.length > 1
+      ? h('label', { class: 'row' }, h('span', { class: 'lbl', text: t('page.start.flow') }),
+        h('select', { 'data-fkey': 'start-file', onchange: (e) => { C.start = newStart(usable.find((x) => x.file === e.target.value)); W.render(); } },
+          usable.map((x) => h('option', { value: x.file, selected: x.file === f.file }, x.file + ' · ' + x.flow))))
+      : h('div', { class: 'hint', text: t('page.start.flow_named', { flow: f.flow || f.file }) });
+    // The language line matters only when the orders set one, or it fails.
+    const lang = f.language || f.languageProblem ? h('div', { class: 'hint' }, t('page.start.language') + ' ', h('b', null, langLabel(f))) : null;
     let inputPart;
     if (f.input && st.values) {
-      inputPart = [h('div', { class: 'hint', text: t('page.input.hint') }),
-        f.input.map((fd) => formField(fd, st.values, 'form-'))];
+      inputPart = [h('p', { class: 'ctl-lead', text: t('page.input.hint') }),
+        f.input.map((fd) => formField(fd, st.values, 'form-', ''))];
     } else {
       const input = h('textarea', { rows: 6, class: 'mono', 'data-fkey': 'start-input', placeholder: t('page.start.input_placeholder'),
         'aria-label': t('page.start.input'), oninput: (e) => { st.input = e.target.value; } });
@@ -219,18 +281,58 @@
       inputPart = [h('label', { class: 'hint', text: t('page.start.input') }), input,
         h('div', { class: 'hint', text: t('page.start.input_hint') })];
     }
-    return h('form', { class: 'answer ctl-panel', novalidate: true, onsubmit: (e) => { e.preventDefault(); startCampaign(f); } },
-      h('fieldset', { class: 'q' }, h('legend', { text: t('page.start.title') }),
-        h('label', { class: 'row' }, t('page.start.flow') + ' ', pick),
-        h('div', { class: 'hint' }, t('page.start.language') + ' ', h('b', null, langLabel(f))),
-        inputPart),
+    const fieldLines = st.at.length ? st.at.map((p) => p.text) : st.fields;
+    return h('form', { class: 'answer ctl-panel ctl-start', novalidate: true, onkeydown: enterMovesOn,
+      onsubmit: (e) => { e.preventDefault(); startCampaign(f); } },
+      h('fieldset', { class: 'q' }, h('legend', { text: f.startLabel || t('page.start.title') }),
+        which, lang, inputPart),
       st.error ? h('div', { class: 'err form-err', role: 'alert', text: st.error }) : null,
-      st.fields.length ? h('div', { class: 'err form-err', role: 'alert' }, h('b', { text: t('page.input.problems') }), '\n' + st.fields.join('\n')) : null,
+      fieldLines.length ? h('div', { class: 'err form-err', role: 'alert' }, h('b', { text: t('page.input.problems') }),
+        h('ul', null, fieldLines.map((x) => h('li', { text: x })))) : null,
       st.problems.length ? h('div', { class: 'err form-err', role: 'alert' }, h('b', { text: t('page.start.problems') }), '\n' + st.problems.join('\n')) : null,
       h('div', { class: 'send' },
         h('button', { class: 'btn', type: 'button', onclick: () => { C.start = null; W.render(); } }, t('page.cancel')),
         h('button', { class: 'btn primary', type: 'submit', 'data-fkey': 'start-go', disabled: st.busy || !!f.languageProblem },
           t(st.busy ? 'page.start.starting' : 'page.start.go'))));
+  }
+
+  // enterMovesOn makes Enter in a one-line field go to the next field, as
+  // a person filling in a form expects, instead of sending the form.
+  function enterMovesOn(e) {
+    const el = e.target;
+    if (e.key !== 'Enter' || e.isComposing || el.tagName !== 'INPUT' || el.type === 'checkbox' || el.type === 'radio') return;
+    e.preventDefault();
+    const form = e.currentTarget;
+    const fields = Array.from(form.querySelectorAll('input, textarea, select')).filter((x) => !x.disabled && x.offsetParent !== null);
+    const next = fields[fields.indexOf(el) + 1] || form.querySelector('button[type="submit"]');
+    if (next) next.focus();
+  }
+
+  // afterRender moves the focus where the last action asked: the first
+  // field of a form just opened, the first field of an item just added, or
+  // the first field the server found a problem in, scrolled into view.
+  function afterRender() {
+    const want = C.focus;
+    if (!want) return;
+    C.focus = null;
+    let el = null;
+    if (want === 'first') {
+      // The first field of the work itself, not the choice of file.
+      el = W.app.querySelector('.ctl-start [data-fkey^="form-"], .ctl-start [data-fkey="start-input"]') ||
+        W.app.querySelector('.ctl-start input, .ctl-start textarea, .ctl-start select');
+    } else if (want === 'error') {
+      const err = W.app.querySelector('.ctl-start .invalid, .ctl-start .form-err');
+      if (err) {
+        err.scrollIntoView({ block: 'center' });
+        el = err.matches('input, textarea, select') ? err : err.querySelector('input, textarea, select');
+      }
+    } else {
+      el = W.app.querySelector('[data-fkey="' + CSS.escape(want) + '"]');
+    }
+    if (el) {
+      el.focus({ preventScroll: want === 'error' });
+      if (want !== 'error') el.scrollIntoView({ block: 'nearest' });
+    }
   }
 
   // parseInput checks the run input before it is sent: empty, or one JSON
@@ -248,6 +350,7 @@
     st.error = '';
     st.problems = [];
     st.fields = [];
+    st.at = [];
     let parsed;
     if (f.input && st.values) {
       parsed = { value: formInput(f.input, st.values) };
@@ -263,18 +366,29 @@
       const r = await post(flowPath(f.file) + '/start', parsed.value ? { input: parsed.value } : {});
       if (r.ok) {
         C.start = null;
+        C.begun = r.data.id;
         W.toast(t('page.start.started', { id: r.data.id }));
         location.hash = W.href(r.data.id);
         return;
       }
       if (r.data.problems) st.problems = r.data.problems;
-      else if (r.data.fields) st.fields = r.data.fields;
+      else if (r.data.fields) { st.fields = r.data.fields; st.at = r.data.at || []; }
       else st.error = r.data.error || String(r.status);
     } catch (e) {
       st.error = e.message;
     }
     st.busy = false;
+    C.focus = 'error';
     W.render();
+  }
+
+  // campaignNote tells a person who just started a campaign from this page
+  // that the work is under way and where to watch it.
+  function campaignNote(c) {
+    if (C.begun !== c.id || c.end) return null;
+    return h('div', { class: 'problem info ctl-begun', role: 'status' },
+      h('span', { text: t('page.start.begun') }), ' ',
+      h('button', { class: 'btn', type: 'button', 'data-fkey': 'begun-close', onclick: () => { C.begun = null; W.render(); } }, t('page.start.begun_close')));
   }
 
   // ---- retry and rewind ---------------------------------------------------
@@ -345,11 +459,26 @@
       const res = await fetch(flowPath(file) + '?lang=' + encodeURIComponent(W.lang()));
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || String(res.status));
-      C.flow = d;
+      C.flow = lists(d);
     } catch (e) {
       C.flowError = e.message;
     }
     W.render();
+  }
+
+  // lists makes every list of a flow answer a list: the server sends empty
+  // ones, and the page does not break if an older one sends null.
+  function lists(d) {
+    for (const k of ['columns', 'nodes', 'checks', 'executors', 'roles', 'modes', 'active']) if (!Array.isArray(d[k])) d[k] = [];
+    d.fields = d.fields || {};
+    d.fields.set = d.fields.set || [];
+    d.fields.unset = d.fields.unset || [];
+    for (const n of d.nodes) {
+      n.on = n.on || {};
+      n.outcomes = n.outcomes || [];
+    }
+    for (const r of d.roles) r.clients = r.clients || [];
+    return d;
   }
 
   function renderFlow() {
@@ -369,6 +498,7 @@
       h('span', null, tn('page.start.language_fact', { language: h('b', null, langLabel(f)) })),
       h('span', { text: t('page.flow.hint') })));
     if (f.problem) out.push(h('div', { class: 'problem', text: f.problem }));
+    if (f.partOf) out.push(h('div', { class: 'problem info', text: t('page.start.part_of_title', { file: f.partOf }) }));
     if (f.active && f.active.length) out.push(h('div', { class: 'problem info', text: t('page.flow.active', { n: f.active.length, ids: f.active.map((x) => '#' + x).join(', ') }) }));
     if (f.scribe) out.push(sentenceLine(f));
     if (C.change && !r.node) out.push(changeBox(f));
@@ -723,6 +853,7 @@
     const fkey = key + '/' + fd.name;
     const label = t('page.field.' + fd.name);
     const rerender = () => W.render();
+    fd.options = fd.options || [];
     let input;
     switch (fd.kind) {
       case 'select':
@@ -760,5 +891,6 @@
 
   const I18N_HINTS = ['run', 'outcomes', 'via', 'value', 'at', 'starters', 'options', 'max', 'file'];
 
-  Object.assign(W.hooks, { listTop, campaignButtons, cardTop, columnNote, openFlow, renderFlow });
+  Object.assign(W.hooks, { listTop, campaignButtons, cardTop, columnNote, openFlow, renderFlow, campaignNote, afterRender });
+  W.canStart = () => startable().length > 0;
 })();

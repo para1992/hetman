@@ -74,7 +74,10 @@ type Orders struct {
 	Language  string         // code of the language text for a person is written in; empty for none
 	Workdir   string         // the folder agent steps work in unless a node names its own, absolute; empty when not set
 	Input     *runinput.Spec // the fields of the run input, or nil when the orders do not describe them
-	Later     Problems       // ParseBuilding only: placeholders naming a node the orders do not have yet
+	// StartLabel names the work a person starts, such as "New task": the
+	// page's start button and form title. Empty when the orders give none.
+	StartLabel runinput.Words
+	Later      Problems // ParseBuilding only: placeholders naming a node the orders do not have yet
 
 	programs []program // the program of every run list, in file order
 }
@@ -489,7 +492,7 @@ func (p *parser) duration(n *yaml.Node, what string) time.Duration {
 }
 
 func (p *parser) top(root *yaml.Node, o *Orders) {
-	entries, ok := p.mapping(root, "orders", "version", "flow", "start", "language", workdirKey, "scribe", inputKey, "checks", "executors", "roles", "notify", "nodes")
+	entries, ok := p.mapping(root, "orders", "version", "flow", "start", "language", workdirKey, "scribe", inputKey, startLabelKey, "checks", "executors", "roles", "notify", "nodes")
 	if !ok {
 		return
 	}
@@ -530,6 +533,8 @@ func (p *parser) top(root *yaml.Node, o *Orders) {
 			scribeN = e.value
 		case inputKey:
 			p.input(e.value, o)
+		case startLabelKey:
+			o.StartLabel = p.startLabel(e.value)
 		case "nodes":
 			nodesN = e.value
 		}

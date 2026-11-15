@@ -25,6 +25,20 @@ pre.log.diff .del { color: var(--failed); }
 .form-list { border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px 8px; margin: 0 0 8px; }
 .form-list > legend, .form-object > legend { color: var(--muted); padding: 0 4px; }
 .form-object { border: 1px dashed var(--line); border-radius: 8px; padding: 4px 10px 6px; margin: 0 0 8px; }
-.form-item { display: flex; gap: 6px; align-items: center; margin: 0 0 6px; }
-.form-item input[type="text"] { flex: 1; min-width: 8em; }
 .answer label.form-field textarea { flex-basis: 100%; }
+.answer fieldset { min-width: 0; }
+.ctl-start .ctl-lead { margin: 2px 0 10px; }
+.ctl-start .form-err ul { margin: 4px 0 0; padding-left: 20px; white-space: normal; }
+.answer .invalid:is(input, textarea, select), .answer fieldset.invalid { border-color: var(--failed); }
+.answer .field-err { flex-basis: 100%; font-size: 12.5px; margin: 0 0 4px; }
+.ctl-part { opacity: .75; }
+.ctl-part-of { margin-left: 6px; font-weight: normal; font-size: 12px; color: var(--muted); }
+.ctl-begun { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+@media (max-width: 760px) {
+  /* A form on a phone: each label above its field, every field full width. */
+  .answer label.row .lbl { flex-basis: 100%; min-width: 0; }
+  .answer label.row input[type="text"], .answer label.row input[type="number"], .answer label.row select { flex: 1 1 100%; min-width: 0; }
+  .form-list, .form-object { padding-left: 8px; padding-right: 8px; min-width: 0; }
+  .ctl-bar .btn { flex: 1 1 auto; justify-content: center; }
+  .ctl-panel { padding: 8px; }
+}

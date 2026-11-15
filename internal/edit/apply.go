@@ -20,7 +20,7 @@ import (
 
 // The order keys are written in, used to place a key that is added.
 var (
-	topOrder      = []string{"version", "flow", "workdir", "start", "language", "input", "scribe", "notify", "executors", "roles", "checks", "nodes"}
+	topOrder      = []string{"version", "flow", "workdir", "start", "language", "start_label", "input", "scribe", "notify", "executors", "roles", "checks", "nodes"}
 	nodeOrder     = []string{"type", "run", "segment", "input", "items", "parallel", "executor", "role", "prompt", "schema", "model", "effort", "tools", "workdir", "checks", "ask", "show", "timeout", "idle_timeout", "max_attempts", "dialogue", "fail_on_denied", "locks", "on"}
 	checkOrder    = []string{"run", "timeout", "soft", "locks"}
 	questionOrder = []string{"id", "question", "kind", "options"}
@@ -278,6 +278,10 @@ func (e *editing) apply() error {
 		return e.inputSet()
 	case OpInputUnset:
 		return e.inputUnset()
+	case OpStartLabel:
+		return e.startLabel()
+	case OpUnlabel:
+		return e.startUnlabel()
 	case OpWorkdir:
 		if strings.TrimSpace(e.op.Workdir) == "" {
 			return fmt.Errorf("workdir needs a folder, such as . or ..")
