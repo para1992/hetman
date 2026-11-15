@@ -93,6 +93,18 @@ func (f *fixture) children(node string) []Child {
 	return list
 }
 
+// anyChildEvent reports whether a child of the latest attempt of a node has
+// recorded an event of a kind.
+func (f *fixture) anyChildEvent(node, kind string) bool {
+	f.t.Helper()
+	for _, ev := range f.events(chronicle.ChildStarted) {
+		if ev.Node == node && len(filterKind(f.childEvents(ev.Child), kind)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func overlap(a, b span) bool { return a.start.Before(b.end) && b.start.Before(a.end) }
 
 func byItem(spans []span) map[string]span {
@@ -129,8 +141,11 @@ nodes:
 }
 
 func TestForEachRunsIndependentItemsTogetherAndDependentOnesInOrder(t *testing.T) {
-	items := `[{"id":"a","sleep":"400ms"},{"id":"b","needs":["a"],"sleep":"100ms"},{"id":"c","sleep":"400ms"},
-{"id":"d","needs":["b","c"],"sleep":"100ms"},{"id":"e","sleep":"100ms"}]`
+	// a and c are the first two items that can run; each waits for the
+	// other before it ends, so they overlap by construction, and the test
+	// fails only if they cannot run together.
+	items := `[{"id":"a","meet":"ac","meetn":2},{"id":"b","needs":["a"],"sleep":"50ms"},{"id":"c","meet":"ac","meetn":2},
+{"id":"d","needs":["b","c"],"sleep":"50ms"},{"id":"e","sleep":"50ms"}]`
 	f, _ := setupFiles(t, forEachOrders(items, 2, ""), map[string]string{"segments/item.yaml": segmentWith(arg("item", "SYNC"))})
 	f.drive(Done)
 	children := f.children("each")
@@ -226,16 +241,29 @@ func TestForEachRejectsABadList(t *testing.T) {
 }
 
 func TestLockSharedByItemsIsNeverHeldTwice(t *testing.T) {
-	items := `[{"id":"a","sleep":"150ms"},{"id":"b","sleep":"150ms"},{"id":"c","sleep":"150ms"},{"id":"d","sleep":"150ms"}]`
+	// The prepare steps take no lock and wait for each other, so all four
+	// run together by construction. The work steps hold the lock; each
+	// waits for the release file, which the test writes once an item is
+	// recorded waiting for the lock, so a wait happens by construction too.
+	items := `[{"id":"a","wait":true},{"id":"b","wait":true},{"id":"c","wait":true},{"id":"d","wait":true}]`
 	seg := `version: 0
 flow: one-item
 start: prepare
 nodes:
-  prepare: {type: script, run: ` + arg("sleep", "50ms") + `, on: {ok: work, fail: failed}}
+  prepare: {type: script, run: ` + arg("meet", "SYNC", "4") + `, on: {ok: work, fail: failed}}
   work: {type: script, run: ` + arg("item", "SYNC") + `, locks: [stand], on: {ok: done, fail: failed}}
 `
-	f, _ := setupFiles(t, forEachOrders(items, 4, ""), map[string]string{"segments/item.yaml": seg})
-	f.drive(Done)
+	f, sync := setupFiles(t, forEachOrders(items, 4, ""), map[string]string{"segments/item.yaml": seg})
+	done := f.driveAsync(context.Background())
+	deadline := time.Now().Add(30 * time.Second)
+	for !f.anyChildEvent("each", chronicle.LockWaiting) {
+		if time.Now().After(deadline) {
+			t.Fatalf("no item was recorded waiting for the lock\n%s", f.dump())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	writeRelease(t, sync)
+	f.wait(done, Done)
 	children := f.children("each")
 	all := f.spans("work", children)
 	if len(all) != 4 {
@@ -248,9 +276,9 @@ nodes:
 			}
 		}
 	}
-	// The prepare steps, which take no lock, ran together.
-	if p := f.spans("prepare", children); !overlap(p[0], p[1]) {
-		t.Fatalf("steps without a lock did not run together: %+v", p)
+	// The prepare steps, which take no lock, met: all four ran together.
+	if p := f.spans("prepare", children); len(p) != 4 {
+		t.Fatalf("prepare spans %+v", p)
 	}
 	waited := 0
 	for _, c := range children {
@@ -470,7 +498,8 @@ nodes:
 	done := f.driveAsync(context.Background())
 	waitFile(t, filepath.Join(sync, "started.a.1"))
 	f.record(chronicle.Event{Kind: chronicle.HaltRequested})
-	time.Sleep(1500 * time.Millisecond) // the child looks at its parent between steps and while waiting
+	// The halt is recorded before the child's step may end, so the child
+	// finds it as soon as that step ends, whatever the speed.
 	os.WriteFile(filepath.Join(sync, "release"), nil, 0o644)
 	f.wait(done, Halted)
 	child := f.events(chronicle.ChildStarted)[0].Child

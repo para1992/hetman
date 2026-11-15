@@ -45,6 +45,12 @@ const TraceFile = "trace.txt"
 //	                    then exit 1 when "fail" is true, or when "failonce" is true
 //	                    and DIR/failed.<id> does not exist yet (it is written),
 //	                    else write DIR/finished.<id>
+//	                    An item with "meet": GROUP and "meetn": N first writes
+//	                    DIR/met.<GROUP>.<id> and waits until N items of the group
+//	                    have, so that they run together by construction; it exits
+//	                    1 when they do not within 30s.
+//	meet DIR N          write DIR/met.all.<run id> and wait until N steps have
+//	                    (DIR/met.all.*), then exit 0; exit 1 after 30s
 //	failonce DIR        exit 1 the first time for this node (DIR/failed.<node>), then 0
 //	badonce DIR         write a result file that is not JSON the first time for
 //	                    this node (DIR/bad.<node>), then exit 0
@@ -165,9 +171,14 @@ func Main(args []string) int {
 			Wait  bool   `json:"wait"`
 			Fail  bool   `json:"fail"`
 			Once  bool   `json:"failonce"`
+			Meet  string `json:"meet"`
+			MeetN int    `json:"meetn"`
 		}
 		must(json.Unmarshal(data, &in))
 		must(os.WriteFile(filepath.Join(dir, "started."+in.ID+"."+os.Getenv("HETMAN_RUN_ID")), nil, 0o644))
+		if in.Meet != "" && !meet(dir, in.Meet, in.ID, in.MeetN) {
+			return 1
+		}
 		for in.Wait && !exists(filepath.Join(dir, "release")) {
 			time.Sleep(20 * time.Millisecond)
 		}
@@ -182,6 +193,12 @@ func Main(args []string) int {
 			return 1
 		}
 		must(os.WriteFile(filepath.Join(dir, "finished."+in.ID), nil, 0o644))
+		return 0
+	case "meet":
+		n, _ := strconv.Atoi(arg(args, 2))
+		if !meet(arg(args, 1), "all", os.Getenv("HETMAN_RUN_ID"), n) {
+			return 1
+		}
 		return 0
 	case "failonce":
 		mark := filepath.Join(arg(args, 1), "failed."+node)
@@ -208,6 +225,19 @@ func Main(args []string) int {
 	}
 	fmt.Fprintf(os.Stderr, "teststep: unknown step %q\n", args[0])
 	return 2
+}
+
+// meet writes DIR/met.<group>.<id> and waits until n such files of the
+// group exist; it reports false when they do not within 30 seconds.
+func meet(dir, group, id string, n int) bool {
+	must(os.WriteFile(filepath.Join(dir, "met."+group+"."+id), nil, 0o644))
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if met, _ := filepath.Glob(filepath.Join(dir, "met."+group+".*")); len(met) >= n {
+			return true
+		}
+	}
+	fmt.Fprintf(os.Stderr, "teststep: fewer than %d steps of %s ran together\n", n, group)
+	return false
 }
 
 func arg(args []string, i int) string {
