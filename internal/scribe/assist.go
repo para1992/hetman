@@ -111,14 +111,15 @@ func opSchema() map[string]any {
 	}
 	props := map[string]any{"op": map[string]any{"type": "string", "enum": ops}}
 	for _, f := range []string{"node", "type", "after", "via", "before", "name", "outcome", "target", "field", "value",
-		"check", "id", "question", "kind", "flow", "timeout", "executor", "model", "effort", "prompt", "schema"} {
+		"check", "id", "question", "kind", "flow", "timeout", "executor", "model", "effort", "prompt", "schema", "segment", "input", "items"} {
 		props[f] = str
 	}
-	for _, f := range []string{"options", "run", "checks", "tools", "outcomes"} {
+	for _, f := range []string{"options", "run", "checks", "tools", "outcomes", "locks"} {
 		props[f] = list
 	}
 	props["at"] = map[string]any{"type": "integer"}
 	props["attempts"] = map[string]any{"type": "integer"}
+	props["parallel"] = map[string]any{"type": "integer"}
 	props["soft"] = map[string]any{"type": "boolean"}
 	props["starters"] = map[string]any{"type": "boolean"}
 	props["on"] = map[string]any{"type": "object", "additionalProperties": str}

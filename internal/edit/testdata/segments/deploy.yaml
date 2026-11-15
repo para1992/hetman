@@ -1,0 +1,5 @@
+version: 0
+flow: deploy
+start: push
+nodes:
+  push: {type: script, run: [sh, steps/push.sh], on: {ok: done, fail: failed}}

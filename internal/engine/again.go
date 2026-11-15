@@ -35,6 +35,12 @@ func (r *Refusal) Error() string                   { return r.Msg.String() }
 func (r *Refusal) Unwrap() error                   { return r.Err }
 func (r *Refusal) Localize(p *i18n.Printer) string { return r.Msg.In(p) }
 
+// errInChild carries the node of a retry made inside a child campaign out of
+// the pick function of sendBack.
+type errInChild struct{ node string }
+
+func (errInChild) Error() string { return "retried inside a child campaign" }
+
 func refuse(err error, key string, args ...any) error {
 	return &Refusal{Err: err, Msg: i18n.M(key, args...)}
 }
@@ -89,6 +95,12 @@ func Visited(events []chronicle.Event) []string {
 // campaign, then call release.
 func Retry(o *orders.Orders, ch *chronicle.Chronicle, id int64, by, via string) (release func(), node string, err error) {
 	return sendBack(o, ch, id, chronicle.Retried, by, via, func(events []chronicle.Event) (string, error) {
+		if inChild, n, err := retryChild(o, ch, id, events, by, via); inChild || err != nil {
+			if err == nil {
+				err = errInChild{n}
+			}
+			return "", err
+		}
 		n := RetryNode(events)
 		if n == "" {
 			return "", refuse(ErrNothingFailed, "engine.refuse.nothing_failed", "id", id)
@@ -114,7 +126,7 @@ func Rewind(o *orders.Orders, ch *chronicle.Chronicle, id int64, node, by, via s
 
 func sendBack(o *orders.Orders, ch *chronicle.Chronicle, id int64, kind, by, via string,
 	pick func([]chronicle.Event) (string, error)) (func(), string, error) {
-	if _, err := ch.Campaign(id); err != nil {
+	if err := refuseChild(ch, id); err != nil {
 		return nil, "", err
 	}
 	release, err := Lock(o, id)
@@ -132,7 +144,18 @@ func sendBack(o *orders.Orders, ch *chronicle.Chronicle, id int64, kind, by, via
 	if err != nil {
 		return fail(err)
 	}
+	if busy, err := busyChild(o, ch, events, 0); err != nil || busy != 0 {
+		if err == nil {
+			err = refuse(ErrChildBusy, "engine.refuse.child_driven", "id", id, "child", busy)
+		}
+		return fail(err)
+	}
 	node, err := pick(events)
+	var done errInChild
+	if errors.As(err, &done) {
+		// The retry was made inside the child that stopped the campaign.
+		return release, done.node, nil
+	}
 	if err != nil {
 		return fail(err)
 	}
@@ -143,6 +166,11 @@ func sendBack(o *orders.Orders, ch *chronicle.Chronicle, id int64, kind, by, via
 	// it is dealt with as on resume before the campaign moves.
 	if st := chronicle.Replay(events); st.Running {
 		e := &Engine{Orders: o, Chron: ch, Campaign: id}
+		// The children of a running segment or for-each step are left to
+		// their earlier attempt; their running steps are checked first.
+		if err := cleanupChildren(e, events, 0); err != nil {
+			return fail(err)
+		}
 		if err := e.cleanup(events, st.Node, st.Attempt); err != nil {
 			return fail(err)
 		}

@@ -54,7 +54,7 @@ func TestValid(t *testing.T) {
 }
 
 func TestExampleOrders(t *testing.T) {
-	for _, name := range []string{"toy", "agent", "person", "acceptance"} {
+	for _, name := range []string{"toy", "agent", "person", "acceptance", "foreach"} {
 		path := filepath.Join("..", "..", "examples", name, DefaultFile)
 		if _, err := Load(path); err != nil {
 			t.Fatal(err)

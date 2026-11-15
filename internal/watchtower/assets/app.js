@@ -478,6 +478,7 @@
     if (c.state === 'limit') return tn('page.pos.limit', { node: node });
     if (c.state === 'offline') return tn('page.pos.offline', { node: node });
     if (c.state === 'interrupted') return tn('page.pos.interrupted', { node: node });
+    if (c.lockWait) return tn('page.pos.lock', { node: node, lock: h('code', { text: c.lockWait }), holder: c.lockHolder });
     return tn('page.pos.at', { node: node });
   }
 
@@ -485,12 +486,17 @@
     const c = S.campaign;
     const r = S.route;
     document.title = '#' + c.id + ' ' + c.flow + ' · ' + tk('page.state.', c.state) + ' · ' + t('page.brand');
-    const canHalt = (c.state === 'running' || c.state === 'interrupted' || c.state === 'asking') && !c.haltRequested;
-    const canResume = c.state === 'halted' || c.state === 'error' || c.state === 'interrupted' || c.state === 'limit' ||
-      c.state === 'offline' || c.haltRequested || (c.state === 'asking' && !c.driven);
+    // A child campaign is halted and resumed with the campaign a person started.
+    const canHalt = !c.parent && (c.state === 'running' || c.state === 'interrupted' || c.state === 'asking') && !c.haltRequested;
+    const canResume = !c.parent && (c.state === 'halted' || c.state === 'error' || c.state === 'interrupted' || c.state === 'limit' ||
+      c.state === 'offline' || c.haltRequested || (c.state === 'asking' && !c.driven));
     const pos = position(c);
     const out = [
-      h('nav', { class: 'crumbs' }, h('a', { href: '#/', text: '← ' + t('page.all_campaigns') })),
+      h('nav', { class: 'crumbs' }, h('a', { href: '#/', text: '← ' + t('page.all_campaigns') }),
+        c.parent ? [' · ', tn('page.child.runs_this', {
+          parent: h('a', { href: href(c.parent), text: t('page.child.parent', { id: c.parent }) }),
+          path: h('code', { text: c.path }) }),
+        c.top !== c.parent ? [' ', tn('page.child.part_of', { top: h('a', { href: href(c.top), text: t('page.child.campaign', { id: c.top }) }) })] : null] : null),
       h('div', { class: 'head' },
         h('h1', null, t('page.campaign.title', { id: c.id }) + ' ', h('span', { class: 'flow', text: c.flow })),
         stateBadge(c.state),
@@ -526,6 +532,14 @@
 
   // Explains a campaign that waits because of an agent step.
   function waitNote(c) {
+    if (c.ask && !c.end && c.ask.campaign && c.ask.campaign !== c.id) {
+      // A child asks: the parent links to the card that answers it.
+      const where = tn('page.ask.child_node', { node: h('code', { text: c.ask.node }), path: h('code', { text: c.ask.path }), id: c.ask.campaign });
+      return h('div', { class: 'problem ask' }, h('b', { text: t('page.ask.waiting') + ' ' }),
+        tn('page.ask.reason.' + c.ask.reason, { node: where }), ' ',
+        tn('page.ask.answer_card', { link: h('a', { href: href(c.ask.campaign, 'pipeline', c.ask.node), text: t('page.ask.answer_card_link') }),
+          command: h('code', { text: c.ask.command }) }));
+    }
     if (c.ask && !c.end) {
       const open = S.route.node === c.ask.node;
       const node = h('code', { text: c.ask.node });
@@ -634,6 +648,26 @@
   function tile(c, col, t, i, last) {
     let label, tag = null;
     const sub = [];
+    if (t.item || t.child) {
+      // A child campaign of a segment or for-each step; it opens the child.
+      label = t.item || tt('page.child.campaign', { id: t.child });
+      if (t.item && t.child) tag = h('span', { class: 'tag', text: '#' + t.child });
+      if (col.attempts > 1 && t.attempt && !t.earlier) sub.push(tt('page.tile.child.attempt', { n: t.attempt }));
+      if (t.outcome) sub.push(t.outcome);
+      else if (t.node) sub.push(t.node);
+      const note = t.note ? tt(t.note, t.args) : '';
+      if (note) sub.push(note);
+      else if (!t.child) sub.push(statusText(t.status));
+      return h('button', {
+        class: 'tile st-' + t.status, type: 'button', 'data-fkey': 'tile-' + col.node + '-' + i,
+        title: col.node + ' / ' + label + ': ' + statusText(t.status) + (note ? ' (' + note + ')' : ''),
+        onclick: () => { location.hash = t.child ? href(t.child) : href(c.id, 'pipeline', col.node); },
+      },
+      mark(t.status),
+      h('span', { class: 'label', text: label }),
+      h('span', { class: 'right' }, t.attempts > 1 ? h('span', { class: 'count', title: tt('page.attempts', { n: t.attempts }), text: '×' + t.attempts }) : null),
+      h('span', { class: 'sub' }, tag, sub.map((x) => h('span', { class: 'part' }, x))));
+    }
     if (t.check) {
       label = t.check;
       const run = last && col.status !== 'waiting' && last.checks && last.checks.find((r) => r.check === t.check);
@@ -651,7 +685,8 @@
       } else if (col.status === 'asking') {
         sub.push(tt('page.tile.needs_answer'));
       } else if (col.status === 'waiting') {
-        if (col.current && c.wait === 'limit' && c.waitUntil) sub.push(tt('page.tile.limit_again', { at: fmtTime(c.waitUntil) }));
+        if (col.current && c.lockWait) sub.push(tt('page.tile.lock', { lock: c.lockWait, holder: c.lockHolder }));
+        else if (col.current && c.wait === 'limit' && c.waitUntil) sub.push(tt('page.tile.limit_again', { at: fmtTime(c.waitUntil) }));
         else if (col.current && c.wait) sub.push(tt(c.wait === 'limit' ? 'page.tile.limit' : 'page.tile.offline'));
         else sub.push(tt(c.state === 'halted' ? 'page.tile.halted_here' : 'page.tile.next'));
       }

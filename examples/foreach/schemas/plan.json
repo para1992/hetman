@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "properties": {
+    "outcome": {"type": "string", "enum": ["ok"]},
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "title": {"type": "string"},
+          "needs": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["id", "title"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["outcome", "items"],
+  "additionalProperties": false
+}

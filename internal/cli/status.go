@@ -52,6 +52,11 @@ func (c *command) status(id int64, listEvents bool) int {
 	}
 	st := chronicle.Replay(events)
 	alive, _ := engine.Driven(c.o, k.ID)
+	// A child campaign is shown with the orders of its segment.
+	o, err := engine.OrdersOf(c.o, c.chron, k.ID)
+	if err != nil {
+		return c.fail(err)
+	}
 	views := map[string]*nodeView{}
 	view := func(n string) *nodeView {
 		if views[n] == nil {
@@ -116,20 +121,34 @@ func (c *command) status(id int64, listEvents bool) int {
 			fmt.Fprintln(w, p.T("status.task", "id", t.ID, "kind", t.Kind))
 		}
 	}
+	if k.Parent != 0 {
+		top, _ := engine.Top(c.chron, k.ID)
+		where := events[0].ParentNode
+		if events[0].Item != "" {
+			where = p.T("status.part_of_item", "node", where, "item", events[0].Item)
+		}
+		fmt.Fprintln(w, p.T("status.part_of", "top", top, "where", where, "parent", k.Parent))
+	}
 	fmt.Fprintln(w, p.T("status.state", "state", c.describe(k.ID, st)))
+	if st.End == "" {
+		ws, _ := engine.Waiters(c.chron, events)
+		for _, x := range ws {
+			fmt.Fprintf(w, "  %s\n", waiterLine(p, x))
+		}
+	}
 
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, p.T("status.header"))
-	order := append([]string{}, c.o.Order...)
+	order := append([]string{}, o.Order...)
 	for n := range views {
-		if c.o.Nodes[n] == nil {
+		if o.Nodes[n] == nil {
 			order = append(order, n)
 		}
 	}
 	for _, n := range order {
 		typ := "?"
 		var node *orders.Node
-		if node = c.o.Nodes[n]; node != nil {
+		if node = o.Nodes[n]; node != nil {
 			typ = node.Type
 		}
 		v := views[n]
@@ -138,7 +157,11 @@ func (c *command) status(id int64, listEvents bool) int {
 			marker = ">"
 		}
 		if v == nil {
-			fmt.Fprintf(tw, "%s %s\t%s\t%s\t\t\t\t\n", marker, n, typ, p.T("status.st.pending"))
+			status, outcome := p.T("status.st.pending"), ""
+			if n == st.Node && st.End == "" && st.LockWait != "" {
+				status, outcome = p.T("status.st.waiting_lock"), p.T("status.lock_held", "lock", st.LockWait, "holder", st.LockHolder)
+			}
+			fmt.Fprintf(tw, "%s %s\t%s\t%s\t%s\t\t\t\n", marker, n, typ, status, outcome)
 			continue
 		}
 		status, outcome, dur := "finished", v.outcome, ""
@@ -153,6 +176,8 @@ func (c *command) status(id int64, listEvents bool) int {
 			status, outcome = "error", v.err
 		case n == st.Node && st.End == "" && st.Waiting != "":
 			status, outcome = "waiting", st.Waiting
+		case n == st.Node && st.End == "" && st.LockWait != "" && !st.Running:
+			status, outcome = "waiting_lock", p.T("status.lock_held", "lock", st.LockWait, "holder", st.LockHolder)
 		case v.outcome == "" && len(v.agent) > 0 && v.agent[len(v.agent)-1].failure != "":
 			status, outcome = "attempt_failed", v.agent[len(v.agent)-1].failure
 		}
@@ -166,7 +191,10 @@ func (c *command) status(id int64, listEvents bool) int {
 		fmt.Fprintf(tw, "%s %s\t%s\t%s\t%s\t%s\t%s\t\n", marker, n, typ, p.T("status.st."+status), outcome, attempts, dur)
 		if node != nil {
 			for _, name := range node.Checks {
-				fmt.Fprintf(tw, "%s\t%s\t\n", p.T("status.check_row", "check", name), checkLine(p, v.checks, name, c.o.Checks[name]))
+				fmt.Fprintf(tw, "%s\t%s\t\n", p.T("status.check_row", "check", name), checkLine(p, v.checks, name, o.Checks[name]))
+			}
+			if node.Composite() {
+				c.printChildren(tw, events, n, "    ", 0)
 			}
 		}
 	}
@@ -196,8 +224,10 @@ func (c *command) status(id int64, listEvents bool) int {
 			}
 		}
 	}
-	if st.Asking() && st.End == "" {
-		printAsked(p, w, c.o, k.ID, st.Ask, true)
+	top, _ := engine.Top(c.chron, k.ID)
+	if asked, _, _ := engine.Pending(c.chron, k.ID); asked != nil && st.End == "" {
+		ao, _ := engine.OrdersOf(c.o, c.chron, asked.Campaign)
+		printAsked(p, w, c.o, ao, top, asked, true)
 	}
 
 	var warnings []string
@@ -216,6 +246,109 @@ func (c *command) status(id int64, listEvents bool) int {
 		}
 	}
 	return exitDone
+}
+
+// printChildren lists the children of the latest attempt of a segment or
+// for-each node under its row, and the children of those that run a segment
+// themselves, indented further.
+func (c *command) printChildren(tw io.Writer, events []chronicle.Event, node, indent string, depth int) {
+	p := c.p
+	list, err := engine.ChildrenOf(c.chron, events, node)
+	if err != nil || depth > orders.MaxDepth {
+		return
+	}
+	for _, ch := range list {
+		name := p.T("status.child.segment")
+		if ch.Item != "" {
+			name = p.T("status.child.item", "item", ch.Item)
+		}
+		switch {
+		case ch.NotRun != "":
+			fmt.Fprintf(tw, "%s%s\t\t%s\t%s\t\t\t\n", indent, name, p.T("status.st.not_run"), notRunWhy(p, ch))
+			continue
+		case ch.ID == 0:
+			needs := ""
+			if len(ch.Needs) > 0 {
+				needs = p.T("status.child.needs", "items", strings.Join(ch.Needs, ", "))
+			}
+			fmt.Fprintf(tw, "%s%s\t\t%s\t%s\t\t\t\n", indent, name, p.T("status.st.pending"), needs)
+			continue
+		}
+		status, detail := childStatus(p, ch.State, c.childDriven(ch.ID))
+		if ch.KeptFrom > 0 {
+			status, detail = p.T("status.st.finished"), p.T("status.child.kept", "outcome", ch.Outcome, "n", ch.KeptFrom)
+		}
+		fmt.Fprintf(tw, "%s%s\t%s\t%s\t%s\t\t\t\n", indent, name, p.T("status.child.campaign", "id", ch.ID), status, detail)
+		if ch.State.End == "" && ch.State.Running {
+			c.printChildren(tw, ch.Events, ch.State.Node, indent+"  ", depth+1)
+		}
+	}
+	earlier, _ := engine.EarlierChildren(c.chron, events, node)
+	for _, ch := range earlier {
+		name := p.T("status.child.segment")
+		if ch.Item != "" {
+			name = p.T("status.child.item", "item", ch.Item)
+		}
+		state := ch.State.End
+		if state == "" {
+			state = p.T("status.d.at", "node", ch.State.Node)
+		}
+		fmt.Fprintf(tw, "%s%s\t%s\t%s\t%s\t\t\t\n", indent, name, p.T("status.child.campaign", "id", ch.ID),
+			p.T("status.child.earlier", "n", ch.Attempt), state)
+	}
+}
+
+// notRunWhy says why a for-each item did not run, in the reader's language.
+func notRunWhy(p *i18n.Printer, ch engine.Child) string {
+	if ch.NotRunNeeds == "" {
+		return ch.NotRun
+	}
+	return p.T("status.child.why"+"_"+ch.NotRunKind, "item", ch.NotRunNeeds)
+}
+
+func (c *command) childDriven(id int64) bool {
+	alive, _ := engine.Driven(c.o, id)
+	return alive
+}
+
+// childStatus is the STATUS and OUTCOME cells of a child campaign's row.
+func childStatus(p *i18n.Printer, st chronicle.State, alive bool) (string, string) {
+	switch {
+	case st.End != "":
+		return p.T("status.st.finished"), st.End
+	case st.Error != "":
+		return p.T("status.st.error"), st.Error
+	case st.Asking():
+		return p.T("status.st.asking"), p.T("status.child.asking", "node", st.Node)
+	case st.Halted:
+		return p.T("status.st.halted"), p.T("status.child.halted", "node", st.Node)
+	case st.LockWait != "" && !st.Running:
+		return p.T("status.st.waiting_lock"), p.T("status.child.lock", "lock", st.LockWait, "node", st.Node, "holder", st.LockHolder)
+	case st.Waiting != "":
+		return p.T("status.st.waiting"), p.T("status.child.waiting", "wait", st.Waiting, "node", st.Node)
+	case st.Running && alive:
+		return p.T("status.st.running"), p.T("status.child.running", "node", st.Node, "attempt", st.Attempt)
+	case st.Running:
+		return p.T("status.st.interrupted"), st.Node
+	}
+	return p.T("status.d.at", "node", st.Node), ""
+}
+
+// waiterLine says what holds a campaign up in one of its children.
+func waiterLine(p *i18n.Printer, x engine.Waiter) string {
+	st := x.State
+	at := p.T("status.waiter.at", "path", x.Path, "id", x.Campaign)
+	switch {
+	case st.Asking():
+		return p.T("status.waiter.asking", "at", at, "node", st.Node)
+	case st.Error != "":
+		return p.T("status.waiter.error", "at", at, "error", st.Error)
+	case st.LockWait != "":
+		return p.T("status.waiter.lock", "at", at, "node", st.Node, "lock", st.LockWait, "holder", st.LockHolder)
+	case st.Waiting == chronicle.WaitOffline:
+		return p.T("status.waiter.offline", "at", at, "node", st.Node)
+	}
+	return p.T("status.waiter.limit", "at", at, "node", st.Node)
 }
 
 func (v *nodeView) lastAgent(attempt int) *agentAttempt {
@@ -314,6 +447,12 @@ func (c *command) describe(id int64, st chronicle.State) string {
 		return p.T("status.d.error", "error", st.Error)
 	}
 	alive, _ := engine.Driven(c.o, id)
+	if st.LockWait != "" && !st.Running && !st.Halted {
+		if alive {
+			return p.T("status.d.lock", "node", st.Node, "lock", st.LockWait, "holder", st.LockHolder)
+		}
+		return p.T("status.d.lock_undriven", "node", st.Node, "lock", st.LockWait)
+	}
 	if st.Asking() {
 		if alive {
 			return p.T("status.d.asking_driven", "node", st.Node)

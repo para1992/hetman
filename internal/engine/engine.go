@@ -145,6 +145,40 @@ type Engine struct {
 	inputMu sync.Mutex // the input file is synced from the drive and from hooks
 	input   []byte     // content of the input file, read from the chronicle once
 	lang    string     // code of the language for the person, read from the chronicle with the input
+
+	parent *Engine  // the engine whose segment or for-each step runs this campaign; nil for a campaign a person started
+	node   string   // the node of the parent that runs this campaign
+	item   string   // the for-each item this campaign runs; empty for a segment
+	held   []string // the locks held by the step running now
+}
+
+// top is the engine of the campaign a person started that this one belongs
+// to: its chronicle folder, notification hook and commands are used.
+func (e *Engine) top() *Engine {
+	for e.parent != nil {
+		e = e.parent
+	}
+	return e
+}
+
+// dir is the folder of the campaign; every campaign of a tree lives in the
+// state folder of the orders a person started.
+func (e *Engine) dir() string { return CampaignDir(e.top().Orders, e.Campaign) }
+
+// path says where a child campaign runs, such as "items/b" or
+// "review > items/b"; it is empty for a campaign a person started.
+func (e *Engine) path() string {
+	if e.parent == nil {
+		return ""
+	}
+	s := e.node
+	if e.item != "" {
+		s += "/" + e.item
+	}
+	if up := e.parent.path(); up != "" {
+		s = up + " > " + s
+	}
+	return s
 }
 
 // InputFile is where the run input is written for every command, relative to
@@ -180,7 +214,7 @@ func (e *Engine) syncInput() (string, error) {
 		b.WriteByte('\n')
 		e.input = b.Bytes()
 	}
-	return syncFile(filepath.Join(CampaignDir(e.Orders, e.Campaign), "work", InputFile), e.input)
+	return syncFile(filepath.Join(e.dir(), "work", InputFile), e.input)
 }
 
 // language is the language for the person recorded when the campaign
@@ -208,7 +242,7 @@ func (e *Engine) syncOutputs(events []chronicle.Event) error {
 			latest[ev.Node] = ev.Output
 		}
 	}
-	work := filepath.Join(CampaignDir(e.Orders, e.Campaign), "work")
+	work := filepath.Join(e.dir(), "work")
 	for node, out := range latest {
 		var b bytes.Buffer
 		if json.Indent(&b, out, "", "  ") != nil {
@@ -236,8 +270,15 @@ func syncFile(path string, data []byte) (string, error) {
 // say writes a progress line: the message of key with its parameters.
 func (e *Engine) say(key string, args ...any) {
 	if e.Out != nil {
-		e.outMu.Lock()
-		defer e.outMu.Unlock()
+		// Child campaigns may run at the same time; their lines go through
+		// the lock of the campaign a person started.
+		mu := &e.top().outMu
+		mu.Lock()
+		defer mu.Unlock()
+		if e.parent != nil {
+			fmt.Fprintf(e.Out, "[%d %s] %s\n", e.Campaign, e.path(), e.Text.T(key, args...))
+			return
+		}
 		fmt.Fprintf(e.Out, "[%d] %s\n", e.Campaign, e.Text.T(key, args...))
 	}
 }
@@ -246,6 +287,9 @@ func (e *Engine) say(key string, args ...any) {
 // person starts the notification hook.
 func (e *Engine) record(ev chronicle.Event) error {
 	ev.Campaign = e.Campaign
+	if ev.Kind == chronicle.StepStarted && ev.Locks == nil {
+		ev.Locks = e.held
+	}
 	ev, err := e.Chron.Append(ev)
 	if err == nil {
 		e.notify(ev)
@@ -273,6 +317,13 @@ func (e *Engine) Drive(ctx context.Context) (Result, error) {
 			return 0, err
 		}
 		st := chronicle.Replay(events)
+		if e.parent != nil && st.End == "" && !st.HaltRequested && e.parent.halting() {
+			// A halt of the campaign a person started reaches its children.
+			if err := e.record(chronicle.Event{Kind: chronicle.HaltRequested, Node: st.Node}); err != nil {
+				return 0, err
+			}
+			continue
+		}
 		switch {
 		case st.End == orders.Done:
 			e.say("engine.done")
@@ -337,7 +388,10 @@ func (e *Engine) Drive(ctx context.Context) (Result, error) {
 				continue
 			}
 		}
-		if st.Running {
+		// A segment or for-each step that was running continues: its children
+		// keep their own state.
+		resumed := st.Running && node.Composite()
+		if st.Running && !resumed {
 			e.say("engine.interrupted", "node", node.ID, "attempt", st.Attempt)
 			if err := e.cleanup(events, node.ID, st.Attempt); err != nil {
 				return 0, err
@@ -346,18 +400,50 @@ func (e *Engine) Drive(ctx context.Context) (Result, error) {
 				return 0, err
 			}
 		}
+		attempt := st.Attempts[node.ID] + 1
+		if resumed {
+			attempt = st.Attempt
+		}
+		release, err := e.takeLocks(ctx, node, attempt)
+		if errors.Is(err, errHaltedWaiting) {
+			continue
+		}
+		if err != nil {
+			return 0, err
+		}
 		switch node.Type {
 		case orders.Agent:
-			err = e.agentStep(ctx, node, st.Attempts[node.ID]+1, st, events)
+			err = e.agentStep(ctx, node, attempt, st, events)
 		case orders.Human:
-			err = e.humanStep(node, st.Attempts[node.ID]+1)
+			err = e.humanStep(node, attempt)
+		case orders.Segment, orders.ForEach:
+			err = e.compositeStep(ctx, node, attempt, resumed, events)
 		default:
-			err = e.step(ctx, node, st.Attempts[node.ID]+1)
+			err = e.step(ctx, node, attempt)
+		}
+		release()
+		if errors.Is(err, errChildWaiting) {
+			return Waiting, nil
+		}
+		if errors.Is(err, errChildAsking) {
+			return Asking, nil
 		}
 		if err != nil {
 			return 0, err
 		}
 	}
+}
+
+// halting reports whether a halt is in force for this campaign or for a
+// campaign whose step runs it.
+func (e *Engine) halting() bool {
+	for x := e; x != nil; x = x.parent {
+		events, err := x.Chron.Events(x.Campaign)
+		if err == nil && chronicle.Replay(events).HaltRequested {
+			return true
+		}
+	}
+	return false
 }
 
 // syncFiles restores the files the engine keeps in the work folder from the
@@ -403,7 +489,7 @@ func (e *Engine) transition(node *orders.Node, outcome string) error {
 }
 
 func (e *Engine) step(ctx context.Context, node *orders.Node, attempt int) error {
-	dir := CampaignDir(e.Orders, e.Campaign)
+	dir := e.dir()
 	for _, sub := range []string{"work", "logs", "results"} {
 		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
 			return err
@@ -497,7 +583,7 @@ var contractEnv = []string{"HETMAN_RUN_ID", "HETMAN_NODE_ID", "HETMAN_CHECK_ID",
 // outcome: okName for exit code 0, failName otherwise, timeout when killed
 // for exceeding the timeout, or the name written to the result file.
 func (e *Engine) exec(ctx context.Context, nodeID, check string, argv []string, timeout time.Duration, attempt int, okName, failName string) execResult {
-	dir := CampaignDir(e.Orders, e.Campaign)
+	dir := e.dir()
 	var r execResult
 	r.log = LogFile(nodeID, check, attempt)
 	resultFile := filepath.Join(dir, filepath.FromSlash(ResultFile(nodeID, check, attempt)))
@@ -580,7 +666,7 @@ func (e *Engine) env(nodeID, check string, attempt int, resultFile string) ([]st
 	}
 	env = append(env,
 		"HETMAN_RUN_ID="+strconv.FormatInt(e.Campaign, 10),
-		"HETMAN_RUN_DIR="+filepath.Join(CampaignDir(e.Orders, e.Campaign), "work"),
+		"HETMAN_RUN_DIR="+filepath.Join(e.dir(), "work"),
 		"HETMAN_INPUT_FILE="+input,
 	)
 	if e.lang != "" {

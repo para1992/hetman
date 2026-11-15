@@ -219,6 +219,9 @@ func (x *explainer) where() []string {
 		default:
 			s = p.T("explain.where.offline", "node", st.Node, "at", x.at(f.At), "attempt", f.Attempt, "error", f.Error)
 		}
+	case st.LockWait != "" && !st.Running:
+		e := x.last(chronicle.LockWaiting, st.Node)
+		s = p.T("explain.where.lock", "at", x.at(e.At), "node", st.Node, "lock", st.LockWait, "holder", st.LockHolder)
 	case st.Running:
 		e := x.last(chronicle.StepStarted, st.Node)
 		s = p.T("explain.where.running", "node", st.Node, "attempt", e.Attempt, "at", x.at(e.At))
@@ -234,11 +237,34 @@ func (x *explainer) where() []string {
 		}
 	}
 	lines = append(lines, s)
+	if st.Running && len(st.Children) > 0 && st.End == "" {
+		lines = append(lines, p.T("explain.where.children", "n", len(st.Children), "children", x.children(st)))
+	}
 	if st.HaltRequested && !st.Halted && st.End == "" {
 		e := x.last(chronicle.HaltRequested, "")
 		lines = append(lines, p.T("explain.where.halt_requested", "at", x.at(e.At)))
 	}
 	return lines
+}
+
+// children names the unfinished children of the running step, such as
+// "campaign 4 (item b)".
+func (x *explainer) children(st chronicle.State) string {
+	item := map[int64]string{}
+	for _, e := range x.events {
+		if e.Kind == chronicle.ChildStarted {
+			item[e.Child] = e.Item
+		}
+	}
+	var parts []string
+	for _, id := range st.Children {
+		if item[id] != "" {
+			parts = append(parts, x.p.T("explain.child_item", "child", id, "item", item[id]))
+		} else {
+			parts = append(parts, x.p.T("explain.child", "child", id))
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 // lastSentBack is the newest retry or rewind.
@@ -390,6 +416,25 @@ func (x *explainer) history() []string {
 			s = p.T("explain.halted", "node", e.Node)
 		case chronicle.Resumed:
 			s = p.T("explain.resumed")
+			if e.Child != 0 {
+				s = p.T("explain.retried_child", "who", x.who(e), "via", x.via(e), "child", e.Child, "node", e.To)
+			}
+		case chronicle.ItemKept:
+			s = p.T("explain.item_kept", "node", e.Node, "item", e.Item, "child", e.Child)
+		case chronicle.ChildStarted:
+			if e.Outcome == chronicle.Retried {
+				s = p.T("explain.child_retried", "node", e.Node, "child", e.Child, "at", e.To)
+			} else if e.Item != "" {
+				s = p.T("explain.child_started_item", "node", e.Node, "item", e.Item, "child", e.Child)
+			} else {
+				s = p.T("explain.child_started", "node", e.Node, "child", e.Child)
+			}
+		case chronicle.ItemFinished:
+			s = p.T("explain.item_finished", "node", e.Node, "item", e.Item, "child", e.Child, "outcome", e.Outcome)
+		case chronicle.ItemNotRun:
+			s = p.T("explain.item_not_run"+"_"+e.Outcome, "node", e.Node, "item", e.Item, "needs", e.Needs)
+		case chronicle.LockWaiting:
+			s = p.T("explain.lock_waited", "node", e.Node, "lock", e.Lock, "holder", e.Holder)
 		case chronicle.Retried, chronicle.Rewound:
 			s = p.T("explain."+e.Kind, "who", x.who(e), "via", x.via(e), "node", e.Node)
 		default:

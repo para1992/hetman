@@ -24,8 +24,7 @@ explain a term the first time you use it.
 ## What Hetman can express
 
 This is everything the config supports. If the person wants something that is not
-here (steps running in parallel, a retry limit on a script, a person answering on a
-fixed schedule,
+here (a retry limit on a script, a person answering on a fixed schedule,
 conditions in the file or in a prompt template, a pool of several clients for one step),
 say plainly that Hetman does not do that, and offer the
 nearest thing that works: usually a script that does the extra logic itself. Do not
@@ -66,7 +65,7 @@ and `.` only. Every path in the file is relative to the folder that holds the fi
 
 ### Nodes
 
-There are four node types.
+There are six node types.
 
 - `script` runs one command. Its outcome is `ok` when the command exits with code 0
   and `fail` otherwise.
@@ -86,9 +85,13 @@ There are four node types.
   `outcome`, plus `fail`.
 - `human` waits for a person, who chooses one of the outcomes in its `on` (see
   "People in the flow").
+- `segment` runs another orders file to its end and `foreach` runs one once per item
+  of a list, several at a time (see "Segments, for-each and locks").
 
-A check is `{run: [...]}` with optional `timeout` and optional `soft: true` (checks are
-required unless marked soft). A check passes only when its outcome is `ok`; a failure
+Any node may have `locks: [name, ...]`, resources its steps hold exclusively.
+
+A check is `{run: [...]}` with optional `timeout`, optional `soft: true` (checks are
+required unless marked soft) and optional `locks`. A check passes only when its outcome is `ok`; a failure
 or a timeout fails it.
 
 ### Commands
@@ -129,6 +132,7 @@ Outcomes a node produces:
 | `gate` with `checks` or `ask` | `pass`, `blocked` (nothing else is allowed in its `on`) |
 | `agent` | every value of `outcome` in its schema, plus `fail` (nothing else is allowed in its `on`) |
 | `human` | the keys of its `on`, whatever you name them; the person chooses one |
+| `segment`, `foreach` | `done`, `failed` (nothing else is allowed in its `on`) |
 
 If a step produces an outcome that has no transition, the campaign stops in an error
 state and waits for a person.
@@ -301,6 +305,51 @@ nodes:
   or resumes). Offer one only if the person wants to be told in a messenger; it is a
   script they supply or ask you to write, which never blocks the campaign.
 
+### Segments, for-each and locks
+
+A part of a flow used in several places, or once per work item, goes into its own
+orders file (a segment), written exactly like `orders.yaml`, and is run as one step:
+
+```yaml
+nodes:
+  review:
+    type: segment
+    segment: segments/review.yaml   # relative to this file
+    input: output.plan.task         # optional: what the segment gets as its run input
+    on: {done: publish, failed: failed}
+  build-all:
+    type: foreach
+    segment: segments/item.yaml
+    items: output.plan.items        # a list of objects: {"id": "api", "needs": ["db"], ...}
+    parallel: 2                     # at most 2 items at the same time (default 1)
+    locks: [release-train]          # optional, as on any node
+    on: {done: release, failed: plan}
+  test:
+    type: script
+    run: [./steps/test.sh]
+    locks: [test-stand]             # no two steps holding test-stand ever run at once
+    on: {ok: done, fail: failed}
+```
+
+- A segment runs as a child campaign with its own steps, attempts and folder; its
+  end, `done` or `failed`, is the node's outcome. Without `input` it gets the run
+  input of the campaign; `input` may name `input.FIELD`, `output.NODE[.FIELD]` of an
+  agent node, or `artifact.NODE.FILE` (a JSON file an earlier script listed). It must
+  be a JSON object. The steps of a segment run in the folder of the segment's file.
+- A `foreach` list comes from an earlier agent output (`output.NODE.FIELD`), a JSON
+  file an earlier script listed as an artifact (`artifact.NODE.FILE`), or the run input
+  (`input.FIELD`). Every item is an object with a unique `id` and optionally `needs`,
+  the ids it must wait for; the whole item is the run input of its child. The node
+  ends `done` only when every item did; an item whose needs failed is not run. Tell
+  the agent that writes the list about `id` and `needs` in its prompt and schema.
+- A segment must not run itself, directly or through other segments.
+- `locks` names resources such as a test stand or the one writer of a working copy.
+  A step waits until no other step holds any of its locks, in this campaign, other
+  campaigns or other hetman processes using the same folder. Locks used inside a
+  segment must sort after the locks of the node that runs that segment (rename them,
+  for example with a prefix, so they do); `hetman check` says so when they do not.
+- People answer, halt, resume, retry and rewind a segment through the campaign that runs it. A retried for-each runs only the items that did not reach done.
+
 ### Tasks and the dispatcher
 
 Small internal work with no ticket anywhere (a linter finding on a commit, a remark a
@@ -354,9 +403,11 @@ hetman scribe rename NODE NEW                also renames it in the start, trans
 hetman scribe link NODE OUTCOME TARGET       set or change a transition (TARGET: a node, done or failed)
 hetman scribe unlink NODE OUTCOME            remove a transition
 hetman scribe set NODE FIELD VALUE           run, timeout, idle_timeout, executor, model, effort,
-                                             tools, attempts, dialogue, prompt, schema
-hetman scribe unset NODE FIELD               timeout, idle_timeout, model, effort, tools, attempts, dialogue
-hetman scribe check NAME -run CMD [-timeout D] [-soft | -required]   declare a check or change one
+                                             tools, attempts, dialogue, prompt, schema,
+                                             locks, segment, input, items, parallel
+hetman scribe unset NODE FIELD               timeout, idle_timeout, model, effort, tools, attempts, dialogue,
+                                             locks, input, parallel
+hetman scribe check NAME -run CMD [-timeout D] [-soft | -required] [-locks A,B]   declare a check or change one
 hetman scribe executor NAME -run CMD         declare an executor or change its command
 hetman scribe gate-add GATE CHECK [-at N]    put a declared check into a gate, at position N from 1
 hetman scribe gate-remove GATE CHECK
@@ -370,9 +421,11 @@ Node flags: `-run 'CMD ARGS'` (one string, split at spaces; quote an argument th
 spaces), `-timeout 5m`, `-checks a,b` (declared checks, in order), `-executor NAME`,
 `-model M`, `-effort E`, `-tools a,b`, `-attempts N`, `-prompt FILE`, `-schema FILE`,
 `-outcomes a,b` (of an agent or human node), `-on OUTCOME=TARGET` (repeat it; every
-outcome other than the main one leads to `failed` unless given), and `-starters`
+outcome other than the main one leads to `failed` unless given), `-starters`
 (create a minimal prompt template and schema for an agent node where those files do
-not exist yet; it never overwrites a file).
+not exist yet; it never overwrites a file), `-locks a,b` (any node), `-segment FILE`
+(segment and foreach; the file must exist), `-input REF` (segment), `-items REF` and
+`-parallel N` (foreach). A segment or foreach node's main outcome is `done`.
 
 How they wire the flow:
 

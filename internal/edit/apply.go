@@ -21,8 +21,8 @@ import (
 // The order keys are written in, used to place a key that is added.
 var (
 	topOrder      = []string{"version", "flow", "start", "language", "scribe", "notify", "executors", "checks", "nodes"}
-	nodeOrder     = []string{"type", "run", "executor", "prompt", "schema", "model", "effort", "tools", "checks", "ask", "show", "timeout", "idle_timeout", "max_attempts", "dialogue", "on"}
-	checkOrder    = []string{"run", "timeout", "soft"}
+	nodeOrder     = []string{"type", "run", "segment", "input", "items", "parallel", "executor", "prompt", "schema", "model", "effort", "tools", "checks", "ask", "show", "timeout", "idle_timeout", "max_attempts", "dialogue", "locks", "on"}
+	checkOrder    = []string{"run", "timeout", "soft", "locks"}
 	questionOrder = []string{"id", "question", "kind", "options"}
 	scribeOrder   = []string{"executor", "model", "effort", "timeout"}
 )
@@ -286,14 +286,16 @@ func (e *editing) flowOn() bool {
 // build makes the mapping of a new node whose main outcome leads to next.
 func (e *editing) build(op Op, next string, flowNode, flowOn bool) (*yaml.Node, error) {
 	allowed := map[string][]string{
-		orders.Script: {"run", "timeout", "on"},
-		orders.Gate:   {"run", "timeout", "checks", "on"},
-		orders.Agent:  {"executor", "model", "effort", "tools", "attempts", "prompt", "schema", "outcomes", "timeout", "starters", "on"},
-		orders.Human:  {"outcomes", "on"},
+		orders.Script:  {"run", "timeout", "locks", "on"},
+		orders.Gate:    {"run", "timeout", "checks", "locks", "on"},
+		orders.Agent:   {"executor", "model", "effort", "tools", "attempts", "prompt", "schema", "outcomes", "timeout", "starters", "locks", "on"},
+		orders.Human:   {"outcomes", "locks", "on"},
+		orders.Segment: {"segment", "input", "locks", "on"},
+		orders.ForEach: {"segment", "items", "parallel", "locks", "on"},
 	}
 	list, ok := allowed[op.Type]
 	if !ok {
-		return nil, fmt.Errorf("unknown node type %q (script, gate, agent or human)", op.Type)
+		return nil, fmt.Errorf("unknown node type %q (script, gate, agent, human, segment or foreach)", op.Type)
 	}
 	for _, f := range op.Fields() {
 		if contains(nodeFields, f) && !contains(list, f) {
@@ -319,6 +321,27 @@ func (e *editing) build(op Op, next string, flowNode, flowOn bool) (*yaml.Node, 
 			add("timeout", str(op.Timeout))
 			outcomes = append(outcomes, orders.Timeout)
 		}
+	case orders.Segment, orders.ForEach:
+		if op.Segment == "" {
+			return nil, fmt.Errorf("a %s node needs segment: the orders file it runs", op.Type)
+		}
+		add("segment", str(op.Segment))
+		if op.Input != "" {
+			add("input", str(op.Input))
+		}
+		if op.Type == orders.ForEach {
+			if op.Items == "" {
+				return nil, fmt.Errorf("a foreach node needs items: the list to run the segment for, such as output.plan.items")
+			}
+			add("items", str(op.Items))
+			if op.Parallel != 0 {
+				if op.Parallel < 1 || op.Parallel > orders.MaxParallel {
+					return nil, fmt.Errorf("parallel must be from 1 to %d", orders.MaxParallel)
+				}
+				add("parallel", num(op.Parallel))
+			}
+		}
+		outcomes = []string{orders.Done, orders.Failed}
 	case orders.Gate:
 		switch {
 		case len(op.Run) > 0 && len(op.Checks) > 0:
@@ -358,6 +381,12 @@ func (e *editing) build(op Op, next string, flowNode, flowOn bool) (*yaml.Node, 
 			}
 		}
 		outcomes = op.Outcomes
+	}
+	if len(op.Locks) > 0 {
+		if err := lockNames(op.Locks); err != nil {
+			return nil, err
+		}
+		add("locks", flowSeq(op.Locks))
 	}
 	on := mapping(flowOn)
 	main := Main(outcomes)
@@ -826,6 +855,11 @@ func (e *editing) setField() error {
 	if agentOnly[op.Field] && typ != orders.Agent {
 		return fmt.Errorf("%s is a %s node; %s is set only on an agent node", op.Node, typ, op.Field)
 	}
+	only := map[string][]string{"segment": {orders.Segment, orders.ForEach}, "input": {orders.Segment},
+		"items": {orders.ForEach}, "parallel": {orders.ForEach}}
+	if types, ok := only[op.Field]; ok && !contains(types, typ) {
+		return fmt.Errorf("%s is a %s node; %s is set only on a %s node", op.Node, typ, op.Field, strings.Join(types, " or "))
+	}
 	var v *yaml.Node
 	switch op.Field {
 	case "run":
@@ -859,6 +893,21 @@ func (e *editing) setField() error {
 		v = num(k)
 	case "tools":
 		v = flowSeq(splitList(op.Value))
+	case "locks":
+		list := splitList(op.Value)
+		if len(list) == 0 {
+			return fmt.Errorf("locks needs at least one name")
+		}
+		if err := lockNames(list); err != nil {
+			return err
+		}
+		v = flowSeq(list)
+	case "parallel":
+		k, err := strconv.Atoi(op.Value)
+		if err != nil || k < 1 || k > orders.MaxParallel {
+			return fmt.Errorf("parallel must be a whole number from 1 to %d, not %q", orders.MaxParallel, op.Value)
+		}
+		v = num(k)
 	case "executor":
 		if err := e.declared("executors", op.Value); err != nil {
 			return err
@@ -938,6 +987,12 @@ func (e *editing) declareCheck() error {
 		if op.Soft != nil && *op.Soft {
 			v.Content = append(v.Content, str("soft"), &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"})
 		}
+		if len(op.Locks) > 0 {
+			if err := lockNames(op.Locks); err != nil {
+				return err
+			}
+			v.Content = append(v.Content, str("locks"), flowSeq(op.Locks))
+		}
 		if _, added := e.section("checks", op.Name, v); !added {
 			e.t.insert(sec, len(sec.Content)/2, str(op.Name), v)
 		}
@@ -958,6 +1013,27 @@ func (e *editing) declareCheck() error {
 		} else {
 			e.unset(c, "soft")
 		}
+	}
+	if len(op.Locks) > 0 {
+		if err := lockNames(op.Locks); err != nil {
+			return err
+		}
+		e.set(c, "locks", flowSeq(op.Locks), checkOrder)
+	}
+	return nil
+}
+
+// lockNames checks the names of locks.
+func lockNames(list []string) error {
+	seen := map[string]bool{}
+	for _, l := range list {
+		if !namePattern.MatchString(l) {
+			return fmt.Errorf("lock %q: use letters, digits, '_', '-' and '.' only", l)
+		}
+		if seen[l] {
+			return fmt.Errorf("lock %q is listed twice", l)
+		}
+		seen[l] = true
 	}
 	return nil
 }

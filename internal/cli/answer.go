@@ -77,6 +77,16 @@ func (c *command) answer(id int64, f *answerFlags) int {
 	if err != nil {
 		return c.fail(err)
 	}
+	// A child campaign is answered through the campaign a person started.
+	if k.Parent != 0 {
+		top, err := engine.Top(c.chron, k.ID)
+		if err != nil {
+			return c.fail(err)
+		}
+		if k, err = c.chron.Campaign(top); err != nil {
+			return c.fail(err)
+		}
+	}
 	asked, st, err := engine.Pending(c.chron, k.ID)
 	if err != nil {
 		return c.fail(err)
@@ -97,7 +107,8 @@ func (c *command) answer(id int64, f *answerFlags) int {
 	if len(f.values) > 0 || len(f.comments) > 0 || *f.outcome != "" {
 		r.Given = ask.Given{Values: f.values, Comments: f.comments, Outcome: *f.outcome}
 	} else {
-		printAsked(c.p, c.stdout, c.o, k.ID, asked, false)
+		ao, _ := engine.OrdersOf(c.o, c.chron, asked.Campaign)
+		printAsked(c.p, c.stdout, c.o, ao, k.ID, asked, false)
 		r.Ask = asked.Seq
 		if r.Given, err = c.interview(asked); err != nil {
 			return c.fail(err)
@@ -203,11 +214,22 @@ func problem(p *i18n.Printer, err error) string {
 
 // printAsked shows an open question: what is asked, what to look at, and
 // how to answer it.
-func printAsked(p *i18n.Printer, w io.Writer, o *orders.Orders, id int64, asked *chronicle.Event, commands bool) {
+//
+// o is the orders of the campaign a person started and id its number, which
+// the commands name; no is the orders of the campaign that asks, which may be
+// a child running a segment.
+func printAsked(p *i18n.Printer, w io.Writer, o, no *orders.Orders, id int64, asked *chronicle.Event, commands bool) {
+	if no == nil {
+		no = o
+	}
 	at := asked.At.Local().Format("2006-01-02 15:04:05")
-	fmt.Fprintln(w, p.T("answer.asks."+asked.Reason, "node", asked.Node, "seq", asked.Seq, "at", at, "round", asked.Round))
+	node := asked.Node
+	if asked.Campaign != id {
+		node = p.T("answer.node_in_campaign", "node", asked.Node, "campaign", asked.Campaign)
+	}
+	fmt.Fprintln(w, p.T("answer.asks."+asked.Reason, "node", node, "seq", asked.Seq, "at", at, "round", asked.Round))
 	for _, s := range asked.Show {
-		path := filepath.Join(o.Dir, filepath.FromSlash(s))
+		path := filepath.Join(no.Dir, filepath.FromSlash(s))
 		if _, err := os.Stat(path); err != nil {
 			path = p.T("answer.not_found", "path", path)
 		}
@@ -218,7 +240,7 @@ func printAsked(p *i18n.Printer, w io.Writer, o *orders.Orders, id int64, asked 
 	}
 	if len(asked.Outcomes) > 0 {
 		var opts []string
-		node := o.Nodes[asked.Node]
+		node := no.Nodes[asked.Node]
 		for _, out := range asked.Outcomes {
 			if node != nil && node.On[out] != "" {
 				out += " (-> " + node.On[out] + ")"

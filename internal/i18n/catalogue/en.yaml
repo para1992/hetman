@@ -35,6 +35,12 @@ explain.where.offline: "It has been stopped at {node} since {at}: attempt {attem
 explain.where.running: "{node} attempt {attempt} started at {at} and has not finished."
 explain.where.interrupted: "{node} attempt {attempt} was interrupted at {at}; the step runs again when the campaign is resumed."
 explain.where.moved: "It moved to {node} at {at}; {node} has not started since."
+explain.where.lock: "Since {at} {node} waits for the lock {lock}, held by {holder}."
+explain.where.children:
+  one: "Its child campaign {children} has not finished yet."
+  other: "Its {n} child campaigns {children} have not finished yet."
+explain.child: campaign {child}
+explain.child_item: campaign {child} (item {item})
 explain.where.not_started: "{node} has not started yet."
 explain.where.halt_requested: "A halt was requested at {at}; it takes effect after the current step."
 explain.check.error: "{check} could not run: {error}"
@@ -60,6 +66,15 @@ explain.stopped: "The campaign stopped in the error state at {node}: {error}."
 explain.halt_requested: A halt was requested.
 explain.halted: The campaign halted before {node}.
 explain.resumed: The campaign was resumed.
+explain.child_started: "{node} ran its segment as campaign {child}."
+explain.child_started_item: "{node} ran item {item} as campaign {child}."
+explain.item_finished: "{node}: item {item} (campaign {child}) ended {outcome}."
+explain.item_not_run_failed: "{node}: item {item} was not run: it needs {needs}, which failed."
+explain.item_not_run_not_run: "{node}: item {item} was not run: it needs {needs}, which did not run."
+explain.lock_waited: "{node} waited for the lock {lock}, held by {holder}."
+explain.item_kept: "{node} kept item {item} (campaign {child}), done in an earlier attempt."
+explain.child_retried: "{node} ran its segment again in campaign {child}, from its failed step {at}."
+explain.retried_child: "{who}{via} retried campaign {child} at {node}; the campaign continues its running step."
 explain.nothing_ran_at: Nothing ran at {node}.
 explain.nothing_ran: Nothing has run yet.
 explain.never_back_to: The flow never went back to {node}.
@@ -120,6 +135,11 @@ op.words.effort: effort {effort}
 op.words.outcomes: outcomes {outcomes}
 op.words.timeout: timeout {timeout}
 op.words.on: on {on}
+op.words.segment: running the segment {segment}
+op.words.items: once for every item of {items}
+op.words.parallel: at most {n} at a time
+op.words.input: with the input {input}
+op.words.holding_locks: holding the locks {locks}
 op.note.rewritten: "{op} could not be changed in place, so the whole file was written out again: comments and key order are kept, blank lines, alignment and quoting are not"
 op.summary.new: create the orders file with its first node, whose main outcome leads to done
 op.summary.add: add a node after a node (on its main outcome, or the outcome via) or before a node; the flow is rewired through it
@@ -129,7 +149,7 @@ op.summary.link: make an outcome of a node lead to a node, done or failed
 op.summary.unlink: remove the transition of an outcome of a node
 op.summary.set: "set a field of a node: {fields}"
 op.summary.unset: "remove a field of a node: {fields}"
-op.summary.check: declare a check, or change the command, timeout or soft flag of a declared one (soft only warns; required blocks the gate)
+op.summary.check: declare a check, or change the command, timeout, soft flag or locks of a declared one (soft only warns; required blocks the gate)
 op.summary.executor: declare an executor (an adapter program and its arguments), or change its command
 op.summary.gate-add: add a declared check to a gate, at a position from 1 (the end when not given)
 op.summary.gate-remove: remove a check from a gate
@@ -187,6 +207,17 @@ engine.answered: "{node} answered: {outcome}"
 engine.answered_by: "{node} answered by {by}: {outcome}"
 engine.hook: "notification hook for {node}: {outcome} {error} (log {log})"
 engine.cannot_record_hook: "cannot record the notification hook: {error}"
+engine.lock_wait: "{node} waits for the lock {lock}, held by {holder}"
+engine.composite_failed: "{node} failed: {error}"
+engine.segment_started: "{node} runs the segment {flow} as campaign {child}"
+engine.segment_finished: "{node} finished: {outcome} (campaign {child}, {took})"
+engine.item_started: "{node}: item {item} runs as campaign {child}"
+engine.item_finished: "{node}: item {item} {outcome} (campaign {child})"
+engine.item_not_run_failed: "{node}: item {item} will not run: needs {needs}, which failed"
+engine.item_not_run_not_run: "{node}: item {item} will not run: needs {needs}, which did not run"
+engine.foreach_finished: "{node} finished: {outcome} ({done} of {n} item(s) done, {took})"
+engine.item_kept: "{node}: item {item} is kept from attempt {attempt} (campaign {child}, done)"
+engine.segment_retried: "{node} retries its campaign {child} at {at}"
 
 # ---- the command line
 
@@ -298,6 +329,7 @@ answer.asks.gate: "gate {node} asks (question #{seq}, {at}):"
 answer.asks.human: "human node {node} asks (question #{seq}, {at}):"
 answer.asks.dialogue: "agent step (round {round}) {node} asks (question #{seq}, {at}):"
 answer.not_found: "{path} (not found)"
+answer.node_in_campaign: "{node} in campaign {campaign}"
 answer.look_at: "  look at: {path}"
 answer.outcome_one_of: "  outcome, one of: {outcomes}"
 answer.answer_with: "  answer: {command}"
@@ -362,6 +394,32 @@ status.d.offline: "stopped at {node}: connectivity was lost (hetman resume runs 
 status.d.halt_requested: "{where}, halt requested: halts after the current step"
 status.d.interrupted: "{where}, but no hetman process is running it: interrupted (hetman resume to continue)"
 status.d.undriven: "{where}, no hetman process is running it (hetman resume to continue)"
+status.d.lock: "waiting at {node} for the lock {lock}, held by {holder}"
+status.d.lock_undriven: "waiting at {node} for the lock {lock}, but no hetman process is running it (hetman resume to continue)"
+status.st.waiting_lock: waiting for lock
+status.st.halted: halted
+status.lock_held: "{lock} (held by {holder})"
+status.part_of: "part of campaign {top}: run by node {where} of campaign {parent}; halt, resume and answer it through campaign {top}"
+status.part_of_item: "{node}, item {item}"
+status.child.segment: segment
+status.child.item: item {item}
+status.child.needs: needs {items}
+status.child.campaign: campaign {id}
+status.child.why_failed: needs {item}, which failed
+status.child.why_not_run: needs {item}, which did not run
+status.child.asking: at {node}, waits for a person
+status.child.halted: before {node}
+status.child.lock: "{lock} at {node} (held by {holder})"
+status.child.waiting: "{wait} at {node}"
+status.child.running: "{node} (attempt {attempt})"
+status.child.kept: "{outcome} (kept from attempt {n})"
+status.child.earlier: "attempt {n}, not run again"
+status.waiter.at: "{path} (campaign {id})"
+status.waiter.asking: "{at} waits for a person at {node}: hetman answer"
+status.waiter.error: "{at} stopped in the error state: {error}"
+status.waiter.lock: "{at} waits at {node} for the lock {lock}, held by {holder}"
+status.waiter.offline: "{at} stopped at {node}: connectivity was lost (hetman resume runs it again)"
+status.waiter.limit: "{at} stopped at {node}: the subscription limit was reached (hetman resume runs it again)"
 
 # ---- Scribe with a model: one sentence to one operation or question
 
@@ -408,8 +466,11 @@ scribe.usage_flags: |
 
   node flags (new, add): -run CMD, -timeout D, -checks A,B, -executor NAME, -model M, -effort E,
     -tools A,B, -attempts N, -prompt FILE, -schema FILE, -outcomes A,B, -on OUTCOME=TARGET (repeat),
-    -starters (create missing prompt and schema files)
-  set and unset fields: run, timeout, idle_timeout, executor, model, effort, tools, attempts, dialogue, prompt, schema
+    -starters (create missing prompt and schema files), -locks A,B (resources held exclusively),
+    -segment FILE (segment, foreach), -input REF (segment), -items REF and -parallel N (foreach)
+  set fields: run, timeout, idle_timeout, executor, model, effort, tools, attempts, dialogue, prompt, schema,
+    locks, segment, input, items, parallel
+  unset fields: timeout, idle_timeout, model, effort, tools, attempts, dialogue, locks, input, parallel
   language codes: {codes}
   flags of every operation:
     -f FILE    orders file (default orders.yaml)
@@ -625,6 +686,7 @@ page.pos.limit: "stopped at {node}: subscription limit reached"
 page.pos.offline: "stopped at {node}: connectivity lost"
 page.pos.interrupted: stopped at {node}, no process drives it
 page.pos.at: at {node}
+page.pos.lock: waits at {node} for the lock {lock}, held by {holder}
 page.campaign.title: "Campaign #{id}"
 page.halt: Halt
 page.halt.title: Halt after the current step
@@ -647,6 +709,7 @@ page.ask.reason.dialogue: The agent step asks at {node}.
 page.ask.answer_below: Answer below, or in a terminal with {command}.
 page.ask.answer_card: "{link}, or in a terminal with {command}"
 page.ask.answer_card_link: Answer on its step card
+page.ask.child_node: "{node} in {path} (campaign #{id})"
 page.ask.undriven: "No process drives the campaign now: an answer given here continues it from this server; after an answer in a terminal, resume it."
 page.wait.limit: Subscription limit reached.
 page.wait.limit_text: The adapter gave no time to retry, so the campaign waits for a person. Resume runs {node} again; the lost attempt does not count.
@@ -680,6 +743,19 @@ page.tile.limit: limit reached
 page.tile.offline: offline
 page.tile.halted_here: halted here
 page.tile.next: next
+page.tile.lock: waits for lock {lock} (held by {holder})
+page.tile.child.why_failed: needs {item}, which failed
+page.tile.child.why_not_run: needs {item}, which did not run
+page.tile.child.needs: needs {items}
+page.tile.child.error: "error: {error}"
+page.tile.child.halted: halted
+page.tile.child.kept: kept from attempt {n}
+page.tile.child.attempt: attempt {n}
+page.tile.child.earlier: earlier attempt {n}, not run again
+page.child.runs_this: "{parent} runs this one at {path}"
+page.child.parent: "↑ campaign #{id}"
+page.child.part_of: "(part of {top})"
+page.child.campaign: "campaign #{id}"
 page.attempts: "{n} attempts"
 page.legend: legend
 page.card.transitions: Transitions
@@ -776,6 +852,8 @@ engine.refuse.driven: "campaign {id} is being driven by a process; halt it first
 engine.refuse.nothing_failed: "campaign {id} has nothing to retry: it did not end in failed, is not stopped in the error state and its current step has not failed; rewind sends it back to a node it visited"
 engine.refuse.not_visited: "campaign {id} has never been at {node}; it can only be sent back to a node it has visited"
 engine.refuse.not_in_orders: "{node} is not in the orders {path} now"
+engine.refuse.child: "campaign {id} is run by campaign {top}; retry or rewind campaign {top}"
+engine.refuse.child_driven: "campaign {id} cannot be sent back while its child campaign {child} is being driven by a process; halt it first (hetman halt -c {id}), then retry or rewind once it has halted"
 explain.where.retried: "{who}{via} asked at {at} for {node} to run again with a fresh attempt budget; it has not started since."
 explain.where.rewound: "{who}{via} sent it back to {node} at {at}; {node} and every step after it run again."
 explain.retried: "{who}{via} asked for {node} to run again with a fresh attempt budget."

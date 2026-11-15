@@ -36,6 +36,11 @@ const (
 	Asked           = "asked"         // a step asks a person questions; the campaign waits for the answers
 	Answered        = "answered"      // a person answered the questions of an asked event
 	Notified        = "notified"      // the notification hook ran for an event that made the campaign wait for a person
+	ChildStarted    = "child_started" // a segment or for-each step started a child campaign
+	ItemFinished    = "item_finished" // the child campaign of a for-each item reached its end
+	ItemNotRun      = "item_not_run"  // a for-each item will not run, because an item it needs did not reach done
+	LockWaiting     = "lock_waiting"  // a step waits for a lock another step holds
+	ItemKept        = "item_kept"     // a retried for-each keeps an item that reached done in the attempt before
 	Retried         = "retried"       // a person sent the campaign back to a failed step, with a fresh attempt budget
 	Rewound         = "rewound"       // a person sent the campaign back to a node it visited before
 )
@@ -117,6 +122,16 @@ type Details struct {
 	Ask       int64          `json:"ask,omitempty"`       // answered, notified: the seq of the event answered or announced
 	By        string         `json:"by,omitempty"`        // answered, retried, rewound: who did it, when known
 	Via       string         `json:"via,omitempty"`       // answered, retried, rewound: the command line or the page
+
+	Locks      []string        `json:"locks,omitempty"`       // step_started: the locks the step holds
+	Lock       string          `json:"lock,omitempty"`        // lock_waiting: the lock waited for
+	Holder     string          `json:"holder,omitempty"`      // lock_waiting: who holds it
+	Child      int64           `json:"child,omitempty"`       // child_started, item_finished, step_finished of a segment: the child campaign
+	Item       string          `json:"item,omitempty"`        // for-each events and a child's campaign_started: the item id
+	Needs      string          `json:"needs,omitempty"`       // item_not_run: the item it needed that did not reach done
+	Items      json.RawMessage `json:"items,omitempty"`       // step_started of a for-each: the list, as read when the step started
+	Parent     int64           `json:"parent,omitempty"`      // campaign_started of a child: the campaign that started it
+	ParentNode string          `json:"parent_node,omitempty"` // campaign_started of a child: the node of the parent that started it
 }
 
 // Campaign is one execution of a flow.
@@ -125,6 +140,7 @@ type Campaign struct {
 	Flow    string
 	Orders  string
 	Started time.Time
+	Parent  int64 // the campaign whose segment or for-each step started this one; 0 for a campaign started by a person
 }
 
 // ErrNoCampaign is returned when a campaign does not exist.
@@ -176,7 +192,26 @@ func Open(path string) (*Chronicle, error) {
 		db.Close()
 		return nil, fmt.Errorf("chronicle %s: %w", path, err)
 	}
+	if err := addParent(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("chronicle %s: %w", path, err)
+	}
 	return &Chronicle{db: db}, nil
+}
+
+// addParent adds the parent column to a journal written before child
+// campaigns existed. Two processes may try at once; one of them wins.
+func addParent(db *sql.DB) error {
+	if _, err := db.Exec(`SELECT parent FROM campaigns LIMIT 0`); err == nil {
+		return nil
+	}
+	_, err := db.Exec(`ALTER TABLE campaigns ADD COLUMN parent INTEGER NOT NULL DEFAULT 0`)
+	if err != nil {
+		if _, again := db.Exec(`SELECT parent FROM campaigns LIMIT 0`); again == nil {
+			return nil
+		}
+	}
+	return err
 }
 
 // fileURI turns an absolute path with forward slashes into the "file:" URI
@@ -213,13 +248,24 @@ const timeFormat = time.RFC3339Nano
 // the language for the person (empty for none). Both stay as recorded for
 // the whole campaign.
 func (c *Chronicle) NewCampaign(flow, ordersPath, start string, input json.RawMessage, language string) (int64, error) {
+	return c.newCampaign(flow, ordersPath, start, Details{Input: input, Language: language})
+}
+
+// NewChild creates the child campaign a step of campaign parent starts at
+// node to run a segment, item being the for-each item it runs ("" for a
+// segment node).
+func (c *Chronicle) NewChild(parent int64, node, item, flow, ordersPath, start string, input json.RawMessage, language string) (int64, error) {
+	return c.newCampaign(flow, ordersPath, start, Details{Input: input, Language: language, Parent: parent, ParentNode: node, Item: item})
+}
+
+func (c *Chronicle) newCampaign(flow, ordersPath, start string, d Details) (int64, error) {
 	tx, err := c.db.Begin()
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback()
 	now := time.Now().UTC().Format(timeFormat)
-	res, err := tx.Exec(`INSERT INTO campaigns(flow, orders, started_at) VALUES(?, ?, ?)`, flow, ordersPath, now)
+	res, err := tx.Exec(`INSERT INTO campaigns(flow, orders, started_at, parent) VALUES(?, ?, ?, ?)`, flow, ordersPath, now, d.Parent)
 	if err != nil {
 		return 0, err
 	}
@@ -227,7 +273,7 @@ func (c *Chronicle) NewCampaign(flow, ordersPath, start string, input json.RawMe
 	if err != nil {
 		return 0, err
 	}
-	details, err := json.Marshal(Details{Input: input, Language: language})
+	details, err := json.Marshal(d)
 	if err != nil {
 		return 0, err
 	}
@@ -241,8 +287,8 @@ func (c *Chronicle) NewCampaign(flow, ordersPath, start string, input json.RawMe
 func (c *Chronicle) Campaign(id int64) (Campaign, error) {
 	var k Campaign
 	var started string
-	err := c.db.QueryRow(`SELECT id, flow, orders, started_at FROM campaigns WHERE id = ?`, id).
-		Scan(&k.ID, &k.Flow, &k.Orders, &started)
+	err := c.db.QueryRow(`SELECT id, flow, orders, started_at, parent FROM campaigns WHERE id = ?`, id).
+		Scan(&k.ID, &k.Flow, &k.Orders, &started, &k.Parent)
 	if errors.Is(err, sql.ErrNoRows) {
 		return k, fmt.Errorf("campaign %d: %w", id, ErrNoCampaign)
 	}
@@ -250,10 +296,10 @@ func (c *Chronicle) Campaign(id int64) (Campaign, error) {
 	return k, err
 }
 
-// Latest returns the most recently created campaign.
+// Latest returns the most recently created campaign a person started.
 func (c *Chronicle) Latest() (Campaign, error) {
 	var id int64
-	err := c.db.QueryRow(`SELECT id FROM campaigns ORDER BY id DESC LIMIT 1`).Scan(&id)
+	err := c.db.QueryRow(`SELECT id FROM campaigns WHERE parent = 0 ORDER BY id DESC LIMIT 1`).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Campaign{}, ErrNoCampaign
 	}
@@ -263,9 +309,10 @@ func (c *Chronicle) Latest() (Campaign, error) {
 	return c.Campaign(id)
 }
 
-// Campaigns returns up to limit campaigns, newest first.
+// Campaigns returns up to limit campaigns a person started, newest first;
+// child campaigns are reached through their parents.
 func (c *Chronicle) Campaigns(limit int) ([]Campaign, error) {
-	rows, err := c.db.Query(`SELECT id, flow, orders, started_at FROM campaigns ORDER BY id DESC LIMIT ?`, limit)
+	rows, err := c.db.Query(`SELECT id, flow, orders, started_at, parent FROM campaigns WHERE parent = 0 ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -274,7 +321,7 @@ func (c *Chronicle) Campaigns(limit int) ([]Campaign, error) {
 	for rows.Next() {
 		var k Campaign
 		var started string
-		if err := rows.Scan(&k.ID, &k.Flow, &k.Orders, &started); err != nil {
+		if err := rows.Scan(&k.ID, &k.Flow, &k.Orders, &started, &k.Parent); err != nil {
 			return nil, err
 		}
 		k.Started, _ = time.Parse(timeFormat, started)
@@ -350,6 +397,9 @@ type State struct {
 	WaitUntil     time.Time      // for a limit: when the step runs again on its own; zero means a person resumes
 	Ask           *Event         // the asked event of the step at Node until that step has used its answers
 	Answer        *Event         // the answered event of Ask, once a person has answered
+	LockWait      string         // the lock the next step at Node waits for; empty when it waits for none
+	LockHolder    string         // who holds LockWait
+	Children      []int64        // child campaigns of the running step at Node that have not reached their end
 }
 
 // Asking reports whether the campaign waits for a person to answer Ask.
@@ -373,10 +423,24 @@ func Replay(events []Event) State {
 			s.Attempts[e.Node]++
 			s.Waiting, s.WaitUntil = "", time.Time{}
 			s.Ask, s.Answer = nil, nil
+			s.LockWait, s.LockHolder, s.Children = "", "", nil
+		case LockWaiting:
+			s.LockWait, s.LockHolder = e.Lock, e.Holder
+		case ChildStarted:
+			if s.Running && e.Node == s.Node && e.Attempt == s.Attempt {
+				s.Children = append(s.Children, e.Child)
+			}
+		case ItemFinished:
+			for i, id := range s.Children {
+				if id == e.Child {
+					s.Children = append(s.Children[:i:i], s.Children[i+1:]...)
+					break
+				}
+			}
 		case StepInterrupted:
 			s.Running = false
 		case StepFinished:
-			s.Running = false
+			s.Running, s.Children = false, nil
 			s.HasOutcome, s.Outcome = e.Outcome != "", e.Outcome
 			s.Ask, s.Answer = nil, nil
 			if Counts(e.Failure) {
@@ -419,12 +483,14 @@ func Replay(events []Event) State {
 			s.HaltRequested, s.Halted = false, false
 			s.Waiting, s.WaitUntil = "", time.Time{}
 			s.Ask, s.Answer = nil, nil
+			s.LockWait, s.LockHolder, s.Children = "", "", nil
 		case Stopped:
 			s.Error = e.Error
 		case HaltRequested:
 			s.HaltRequested = true
 		case Halted:
 			s.Halted = true
+			s.LockWait, s.LockHolder = "", ""
 		case Resumed:
 			s.Error, s.HaltRequested, s.Halted = "", false, false
 			// A person resuming answers a wait for a person; a wait for a

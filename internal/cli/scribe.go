@@ -38,7 +38,7 @@ var opUsage = []struct{ op, form, example string }{
 	{edit.OpUnlink, "unlink NODE OUTCOME", "hetman scribe unlink release rework"},
 	{edit.OpSet, "set NODE FIELD VALUE", "hetman scribe set build timeout 5m"},
 	{edit.OpUnset, "unset NODE FIELD", "hetman scribe unset build timeout"},
-	{edit.OpCheck, "check NAME [-run CMD] [-timeout D] [-soft | -required]", "hetman scribe check lint -run 'sh checks/lint.sh' -soft"},
+	{edit.OpCheck, "check NAME [-run CMD] [-timeout D] [-soft | -required] [-locks A,B]", "hetman scribe check lint -run 'sh checks/lint.sh' -soft"},
 	{edit.OpExecutor, "executor NAME -run CMD", "hetman scribe executor stub -run './bin/stub-adapter plan.json'"},
 	{edit.OpGateAdd, "gate-add GATE CHECK [-at N]", "hetman scribe gate-add ready style -at 1"},
 	{edit.OpGateRemove, "gate-remove GATE CHECK", "hetman scribe gate-remove ready lint"},
@@ -165,9 +165,9 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 		switch f {
 		case "run":
 			run = fs.String("run", "", p.T("flag.run"))
-		case "checks", "tools", "outcomes", "options":
+		case "checks", "tools", "outcomes", "options", "locks":
 			lists[f] = fs.String(f, "", p.T("flag.list"))
-		case "at", "attempts":
+		case "at", "attempts", "parallel":
 			ints[f] = fs.Int(f, 0, p.T("flag.number"))
 		case "starters":
 			starters = fs.Bool("starters", false, p.T("flag.starters"))
@@ -240,6 +240,14 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 			op.Schema = value
 		case "language":
 			op.Language = value
+		case "segment":
+			op.Segment = value
+		case "input":
+			op.Input = value
+		case "items":
+			op.Items = value
+		case "locks":
+			op.Locks = listOf(value)
 		case "checks":
 			op.Checks = listOf(value)
 		case "tools":
@@ -248,15 +256,18 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 			op.Outcomes = listOf(value)
 		case "options":
 			op.Options = listOf(value)
-		case "at", "attempts":
+		case "at", "attempts", "parallel":
 			n, err := strconv.Atoi(value)
 			if err != nil {
 				return fmt.Errorf("-%s must be a number", field) // i18n: keep (flag parsing has checked it already)
 			}
-			if field == "at" {
+			switch field {
+			case "at":
 				op.At = n
-			} else {
+			case "attempts":
 				op.Attempts = n
+			default:
+				op.Parallel = n
 			}
 		}
 		return nil

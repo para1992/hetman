@@ -52,7 +52,7 @@ func (e *Engine) awaitAnswer(ctx context.Context, asked *chronicle.Event) error 
 				key = "engine.asks_decision_questions"
 			}
 		}
-		e.say(key, "node", asked.Node, "n", len(asked.Questions), "command", AnswerCommand(e.Orders, e.Campaign))
+		e.say(key, "node", asked.Node, "n", len(asked.Questions), "command", AnswerCommand(e.top().Orders, e.top().Campaign))
 	}
 	select {
 	case <-ctx.Done():
@@ -128,7 +128,7 @@ func (e *Engine) writeAnswers(asked, answer *chronicle.Event) error {
 		doc.Answers = append(doc.Answers, item{q.ID, q.Question, q.Kind, byID[q.ID].Value, byID[q.ID].Comment})
 	}
 	data, _ := json.MarshalIndent(doc, "", "  ")
-	path := filepath.Join(CampaignDir(e.Orders, e.Campaign), "work", filepath.FromSlash(AnswersFile(asked.Node)))
+	path := filepath.Join(e.dir(), "work", filepath.FromSlash(AnswersFile(asked.Node)))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -184,19 +184,54 @@ const (
 )
 
 // Pending returns the asked event a campaign waits on, or nil.
+//
+// A campaign whose segment or for-each step runs children also waits on the
+// questions of those children; the asked event then names the child in its
+// Campaign. The state returned is always the campaign's own.
 func Pending(ch *chronicle.Chronicle, id int64) (*chronicle.Event, chronicle.State, error) {
 	st, err := state(ch, id)
-	if err != nil || !st.Asking() {
-		return nil, st, err
+	if err != nil || st.Asking() {
+		return st.Ask, st, err
 	}
-	return st.Ask, st, nil
+	if st.Ask == nil && st.End == "" {
+		asks, err := childAsks(ch, st, 0)
+		if err != nil || len(asks) == 0 {
+			return nil, st, err
+		}
+		return asks[0], st, nil
+	}
+	return nil, st, nil
 }
 
 // Answer checks a reply against the open question of a campaign and records
 // it. A reply that does not fit changes nothing. Whatever drives the
 // campaign continues with it; with no driver, the campaign continues on
 // resume.
+//
+// The questions of a child campaign are answered through the campaign that
+// runs it: Answer finds the open question in the campaign's running
+// children, the one numbered r.Ask when it is given, else the first.
 func Answer(ch *chronicle.Chronicle, id int64, r Reply) (chronicle.Event, error) {
+	st, err := state(ch, id)
+	if err != nil {
+		return chronicle.Event{}, err
+	}
+	if st.Ask == nil && st.End == "" {
+		asks, err := childAsks(ch, st, 0)
+		if err != nil {
+			return chronicle.Event{}, err
+		}
+		for _, a := range asks {
+			if r.Ask == 0 || r.Ask == a.Seq {
+				return answerIn(ch, a.Campaign, r)
+			}
+		}
+	}
+	return answerIn(ch, id, r)
+}
+
+// answerIn answers the open question of one campaign.
+func answerIn(ch *chronicle.Chronicle, id int64, r Reply) (chronicle.Event, error) {
 	st, err := state(ch, id)
 	if err != nil {
 		return chronicle.Event{}, err
@@ -244,17 +279,23 @@ type Notice struct {
 	Outcomes  []string       `json:"outcomes,omitempty"`
 	Show      []string       `json:"show,omitempty"`
 	Command   string         `json:"command"`
-	Task      *TaskRef       `json:"task,omitempty"` // the task the campaign handles, when a dispatcher started it
+	Task      *TaskRef       `json:"task,omitempty"`  // the task the campaign handles, when a dispatcher started it
+	Child     int64          `json:"child,omitempty"` // the child campaign the event comes from; Campaign is the one a person started
+	Path      string         `json:"path,omitempty"`  // where in the campaign that child runs, such as "items/b"
 }
 
 // notice builds the notice for an event that makes the campaign wait for a
 // person, or reports false for any other event.
 func (e *Engine) notice(ev chronicle.Event) (Notice, bool) {
-	n := Notice{Campaign: e.Campaign, Flow: e.Orders.Flow, Orders: e.Orders.Path, Node: ev.Node, Event: ev.Seq, At: ev.At,
-		Command: ResumeCommand(e.Orders, e.Campaign), Task: e.task()}
+	top := e.top()
+	n := Notice{Campaign: top.Campaign, Flow: top.Orders.Flow, Orders: top.Orders.Path, Node: ev.Node, Event: ev.Seq, At: ev.At,
+		Command: ResumeCommand(top.Orders, top.Campaign), Task: top.task()}
+	if e.parent != nil {
+		n.Child, n.Path = e.Campaign, e.path()
+	}
 	switch {
 	case ev.Kind == chronicle.Asked:
-		n.Reason, n.Questions, n.Outcomes, n.Command = ev.Reason, ev.Questions, ev.Outcomes, AnswerCommand(e.Orders, e.Campaign)
+		n.Reason, n.Questions, n.Outcomes, n.Command = ev.Reason, ev.Questions, ev.Outcomes, AnswerCommand(e.top().Orders, e.top().Campaign)
 		for _, s := range ev.Show {
 			n.Show = append(n.Show, filepath.Join(e.Orders.Dir, filepath.FromSlash(s)))
 		}
@@ -275,6 +316,9 @@ func (e *Engine) notice(ev chronicle.Event) (Notice, bool) {
 	default:
 		return n, false
 	}
+	if e.parent != nil {
+		n.Message = e.path() + ": " + n.Message
+	}
 	return n, true
 }
 
@@ -286,7 +330,7 @@ func NotifyLog(seq int64) string { return "logs/notify." + strconv.FormatInt(seq
 // campaign never waits for it; it is killed after its timeout, and how it
 // ended is recorded as a notified event.
 func (e *Engine) notify(ev chronicle.Event) {
-	h := e.Orders.Notify
+	h := e.top().Orders.Notify
 	if h == nil {
 		return
 	}
@@ -314,7 +358,7 @@ func (e *Engine) notify(ev chronicle.Event) {
 }
 
 func (e *Engine) runHook(h *orders.Notify, ev chronicle.Event, reason string, payload []byte, logRel string) (outcome string, exit *int, msg string) {
-	dir := CampaignDir(e.Orders, e.Campaign)
+	dir := e.dir()
 	for _, sub := range []string{"logs", "work"} {
 		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
 			return "error", nil, err.Error()
@@ -325,8 +369,9 @@ func (e *Engine) runHook(h *orders.Notify, ev chronicle.Event, reason string, pa
 		return "error", nil, err.Error()
 	}
 	defer log.Close()
-	cmd := exec.Command(e.Orders.Program(h.Run[0]), h.Run[1:]...)
-	cmd.Dir = e.Orders.Dir
+	top := e.top().Orders
+	cmd := exec.Command(top.Program(h.Run[0]), h.Run[1:]...)
+	cmd.Dir = top.Dir
 	env, err := e.env(ev.Node, "", ev.Attempt, "")
 	if err != nil {
 		fmt.Fprintln(log, "hetman:", err)

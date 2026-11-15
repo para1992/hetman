@@ -8,6 +8,7 @@ import (
 
 	"hetman/internal/chronicle"
 	"hetman/internal/dispatch"
+	"hetman/internal/engine"
 	"hetman/internal/i18n"
 	"hetman/internal/orders"
 )
@@ -110,6 +111,15 @@ func (s *Server) ordersFor(id int64) *orders.Orders {
 // dispatcher routed a task to. It falls back to the served orders when that
 // file is elsewhere or does not load.
 func (s *Server) ordersOf(k chronicle.Campaign) (*orders.Orders, string) {
+	// A child campaign belongs to the orders of the campaign a person
+	// started; the segment it runs is found from there.
+	if k.Parent != 0 {
+		if top, err := engine.Top(s.Chron, k.ID); err == nil && top != k.ID {
+			if tk, err := s.Chron.Campaign(top); err == nil {
+				return s.ordersOf(tk)
+			}
+		}
+	}
 	o, problem := s.currentOrders()
 	if k.Orders == "" || k.Orders == o.Path || filepath.Dir(k.Orders) != o.Dir {
 		return o, problem

@@ -38,6 +38,16 @@ const TraceFile = "trace.txt"
 //	sleep TIME          sleep, then exit with 0
 //	block DIR           write DIR/started.<node>.<attempt>, wait for DIR/release,
 //	                    then write DIR/exited.<node>.<attempt>
+//	write FILE TEXT     write TEXT to work/FILE and list it as an artifact
+//	item DIR            act on the run input of a for-each item {"id", "sleep",
+//	                    "wait", "fail", "failonce"}: write DIR/started.<id>.<run id>,
+//	                    wait for DIR/release when "wait" is true, sleep "sleep",
+//	                    then exit 1 when "fail" is true, or when "failonce" is true
+//	                    and DIR/failed.<id> does not exist yet (it is written),
+//	                    else write DIR/finished.<id>
+//	failonce DIR        exit 1 the first time for this node (DIR/failed.<node>), then 0
+//	badonce DIR         write a result file that is not JSON the first time for
+//	                    this node (DIR/bad.<node>), then exit 0
 //	orphan DIR          attempt 1: start a grandchild writing DIR/heartbeat, write
 //	                    DIR/started.<node>.1 and sleep; later attempts: write
 //	                    "dead" or "alive" for that grandchild to DIR/old-grandchild
@@ -140,6 +150,52 @@ func Main(args []string) int {
 	case "sleep":
 		d, _ := time.ParseDuration(arg(args, 1))
 		time.Sleep(d)
+		return 0
+	case "write":
+		must(os.WriteFile(filepath.Join(runDir, arg(args, 1)), []byte(arg(args, 2)), 0o644))
+		writeResult(map[string]any{"artifacts": []string{arg(args, 1)}})
+		return 0
+	case "item":
+		dir := arg(args, 1)
+		data, err := os.ReadFile(os.Getenv("HETMAN_INPUT_FILE"))
+		must(err)
+		var in struct {
+			ID    string `json:"id"`
+			Sleep string `json:"sleep"`
+			Wait  bool   `json:"wait"`
+			Fail  bool   `json:"fail"`
+			Once  bool   `json:"failonce"`
+		}
+		must(json.Unmarshal(data, &in))
+		must(os.WriteFile(filepath.Join(dir, "started."+in.ID+"."+os.Getenv("HETMAN_RUN_ID")), nil, 0o644))
+		for in.Wait && !exists(filepath.Join(dir, "release")) {
+			time.Sleep(20 * time.Millisecond)
+		}
+		if d, err := time.ParseDuration(in.Sleep); err == nil {
+			time.Sleep(d)
+		}
+		if in.Fail {
+			return 1
+		}
+		if in.Once && !exists(filepath.Join(dir, "failed."+in.ID)) {
+			must(os.WriteFile(filepath.Join(dir, "failed."+in.ID), nil, 0o644))
+			return 1
+		}
+		must(os.WriteFile(filepath.Join(dir, "finished."+in.ID), nil, 0o644))
+		return 0
+	case "failonce":
+		mark := filepath.Join(arg(args, 1), "failed."+node)
+		if !exists(mark) {
+			must(os.WriteFile(mark, nil, 0o644))
+			return 1
+		}
+		return 0
+	case "badonce":
+		mark := filepath.Join(arg(args, 1), "bad."+node)
+		if !exists(mark) {
+			must(os.WriteFile(mark, nil, 0o644))
+			must(os.WriteFile(os.Getenv("HETMAN_RESULT_FILE"), []byte("not json"), 0o644))
+		}
 		return 0
 	case "block":
 		dir := arg(args, 1)
