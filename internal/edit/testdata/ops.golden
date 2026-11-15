@@ -362,3 +362,55 @@
  # Adapters that run agent steps.
  executors:
 == language removed
+== add segment after
+--- orders.yaml
++++ orders.yaml
+@@ -39,6 +39,12 @@
+       - id: notes
+         question: 'Are the release notes written?'
+-    on: {pass: ship, blocked: build}
++    on: {pass: deploy, blocked: build}
+ 
++  deploy:
++    type: segment
++    segment: segments/deploy.yaml
++    locks: [prod]
++    on: {done: ship, failed: failed}
++
+   ship:
+     type: script
+== add foreach after and set
+--- orders.yaml
++++ orders.yaml
+@@ -44,4 +44,11 @@
+     type: script
+     run: [sh, steps/ship.sh]
+-    on: {ok: done, fail: failed, again: ship}   # the end
++    on: {ok: each, fail: failed, again: ship}   # the end
++
++  each:
++    type: foreach
++    segment: segments/deploy.yaml
++    items: input.services
++    parallel: 3
++    on: {done: done, failed: failed}
+ # Nothing after this line is part of the flow.
+== set and unset locks
+--- orders.yaml
++++ orders.yaml
+@@ -44,4 +44,5 @@
+     type: script
+     run: [sh, steps/ship.sh]
++    locks: [prod, writer]
+     on: {ok: done, fail: failed, again: ship}   # the end
+ # Nothing after this line is part of the flow.
+== check locks
+--- orders.yaml
++++ orders.yaml
+@@ -12,5 +12,5 @@
+   # quick ones first
+   lint:   {run: [sh, checks/lint.sh], soft: true}
+-  tests:  {run: [sh, checks/tests.sh], timeout: 20m}
++  tests:  {run: [sh, checks/tests.sh], timeout: 20m, locks: [stand]}
+ 
+ nodes:

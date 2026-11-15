@@ -220,7 +220,7 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 		text += fmt.Sprintf("\n\n---\nYour previous answer (attempt %d) was rejected because it does not match the required output schema:\n- %s\nAnswer again with a single JSON object that matches the schema.\n",
 			c.rejected, strings.ReplaceAll(c.feedback, "; ", "\n- "))
 	}
-	dir := CampaignDir(e.Orders, e.Campaign)
+	dir := e.dir()
 	for _, sub := range []string{"work", "logs", "results", "prompts"} {
 		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
 			return err
@@ -405,7 +405,7 @@ func (e *Engine) judge(node *orders.Node, attempt int, r adapterRun, fin *chroni
 	var pretty bytes.Buffer
 	if json.Indent(&pretty, m.Output, "", "  ") == nil {
 		pretty.WriteByte('\n')
-		os.WriteFile(filepath.Join(CampaignDir(e.Orders, e.Campaign), filepath.FromSlash(ResultFile(node.ID, "", attempt))), pretty.Bytes(), 0o644)
+		os.WriteFile(filepath.Join(e.dir(), filepath.FromSlash(ResultFile(node.ID, "", attempt))), pretty.Bytes(), 0o644)
 	}
 	var v any
 	if err := json.Unmarshal(m.Output, &v); err != nil {
@@ -564,7 +564,7 @@ func (e *Engine) artifact(events []chronicle.Event, ref orders.Ref) (string, err
 		if path.Clean(filepath.ToSlash(a)) != path.Clean(ref.File) {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(CampaignDir(e.Orders, e.Campaign), "work", filepath.FromSlash(ref.File)))
+		data, err := os.ReadFile(filepath.Join(e.dir(), "work", filepath.FromSlash(ref.File)))
 		if err != nil {
 			return "", fmt.Errorf("artifact %s of %s: %v", ref.File, ref.Node, err)
 		}

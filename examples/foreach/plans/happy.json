@@ -1,0 +1,18 @@
+{
+  "nodes": {
+    "plan": [
+      [
+        {"session": "plan-session-1"},
+        {"log": "splitting the work into items"},
+        {"sleep": "1s"},
+        {"result": {"outcome": "ok", "items": [
+          {"id": "storage", "title": "Storage layer"},
+          {"id": "api", "title": "HTTP API", "needs": ["storage"]},
+          {"id": "cli", "title": "Command line", "needs": ["storage"]},
+          {"id": "docs", "title": "Documentation", "needs": ["api", "cli"]},
+          {"id": "logo", "title": "Logo"}
+        ]}}
+      ]
+    ]
+  }
+}

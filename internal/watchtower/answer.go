@@ -42,6 +42,9 @@ func (s *Server) handleShow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	o, _ := s.currentOrders()
+	if no, err := engine.OrdersOf(o, s.Chron, id); err == nil && no != nil {
+		o = no
+	}
 	f, err := os.Open(filepath.Join(o.Dir, filepath.FromSlash(rel)))
 	if err != nil {
 		http.Error(w, "the file does not exist now", http.StatusNotFound)
@@ -86,6 +89,12 @@ func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
 		writeError(w, fmt.Errorf("%w: %v", errBadAnswer, err))
+		return
+	}
+	// A child campaign is answered, and driven, through the campaign a
+	// person started.
+	if id, err = engine.Top(s.Chron, id); err != nil {
+		writeError(w, err)
 		return
 	}
 	reply := engine.Reply{Ask: req.Ask, By: strings.TrimSpace(req.By), Via: engine.ViaPage,

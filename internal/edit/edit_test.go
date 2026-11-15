@@ -20,7 +20,7 @@ var update = flag.Bool("update", false, "rewrite testdata/ops.golden")
 func fixture(t *testing.T) *Doc {
 	t.Helper()
 	dir := t.TempDir()
-	for _, rel := range []string{"commented.yaml", "prompts/review.md", "schemas/review.json"} {
+	for _, rel := range []string{"commented.yaml", "prompts/review.md", "schemas/review.json", "segments/deploy.yaml"} {
 		data, err := os.ReadFile(filepath.Join("testdata", filepath.FromSlash(rel)))
 		if err != nil {
 			t.Fatal(err)
@@ -117,6 +117,13 @@ var opCases = []struct {
 	{name: "language", ops: []Op{{Op: OpLanguage, Language: "hi"}}},
 	{name: "language changed", ops: []Op{{Op: OpLanguage, Language: "hi"}, {Op: OpLanguage, Language: "uk"}}},
 	{name: "language removed", ops: []Op{{Op: OpLanguage, Language: "hi"}, {Op: OpUnlanguage}}},
+	{name: "add segment after", ops: []Op{{Op: OpAdd, Type: "segment", Node: "deploy", After: "ready", Segment: "segments/deploy.yaml",
+		Locks: []string{"prod"}}}},
+	{name: "add foreach after and set", ops: []Op{{Op: OpAdd, Type: "foreach", Node: "each", After: "ship", Segment: "segments/deploy.yaml",
+		Items: "input.services", Parallel: 2}, {Op: OpSet, Node: "each", Field: "parallel", Value: "3"}}},
+	{name: "set and unset locks", ops: []Op{{Op: OpSet, Node: "ship", Field: "locks", Value: "prod, writer"},
+		{Op: OpSet, Node: "build", Field: "locks", Value: "writer"}, {Op: OpUnset, Node: "build", Field: "locks"}}},
+	{name: "check locks", ops: []Op{{Op: OpCheck, Name: "tests", Locks: []string{"stand"}}}},
 }
 
 // TestOperationsOnCommentedFile applies every operation to a file full of

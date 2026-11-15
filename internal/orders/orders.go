@@ -86,6 +86,7 @@ type Check struct {
 	Run     []string
 	Timeout time.Duration
 	Soft    bool
+	Locks   []string // resources a gate running the check holds exclusively
 }
 
 // Notify is the command run whenever a campaign starts waiting for a person.
@@ -138,6 +139,20 @@ type Node struct {
 	IdleTimeout time.Duration
 	MaxAttempts int
 	Dialogue    int // how many rounds of questions the step may ask a person; 0 for none
+
+	// Any node: resources its steps hold exclusively, as written.
+	Locks []string
+
+	// Segment and for-each nodes.
+	SegmentPath string  // absolute path of the segment's orders file
+	Segment     *Orders // the checked segment
+	Input       string  // segment: what the child gets as its input, as written; empty for this campaign's input
+	InputRef    Ref     // segment: Input resolved
+	Items       string  // for-each: the list, as written
+	ItemsRef    Ref     // for-each: Items resolved
+	Parallel    int     // for-each: how many children may run at the same time
+
+	inputN, itemsN *yaml.Node
 }
 
 // Outcomes lists the outcomes the engine can produce for the node without a
@@ -150,6 +165,8 @@ func (n *Node) Outcomes() []string {
 		out = []string{Pass, Blocked}
 	case Human:
 		return n.Decisions
+	case Segment, ForEach:
+		return append([]string{}, compositeOutcomes...)
 	case Agent:
 		out = n.ModelOutcomes()
 		if !contains(out, Fail) {
@@ -193,6 +210,12 @@ func (o *Orders) Program(name string) string {
 // one computer and run on another, or the program may be installed by an
 // earlier step.
 func (o *Orders) CheckPrograms() (errs, warnings Problems) {
+	for _, id := range o.Order {
+		if seg := o.Nodes[id].Segment; seg != nil {
+			e, w := seg.CheckPrograms()
+			errs, warnings = append(errs, e...), append(warnings, w...)
+		}
+	}
 	for _, pr := range o.programs {
 		at := Problem{File: o.Path, Line: pr.line, Col: pr.col}
 		if !strings.ContainsAny(pr.name, `/\`) {
@@ -255,6 +278,10 @@ func Load(path string) (*Orders, error) {
 
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
 
+// IsName reports whether s is written like a node id: letters, digits, '_',
+// '-' and '.', starting with a letter or digit.
+func IsName(s string) bool { return namePattern.MatchString(s) }
+
 var yamlLine = regexp.MustCompile(`^yaml: line (\d+): (.*)$`)
 
 // Parse checks config data. path is used for positions and as the base of
@@ -267,7 +294,13 @@ func Parse(path string, data []byte) (*Orders, error) {
 // template or schema whose absolute path is a key of files is read from
 // there instead of the disk.
 func ParseOverlay(path string, data []byte, files map[string][]byte) (*Orders, error) {
-	p := &parser{file: path, overlay: files}
+	return parse(path, data, files, []string{filepath.Clean(path)})
+}
+
+// parse checks one orders file; stack holds the files whose segments led to
+// it, itself last, so that a segment running itself is found.
+func parse(path string, data []byte, files map[string][]byte, stack []string) (*Orders, error) {
+	p := &parser{file: path, overlay: files, stack: stack}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		msg := err.Error()
@@ -308,6 +341,7 @@ type parser struct {
 	problems Problems
 	programs []program
 	overlay  map[string][]byte // files read instead of the disk
+	stack    []string          // the orders files being read, outermost first
 }
 
 func (p *parser) errorf(n *yaml.Node, format string, args ...any) {
@@ -522,7 +556,7 @@ func (p *parser) checks(n *yaml.Node, o *Orders) {
 		}
 		c := &Check{Name: name}
 		what := fmt.Sprintf("check %q", name)
-		fields, ok := p.mapping(e.value, what, "run", "timeout", "soft")
+		fields, ok := p.mapping(e.value, what, "run", "timeout", "soft", lockKey)
 		if !ok {
 			continue
 		}
@@ -534,6 +568,8 @@ func (p *parser) checks(n *yaml.Node, o *Orders) {
 				c.Run = p.argv(f.value, what+": run")
 			case "timeout":
 				c.Timeout = p.duration(f.value, what+": timeout")
+			case lockKey:
+				c.Locks = p.locks(f.value, what)
 			case "soft":
 				if f.value.Kind != yaml.ScalarNode || f.value.Tag != "!!bool" {
 					p.errorf(f.value, "%s: soft must be true or false", what)
@@ -587,17 +623,24 @@ func (p *parser) nodes(n *yaml.Node, o *Orders) {
 			p.template(node, o)
 		}
 	}
+	for _, pn := range all {
+		if pn.node.Composite() {
+			p.compositeRefs(pn.node, o)
+		}
+		p.checkLockOrder(pn.node, pn.keyN)
+	}
 }
 
 func (p *parser) node(id string, keyN, n *yaml.Node, o *Orders) (*Node, *yaml.Node) {
 	what := fmt.Sprintf("node %q", id)
-	fields, ok := p.mapping(n, what, append([]string{"type", "run", "timeout", "checks", "ask", "show", "on"}, agentKeys...)...)
+	fields, ok := p.mapping(n, what, append(append([]string{"type", "run", "timeout", "checks", "ask", "show", lockKey, "on"}, agentKeys...), compositeKeys...)...)
 	if !ok {
 		return nil, nil
 	}
 	node := &Node{ID: id, On: map[string]string{}}
 	var typeN, runN, timeoutN, checksN, askN, showN, onN *yaml.Node
 	agent := map[string]entry{}
+	composite := map[string]entry{}
 	for _, f := range fields {
 		switch f.key {
 		case "type":
@@ -614,20 +657,26 @@ func (p *parser) node(id string, keyN, n *yaml.Node, o *Orders) (*Node, *yaml.No
 			showN = f.value
 		case "on":
 			onN = f.value
+		case lockKey:
+			node.Locks = p.locks(f.value, what)
 		default:
-			agent[f.key] = f
+			if contains(compositeKeys, f.key) {
+				composite[f.key] = f
+			} else {
+				agent[f.key] = f
+			}
 		}
 	}
 	if typeN == nil {
-		p.errorf(keyN, "%s: missing key \"type\" (script, gate, agent or human)", what)
+		p.errorf(keyN, "%s: missing key \"type\" (script, gate, agent, human, segment or foreach)", what)
 		return nil, nil
 	}
 	t, ok := p.scalar(typeN, what+": type")
 	if !ok {
 		return nil, nil
 	}
-	if t != Script && t != Gate && t != Agent && t != Human {
-		p.errorf(typeN, "%s: unknown node type %q (known: script, gate, agent, human)", what, t)
+	if t != Script && t != Gate && t != Agent && t != Human && t != Segment && t != ForEach {
+		p.errorf(typeN, "%s: unknown node type %q (known: script, gate, agent, human, segment, foreach)", what, t)
 		return nil, nil
 	}
 	node.Type = t
@@ -648,6 +697,24 @@ func (p *parser) node(id string, keyN, n *yaml.Node, o *Orders) (*Node, *yaml.No
 		node.Show = p.show(showN, what)
 		if askN == nil && t == Gate {
 			p.errorf(showN, "%s: show needs ask: the files are shown to the person who answers", what)
+		}
+	}
+	if node.Composite() {
+		for _, k := range []struct {
+			n    *yaml.Node
+			name string
+		}{{runN, "run"}, {checksN, "checks"}, {timeoutN, "timeout"}} {
+			if k.n != nil {
+				p.errorf(k.n, "%s: a %s node has no %s; the steps of its segment do the work", what, t, k.name)
+			}
+		}
+		runN, checksN, timeoutN = nil, nil, nil
+		p.compositeNode(node, keyN, composite)
+	} else {
+		for _, k := range compositeKeys {
+			if f, ok := composite[k]; ok {
+				p.errorf(f.keyN, "%s: %s is allowed only on a segment or a foreach node", what, k)
+			}
 		}
 	}
 	if t == Human {
@@ -782,6 +849,13 @@ func (p *parser) transitions(node *Node, onN, keyN, nodesN *yaml.Node, o *Orders
 				p.errorf(onN, "%s: outcome %q has no transition, but the schema allows the model to report it", what, outcome)
 			} else {
 				p.errorf(onN, "%s: outcome %q has no transition", what, outcome)
+			}
+		}
+	}
+	if node.Composite() {
+		for _, e := range entries {
+			if !contains(compositeOutcomes, e.key) {
+				p.errorf(e.keyN, "%s: outcome %q can never happen: a %s node ends with done or failed", what, e.key, node.Type)
 			}
 		}
 	}

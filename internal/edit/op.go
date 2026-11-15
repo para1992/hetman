@@ -35,7 +35,7 @@ type Op struct {
 	Op string `json:"op"`
 
 	Node     string            `json:"node,omitempty"`     // the node acted on, or the name of a new node
-	Type     string            `json:"type,omitempty"`     // new, add: script, gate, agent or human
+	Type     string            `json:"type,omitempty"`     // new, add: script, gate, agent, human, segment or foreach
 	After    string            `json:"after,omitempty"`    // add: the node the new one follows
 	Via      string            `json:"via,omitempty"`      // add with after: the outcome of After that leads to the new node
 	Before   string            `json:"before,omitempty"`   // add: the node the new one comes before
@@ -66,6 +66,11 @@ type Op struct {
 	Soft     *bool             `json:"soft,omitempty"`     // check: soft (true) or required (false)
 	Starters bool              `json:"starters,omitempty"` // agent node: create missing prompt and schema files
 	Language string            `json:"language,omitempty"` // language: a code from the built-in list
+	Segment  string            `json:"segment,omitempty"`  // segment or foreach node: the segment's orders file
+	Input    string            `json:"input,omitempty"`    // segment node: what its child gets as input, such as output.plan.task
+	Items    string            `json:"items,omitempty"`    // foreach node: the list, such as output.plan.items
+	Parallel int               `json:"parallel,omitempty"` // foreach node: how many items run at the same time
+	Locks    []string          `json:"locks,omitempty"`    // a new node or a check: resources it holds exclusively
 }
 
 // Spec describes one operation for people, the command line and a model.
@@ -78,7 +83,8 @@ type Spec struct {
 }
 
 // nodeFields are the fields that describe a new node.
-var nodeFields = []string{"run", "timeout", "checks", "executor", "model", "effort", "tools", "attempts", "prompt", "schema", "outcomes", "on", "starters"}
+var nodeFields = []string{"run", "timeout", "checks", "executor", "model", "effort", "tools", "attempts", "prompt", "schema", "outcomes", "on", "starters",
+	"segment", "input", "items", "parallel", "locks"}
 
 // Specs lists every operation.
 var Specs = []Spec{
@@ -98,8 +104,8 @@ var Specs = []Spec{
 		"set a field of a node: " + strings.Join(setFields, ", ")},
 	{OpUnset, []string{"node", "field"}, []string{"node", "field"}, nil,
 		"remove a field of a node: " + strings.Join(unsetFields, ", ")},
-	{OpCheck, []string{"name"}, []string{"name"}, []string{"run", "timeout", "soft"},
-		"declare a check, or change the command, timeout or soft flag of a declared one (soft only warns; required blocks the gate)"},
+	{OpCheck, []string{"name"}, []string{"name"}, []string{"run", "timeout", "soft", "locks"},
+		"declare a check, or change the command, timeout, soft flag or locks of a declared one (soft only warns; required blocks the gate)"},
 	{OpExecutor, []string{"name"}, []string{"name", "run"}, nil,
 		"declare an executor (an adapter program and its arguments), or change its command"},
 	{OpGateAdd, []string{"node", "check"}, []string{"node", "check"}, []string{"at"},
@@ -128,8 +134,9 @@ func SpecOf(op string) (Spec, bool) {
 
 // Node fields set and unset can change.
 var (
-	setFields   = []string{"run", "timeout", "idle_timeout", "executor", "model", "effort", "tools", "attempts", "dialogue", "prompt", "schema"}
-	unsetFields = []string{"timeout", "idle_timeout", "model", "effort", "tools", "attempts", "dialogue"}
+	setFields = []string{"run", "timeout", "idle_timeout", "executor", "model", "effort", "tools", "attempts", "dialogue", "prompt", "schema",
+		"locks", "segment", "input", "items", "parallel"}
+	unsetFields = []string{"timeout", "idle_timeout", "model", "effort", "tools", "attempts", "dialogue", "locks", "input", "parallel"}
 )
 
 // Fields lists the fields an Op has set, by their JSON names.
@@ -186,7 +193,7 @@ func (op Op) Validate() error {
 			return fmt.Errorf("%s: unknown field %q (known: %s)", op.Op, op.Field, strings.Join(list, ", "))
 		}
 	}
-	for _, s := range append(append(append([]string{op.Value, op.Question, op.Model, op.Effort}, op.Run...), op.Options...), op.Tools...) {
+	for _, s := range append(append(append([]string{op.Value, op.Question, op.Model, op.Effort, op.Segment, op.Input, op.Items}, op.Run...), op.Options...), op.Tools...) {
 		if strings.ContainsAny(s, "\r\n") {
 			return fmt.Errorf("%s: values must be one line", op.Op)
 		}
@@ -230,6 +237,9 @@ func (op Op) Words() string {
 		}
 		if op.Soft != nil {
 			parts = append(parts, map[bool]string{true: "soft (it only warns)", false: "required (it blocks the gate)"}[*op.Soft])
+		}
+		if len(op.Locks) > 0 {
+			parts = append(parts, "holding the locks "+strings.Join(op.Locks, ", "))
 		}
 		return fmt.Sprintf("declare or change the check %s%s", op.Name, optList(", ", parts))
 	case OpExecutor:
@@ -293,6 +303,21 @@ func nodeWords(op Op) string {
 	}
 	if op.Executor != "" {
 		parts = append(parts, "through the executor "+op.Executor)
+	}
+	if op.Segment != "" {
+		parts = append(parts, "running the segment "+op.Segment)
+	}
+	if op.Items != "" {
+		parts = append(parts, "once for every item of "+op.Items)
+	}
+	if op.Parallel > 0 {
+		parts = append(parts, fmt.Sprintf("at most %d at a time", op.Parallel))
+	}
+	if op.Input != "" {
+		parts = append(parts, "with the input "+op.Input)
+	}
+	if len(op.Locks) > 0 {
+		parts = append(parts, "holding the locks "+strings.Join(op.Locks, ", "))
 	}
 	if op.Model != "" {
 		parts = append(parts, "model "+op.Model)

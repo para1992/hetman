@@ -37,7 +37,7 @@ var opUsage = []struct{ op, form, example string }{
 	{edit.OpUnlink, "unlink NODE OUTCOME", "hetman scribe unlink release rework"},
 	{edit.OpSet, "set NODE FIELD VALUE", "hetman scribe set build timeout 5m"},
 	{edit.OpUnset, "unset NODE FIELD", "hetman scribe unset build timeout"},
-	{edit.OpCheck, "check NAME [-run CMD] [-timeout D] [-soft | -required]", "hetman scribe check lint -run 'sh checks/lint.sh' -soft"},
+	{edit.OpCheck, "check NAME [-run CMD] [-timeout D] [-soft | -required] [-locks A,B]", "hetman scribe check lint -run 'sh checks/lint.sh' -soft"},
 	{edit.OpExecutor, "executor NAME -run CMD", "hetman scribe executor stub -run './bin/stub-adapter plan.json'"},
 	{edit.OpGateAdd, "gate-add GATE CHECK [-at N]", "hetman scribe gate-add ready style -at 1"},
 	{edit.OpGateRemove, "gate-remove GATE CHECK", "hetman scribe gate-remove ready lint"},
@@ -66,8 +66,11 @@ operations:
 	b.WriteString(`
 node flags (new, add): -run CMD, -timeout D, -checks A,B, -executor NAME, -model M, -effort E,
   -tools A,B, -attempts N, -prompt FILE, -schema FILE, -outcomes A,B, -on OUTCOME=TARGET (repeat),
-  -starters (create missing prompt and schema files)
-set and unset fields: run, timeout, idle_timeout, executor, model, effort, tools, attempts, dialogue, prompt, schema
+  -starters (create missing prompt and schema files), -locks A,B (resources held exclusively),
+  -segment FILE (segment, foreach), -input REF (segment), -items REF and -parallel N (foreach)
+set fields: run, timeout, idle_timeout, executor, model, effort, tools, attempts, dialogue, prompt, schema,
+  locks, segment, input, items, parallel
+unset fields: timeout, idle_timeout, model, effort, tools, attempts, dialogue, locks, input, parallel
 language codes: ` + strings.Join(language.Codes(), ", ") + `
 flags of every operation:
   -f FILE    orders file (default orders.yaml)
@@ -173,9 +176,9 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 		switch f {
 		case "run":
 			run = fs.String("run", "", "command: program and arguments")
-		case "checks", "tools", "outcomes", "options":
+		case "checks", "tools", "outcomes", "options", "locks":
 			lists[f] = fs.String(f, "", "list, separated by commas")
-		case "at", "attempts":
+		case "at", "attempts", "parallel":
 			ints[f] = fs.Int(f, 0, "number")
 		case "starters":
 			starters = fs.Bool("starters", false, "create missing prompt and schema files")
@@ -247,6 +250,14 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 			op.Schema = value
 		case "language":
 			op.Language = value
+		case "segment":
+			op.Segment = value
+		case "input":
+			op.Input = value
+		case "items":
+			op.Items = value
+		case "locks":
+			op.Locks = listOf(value)
 		case "checks":
 			op.Checks = listOf(value)
 		case "tools":
@@ -255,15 +266,18 @@ func opCmd(name string, args []string, stdout, stderr io.Writer) int {
 			op.Outcomes = listOf(value)
 		case "options":
 			op.Options = listOf(value)
-		case "at", "attempts":
+		case "at", "attempts", "parallel":
 			n, err := strconv.Atoi(value)
 			if err != nil {
 				return fmt.Errorf("-%s must be a number", field)
 			}
-			if field == "at" {
+			switch field {
+			case "at":
 				op.At = n
-			} else {
+			case "attempts":
 				op.Attempts = n
+			default:
+				op.Parallel = n
 			}
 		}
 		return nil

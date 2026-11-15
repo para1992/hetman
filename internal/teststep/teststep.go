@@ -38,6 +38,11 @@ const TraceFile = "trace.txt"
 //	sleep TIME          sleep, then exit with 0
 //	block DIR           write DIR/started.<node>.<attempt>, wait for DIR/release,
 //	                    then write DIR/exited.<node>.<attempt>
+//	write FILE TEXT     write TEXT to work/FILE and list it as an artifact
+//	item DIR            act on the run input of a for-each item {"id", "sleep",
+//	                    "wait", "fail"}: write DIR/started.<id>.<run id>, wait for
+//	                    DIR/release when "wait" is true, sleep "sleep", then exit 1
+//	                    when "fail" is true, else write DIR/finished.<id>
 //	orphan DIR          attempt 1: start a grandchild writing DIR/heartbeat, write
 //	                    DIR/started.<node>.1 and sleep; later attempts: write
 //	                    "dead" or "alive" for that grandchild to DIR/old-grandchild
@@ -140,6 +145,33 @@ func Main(args []string) int {
 	case "sleep":
 		d, _ := time.ParseDuration(arg(args, 1))
 		time.Sleep(d)
+		return 0
+	case "write":
+		must(os.WriteFile(filepath.Join(runDir, arg(args, 1)), []byte(arg(args, 2)), 0o644))
+		writeResult(map[string]any{"artifacts": []string{arg(args, 1)}})
+		return 0
+	case "item":
+		dir := arg(args, 1)
+		data, err := os.ReadFile(os.Getenv("HETMAN_INPUT_FILE"))
+		must(err)
+		var in struct {
+			ID    string `json:"id"`
+			Sleep string `json:"sleep"`
+			Wait  bool   `json:"wait"`
+			Fail  bool   `json:"fail"`
+		}
+		must(json.Unmarshal(data, &in))
+		must(os.WriteFile(filepath.Join(dir, "started."+in.ID+"."+os.Getenv("HETMAN_RUN_ID")), nil, 0o644))
+		for in.Wait && !exists(filepath.Join(dir, "release")) {
+			time.Sleep(20 * time.Millisecond)
+		}
+		if d, err := time.ParseDuration(in.Sleep); err == nil {
+			time.Sleep(d)
+		}
+		if in.Fail {
+			return 1
+		}
+		must(os.WriteFile(filepath.Join(dir, "finished."+in.ID), nil, 0o644))
 		return 0
 	case "block":
 		dir := arg(args, 1)

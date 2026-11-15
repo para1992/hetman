@@ -1,0 +1,45 @@
+# A plan split into work items, each run as its own small campaign.
+#
+# An agent step writes the plan: a list of items, some of which need others
+# to be done first. A foreach node runs the segment segments/item.yaml once
+# for every item, two at a time; an item starts only once the items it needs
+# are done. Every item builds, then tests on the one shared test stand: the
+# test step holds the lock test-stand, so no two tests ever run at once, even
+# across campaigns and hetman processes that share this folder's .hetman.
+#
+# The agent step runs through the stub adapter, which runs no model and
+# follows plans/happy.json, so the example works without any real client.
+# Build it once, from the repository root:
+#
+#   go build -o examples/foreach/bin/stub-adapter ./cmd/hetman-stub-adapter
+#
+# Then, in this folder:
+#
+#   hetman check
+#   hetman run -input input.json
+#   hetman status          the items, their campaigns and who waits for the stand
+#   hetman serve           the same on a web page; an item's tile opens its campaign
+#
+# The segment's steps are POSIX shell scripts run through sh (on Windows,
+# from Git Bash or another shell that has sh). FOREACH_FAIL=cli makes the
+# item cli fail: docs, which needs it, is then not run, and the rest finish.
+version: 0
+flow: foreach-demo
+start: plan
+
+executors:
+  stub: {run: [./bin/stub-adapter, plans/happy.json]}
+
+nodes:
+  plan:
+    type: agent
+    executor: stub
+    prompt: prompts/plan.md
+    schema: schemas/plan.json
+    on: {ok: build-all, fail: failed}
+  build-all:
+    type: foreach
+    segment: segments/item.yaml   # each item is the input of one child campaign
+    items: output.plan.items      # the list in the plan's output
+    parallel: 2                   # at most two items at the same time
+    on: {done: done, failed: failed}

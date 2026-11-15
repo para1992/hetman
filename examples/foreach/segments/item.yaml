@@ -1,0 +1,19 @@
+# One work item, run as a child campaign of the foreach node that lists it.
+# The item is the run input: its fields are in $HETMAN_INPUT_FILE and in
+# {{input.FIELD}} placeholders. Steps run from this folder.
+version: 0
+flow: item
+start: build
+
+nodes:
+  build:
+    type: script
+    run: [sh, steps/build.sh]
+    timeout: 5m
+    on: {ok: test, fail: failed, timeout: failed}
+  test:
+    type: script
+    run: [sh, steps/test.sh]
+    locks: [test-stand]           # one test at a time on the shared stand
+    timeout: 5m
+    on: {ok: done, fail: failed, timeout: failed}

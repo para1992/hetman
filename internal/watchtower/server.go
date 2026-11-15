@@ -61,8 +61,7 @@ type Server struct {
 
 	mu      sync.Mutex
 	orders  *orders.Orders
-	stamp   time.Time
-	size    int64
+	stamp   string // the modification times and sizes of the orders file and its segment files
 	problem string
 
 	hub hub
@@ -72,10 +71,28 @@ type Server struct {
 // Campaigns resumed from the page are driven until ctx is cancelled.
 func New(ctx context.Context, o *orders.Orders, ch *chronicle.Chronicle) *Server {
 	s := &Server{OrdersPath: o.Path, Chron: ch, ctx: ctx, orders: o}
-	if fi, err := os.Stat(o.Path); err == nil {
-		s.stamp, s.size = fi.ModTime(), fi.Size()
-	}
+	s.stamp, _ = stamp(o.Path, o)
 	return s
+}
+
+// stamp sums up the modification time and size of an orders file and of the
+// segment files the orders o read from it run, so that a change to any of
+// them is noticed.
+func stamp(path string, o *orders.Orders) (string, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	s := fmt.Sprintf("%s %d %d;", path, fi.ModTime().UnixNano(), fi.Size())
+	if o != nil {
+		for _, id := range o.Order {
+			if n := o.Nodes[id]; n.Segment != nil {
+				sub, _ := stamp(n.SegmentPath, n.Segment)
+				s += sub
+			}
+		}
+	}
+	return s, nil
 }
 
 // Wait waits until the campaigns driven by this server have stopped, which
@@ -95,15 +112,18 @@ func (s *Server) poll() time.Duration {
 func (s *Server) currentOrders() (*orders.Orders, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	fi, err := os.Stat(s.OrdersPath)
+	now, err := stamp(s.OrdersPath, s.orders)
 	if err != nil {
 		return s.orders, err.Error()
 	}
-	if fi.ModTime().Equal(s.stamp) && fi.Size() == s.size {
+	if now == s.stamp {
 		return s.orders, s.problem
 	}
-	s.stamp, s.size = fi.ModTime(), fi.Size()
 	o, err := orders.Load(s.OrdersPath)
+	s.stamp = now
+	if err == nil {
+		s.stamp, _ = stamp(s.OrdersPath, o)
+	}
 	if err != nil {
 		s.problem = "the orders file does not load, so the last good version is shown: " + err.Error()
 		return s.orders, s.problem
@@ -204,7 +224,7 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, chronicle.ErrNoCampaign), errors.Is(err, errBadID):
 		status = http.StatusNotFound
 	case errors.Is(err, engine.ErrEnded), errors.Is(err, engine.ErrNothingAsked), errors.Is(err, engine.ErrAnswered),
-		errors.Is(err, engine.ErrOtherAsk):
+		errors.Is(err, engine.ErrOtherAsk), errors.Is(err, engine.ErrChild):
 		status = http.StatusConflict
 	case errors.Is(err, ask.ErrInvalid), errors.Is(err, errBadAnswer):
 		status = http.StatusBadRequest
@@ -268,7 +288,14 @@ func (s *Server) build(o *orders.Orders, k chronicle.Campaign, events []chronicl
 		d, _ := engine.Driven(o, k.ID)
 		return d
 	}
-	return build(k, events, o, engine.CampaignDir(o, k.ID), driven)
+	// A child campaign is drawn with the orders of its segment.
+	no, err := engine.OrdersOf(o, s.Chron, k.ID)
+	if err != nil {
+		no = nil
+	}
+	c := build(k, events, no, engine.CampaignDir(o, k.ID), driven)
+	s.children(c, o, k, events)
+	return c
 }
 
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {

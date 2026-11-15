@@ -356,6 +356,7 @@
     if (c.state === 'limit') return ['stopped at ', h('b', { text: c.node }), ': subscription limit reached'];
     if (c.state === 'offline') return ['stopped at ', h('b', { text: c.node }), ': connectivity lost'];
     if (c.state === 'interrupted') return ['stopped at ', h('b', { text: c.node }), ', no process drives it'];
+    if (c.lockWait) return ['waits at ', h('b', { text: c.node }), ' for the lock ', h('code', { text: c.lockWait }), ', held by ' + c.lockHolder];
     return ['at ', h('b', { text: c.node })];
   }
 
@@ -363,12 +364,16 @@
     const c = S.campaign;
     const r = S.route;
     document.title = '#' + c.id + ' ' + c.flow + ' · ' + c.state + ' · Watchtower';
-    const canHalt = (c.state === 'running' || c.state === 'interrupted' || c.state === 'asking') && !c.haltRequested;
-    const canResume = c.state === 'halted' || c.state === 'error' || c.state === 'interrupted' || c.state === 'limit' ||
-      c.state === 'offline' || c.haltRequested || (c.state === 'asking' && !c.driven);
+    // A child campaign is halted and resumed with the campaign a person started.
+    const canHalt = !c.parent && (c.state === 'running' || c.state === 'interrupted' || c.state === 'asking') && !c.haltRequested;
+    const canResume = !c.parent && (c.state === 'halted' || c.state === 'error' || c.state === 'interrupted' || c.state === 'limit' ||
+      c.state === 'offline' || c.haltRequested || (c.state === 'asking' && !c.driven));
     const pos = position(c);
     const out = [
-      h('nav', { class: 'crumbs' }, h('a', { href: '#/', text: '← All campaigns' })),
+      h('nav', { class: 'crumbs' }, h('a', { href: '#/', text: '← All campaigns' }),
+        c.parent ? [' · ', h('a', { href: href(c.parent), text: '↑ campaign #' + c.parent }),
+          ' runs this one at ', h('code', { text: c.path }),
+          c.top !== c.parent ? [' (part of ', h('a', { href: href(c.top), text: 'campaign #' + c.top }), ')'] : null] : null),
       h('div', { class: 'head' },
         h('h1', null, 'Campaign #' + c.id + ' ', h('span', { class: 'flow', text: c.flow })),
         stateBadge(c.state),
@@ -403,6 +408,12 @@
 
   // Explains a campaign that waits because of an agent step.
   function waitNote(c) {
+    if (c.ask && !c.end && c.ask.campaign && c.ask.campaign !== c.id) {
+      return h('div', { class: 'problem ask' }, h('b', { text: 'Waiting for a person. ' }),
+        (REASON_TEXT[c.ask.reason] || 'The step asks') + ' at ', h('code', { text: c.ask.node }), ' in ', h('code', { text: c.ask.path }),
+        ' (campaign #' + c.ask.campaign + '). ', h('a', { href: href(c.ask.campaign, 'pipeline', c.ask.node), text: 'Answer on its step card' }),
+        ', or in a terminal with ', h('code', { text: c.ask.command }), '.');
+    }
     if (c.ask && !c.end) {
       const open = S.route.node === c.ask.node;
       return h('div', { class: 'problem ask' }, h('b', { text: 'Waiting for a person. ' }),
@@ -517,6 +528,24 @@
   function tile(c, col, t, i, last) {
     let label, tag = null;
     const sub = [];
+    if (t.item || t.child) {
+      // A child campaign of a segment or for-each step; it opens the child.
+      label = t.item || 'campaign #' + t.child;
+      if (t.item && t.child) tag = h('span', { class: 'tag', text: '#' + t.child });
+      if (t.outcome) sub.push(t.outcome);
+      else if (t.node) sub.push(t.node);
+      if (t.note) sub.push(t.note);
+      else if (!t.child) sub.push(STATUS_TEXT[t.status] || t.status);
+      return h('button', {
+        class: 'tile st-' + t.status, type: 'button', 'data-fkey': 'tile-' + col.node + '-' + i,
+        title: col.node + ' / ' + label + ': ' + (STATUS_TEXT[t.status] || t.status) + (t.note ? ' (' + t.note + ')' : ''),
+        onclick: () => { location.hash = t.child ? href(t.child) : href(c.id, 'pipeline', col.node); },
+      },
+      mark(t.status),
+      h('span', { class: 'label', text: label }),
+      h('span', { class: 'right' }, t.attempts > 1 ? h('span', { class: 'count', title: t.attempts + ' attempts', text: '×' + t.attempts }) : null),
+      h('span', { class: 'sub' }, tag, sub.map((x) => h('span', { class: 'part' }, x))));
+    }
     if (t.check) {
       label = t.check;
       const run = last && col.status !== 'waiting' && last.checks && last.checks.find((r) => r.check === t.check);
@@ -534,7 +563,8 @@
       } else if (col.status === 'asking') {
         sub.push('needs an answer');
       } else if (col.status === 'waiting') {
-        if (col.current && c.wait === 'limit' && c.waitUntil) sub.push('limit, again at ' + fmtTime(c.waitUntil));
+        if (col.current && c.lockWait) sub.push('waits for lock ' + c.lockWait + ' (held by ' + c.lockHolder + ')');
+        else if (col.current && c.wait === 'limit' && c.waitUntil) sub.push('limit, again at ' + fmtTime(c.waitUntil));
         else if (col.current && c.wait) sub.push(c.wait === 'limit' ? 'limit reached' : 'offline');
         else sub.push(c.state === 'halted' ? 'halted here' : 'next');
       }

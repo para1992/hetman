@@ -187,6 +187,31 @@ The waiting `hetman run` picks each answer up and goes on. Answering `no` at
 `hetman serve` shows the same campaign and has an answer form on the card of the
 waiting step.
 
+### Work items in parallel
+
+`examples/foreach` has an agent step write a plan, a list of work items where some
+need others first, and a `foreach` node run a small segment (build, then test) once
+per item, two at a time. The test step holds the lock `test-stand`, so no two tests
+ever run at once:
+
+```sh
+$ go build -o examples/foreach/bin/stub-adapter ./cmd/hetman-stub-adapter
+$ cd examples/foreach
+$ hetman run -input input.json
+...
+[1] build-all: item storage runs as campaign 2
+[1] build-all: item logo runs as campaign 3
+[2 build-all/storage] test waits for the lock test-stand, held by campaign 3 (build-all/logo) of campaign 1 at test, attempt 1, process 4242
+...
+[1] build-all finished: done (5 of 5 item(s) done, 8.205s)
+$ hetman status
+...
+  build-all       foreach      finished  done     1         8.205s
+    item storage  campaign 2   finished  done
+    item api      campaign 4   finished  done
+...
+```
+
 ## Concepts
 
 **Orders.** The config file, `orders.yaml` by default. It names the first node and
@@ -240,7 +265,7 @@ nodes:
 - `timeout` is a duration such as `30s`, `10m` or `1h30m`. When it runs out, the
   command and every process it started are killed.
 
-**Nodes.** There are four types.
+**Nodes.** There are six types.
 
 - `script` runs one command. Exit code 0 gives the outcome `ok`, anything else
   `fail`.
@@ -252,6 +277,13 @@ nodes:
 - `agent` gives one step to a coding agent through an executor adapter. Its outcomes
   are the values its output schema allows for `outcome`, plus `fail`. See Agent
   steps below.
+- `segment` runs another orders file, a segment, to its end as a child campaign and
+  takes the end it reached, `done` or `failed`, as its outcome.
+- `foreach` runs a segment once for every item of a list an earlier step wrote,
+  several at a time, and ends `done` when every item did. See Segments, for-each and
+  locks.
+
+Any node may also name `locks`: resources its steps hold exclusively.
 
 **Transitions.** `on` maps each outcome of a node to the next node or to one of the
 two ends, `done` and `failed`. A node with a `timeout` also has the outcome
@@ -559,6 +591,105 @@ A process that ends waits for hooks it started, up to their timeout. Any messeng
 be connected with a small script that sends the message and, when the person replies,
 runs the `hetman answer` command with flags.
 
+## Segments, for-each and locks
+
+**Segments.** A piece of a flow is written once, in its own orders file, and used as
+one step of other flows:
+
+```yaml
+nodes:
+  review:
+    type: segment
+    segment: segments/review.yaml   # an orders file, relative to this one
+    input: output.plan.task         # optional; this campaign's own input by default
+    on: {done: publish, failed: failed}
+```
+
+The node runs the segment as a child campaign, driven by the same engine in the same
+process, and takes the end the child reached as its outcome. `input` is what the
+child gets as its run input: `input` or `input.FIELD` of this campaign,
+`output.NODE[.FIELD]` of an agent node, or `artifact.NODE.FILE`, a JSON file a script
+or gate listed as an artifact. It must be a JSON object. The child keeps the language
+for the person of its parent. Steps of a segment run in the folder of the segment's
+file and resolve their paths there; segments may run segments, up to 8 levels deep.
+`hetman check` reads every segment, reports a problem in one with that file's line,
+and rejects a segment that runs itself, directly or through others.
+
+**For each.** A `foreach` node runs a segment once per item of a list:
+
+```yaml
+  build-all:
+    type: foreach
+    segment: segments/item.yaml
+    items: output.plan.items        # or artifact.NODE.FILE, or input.FIELD
+    parallel: 2                     # how many items at the same time; 1 by default
+    on: {done: release, failed: plan}
+```
+
+The list is a JSON array of objects. Each has an `id` (letters, digits, `_`, `-`,
+`.`), unique in the list, and optionally `needs`, the ids of the items that must
+reach `done` before it starts; the whole object is the run input of its child.
+Items whose needs are met run at the same time, up to `parallel`. An item that fails
+does not stop the others; an item that needs a failed item, directly or through
+another, is not run and the chronicle says why. The node ends once every item ended
+or can no longer run: `done` when every item reached `done`, else `failed`. A list
+that is not an array of such objects, has the same id twice, needs an id it does not
+have, or whose needs form a cycle makes the node fail at once with the reason, so
+`failed` can lead back to the step that wrote it. The list is recorded when the node
+starts, so a resumed campaign runs the same list.
+
+**Children.** Each child is a campaign of its own: its own events in the chronicle,
+its own folder under `.hetman/campaigns/`, its own attempts. The parent records
+which child it started for which item and how each ended. Children are not listed
+on their own; you reach them through their parent:
+
+- `hetman status` lists the children of a segment or for-each node under its row,
+  with their state, the items not run and why, and the children of children; a
+  child that waits for a person, for a lock or after an error is named in the state
+  line. `hetman status -c CHILD` shows one child in full.
+- `hetman answer` on the parent answers whatever a child asks (`-ask N` picks one
+  when several children ask at once); `hetman halt` and `hetman resume` act on the
+  parent and reach every running child; asked of a child, they refuse and name its
+  parent.
+- A halt takes effect in each running child after its current step, then in the
+  parent. Resume continues the parent, which continues each unfinished child where it
+  stopped; children that already ended are never run again. After a crash, resume
+  does the same, and the step that was running in a child runs again there, as in any
+  campaign.
+- A child waiting for a person makes its parent wait with it: a question keeps
+  `hetman run` waiting until it is answered; a child stopped in the error state
+  stops its parent in the error state (exit code 4) once the other children have
+  gone as far as they can; a child stopped by a subscription limit or lost
+  connectivity makes the parent end with exit code 5. The notification hook of the
+  orders a person started runs for every child, with `child` and `path` in its
+  notice.
+
+**Locks.** A node, or a check, may name resources it needs exclusively:
+
+```yaml
+checks:
+  e2e: {run: [sh, checks/e2e.sh], locks: [test-stand]}
+nodes:
+  test:
+    type: script
+    run: [sh, steps/test.sh]
+    locks: [test-stand, writer]
+    on: {ok: done, fail: failed}
+```
+
+Two steps holding the same lock never run at the same time: in one campaign,
+between the children of a for-each, and between campaigns and `hetman` processes
+that use the same `.hetman` folder. A step waits for its locks before it starts; the
+wait is recorded with the name of the lock and of who holds it, and `hetman status`
+and the page show it. A step takes its locks one at a time in name order, holds them
+until it ends and gives them back; a gate also takes the locks of its checks, for
+the whole gate. A segment or for-each node holds its locks while its children run,
+so a lock taken inside a segment must sort after the locks of the node that runs it,
+which `hetman check` enforces: with every holder taking locks in one order, no two
+can wait for each other. A lock is an exclusive lock on a file in `.hetman/locks/`,
+which the system drops when its process ends, however it ends: a killed engine
+leaves no lock behind, and a halt releases the locks with the step.
+
 ## Adapters
 
 An adapter is the program between Hetman and one coding-agent client: it receives
@@ -778,7 +909,7 @@ Exit codes:
 | 2 | bad arguments or rejected orders |
 | 3 | halted |
 | 4 | stopped in the error state |
-| 5 | an agent step hit a subscription limit with no time to retry, or lost connectivity; waiting for a person |
+| 5 | an agent step, here or in a child campaign, hit a subscription limit with no time to retry, or lost connectivity; waiting for a person |
 
 A campaign waiting for answers does not end `run` or `resume`; they wait with it.
 `hetman answer` exits with 0 when the answers are recorded, 2 when they do not fit
@@ -852,6 +983,12 @@ one or by lost connectivity, is marked as such. A campaign waiting for a person 
 marked "waiting for a person", and so is the tile of the step that asks. Everything on it comes from the
 chronicle, as with `hetman status`, and updates while campaigns run.
 
+A segment or for-each step shows one tile per child with the child's own state, where
+it is and what it waits for (a person, a lock), and a tile for each item not started
+or not run, with the reason. A child's tile opens the child's own page, which links
+back to its parent; its Halt and Resume are those of its parent. A question asked in
+a child shows on the parent's page too, with a link to the card that answers it.
+
 It has two controls, Halt and Resume, which do what `hetman halt` and
 `hetman resume` do, and an answer form. A campaign resumed from the page is run by the
 `hetman serve` process; stopping that process interrupts it, and `hetman resume`
@@ -895,7 +1032,7 @@ hetman scribe link NODE OUTCOME TARGET       set or change a transition
 hetman scribe unlink NODE OUTCOME            remove a transition
 hetman scribe set NODE FIELD VALUE           set a field of a node
 hetman scribe unset NODE FIELD               remove a field of a node
-hetman scribe check NAME [-run CMD] [-timeout D] [-soft | -required]   declare a check, or change one
+hetman scribe check NAME [-run CMD] [-timeout D] [-soft | -required] [-locks A,B]   declare a check, or change one
 hetman scribe executor NAME -run CMD         declare an executor, or change its command
 hetman scribe gate-add GATE CHECK [-at N]    put a declared check into a gate, at position N from 1
 hetman scribe gate-remove GATE CHECK         take a check out of a gate
@@ -906,13 +1043,18 @@ hetman scribe language CODE                  set the language for the person
 hetman scribe unlanguage                     remove it: English, and nothing added to prompts
 ```
 
-`TYPE` is `script`, `gate`, `agent` or `human`. The node flags are `-run CMD` (one
-string split at spaces; quotes keep spaces in an argument), `-timeout D`,
-`-checks A,B`, `-executor NAME`, `-model M`, `-effort E`, `-tools A,B`, `-attempts N`,
-`-prompt FILE`, `-schema FILE`, `-outcomes A,B` (of an agent or human node),
-`-on OUTCOME=TARGET` (repeatable) and `-starters`. The fields of `set` are `run`,
-`timeout`, `idle_timeout`, `executor`, `model`, `effort`, `tools`, `attempts`,
-`dialogue`, `prompt` and `schema`; `unset` takes the optional ones of these.
+`TYPE` is `script`, `gate`, `agent`, `human`, `segment` or `foreach`. The node flags
+are `-run CMD` (one string split at spaces; quotes keep spaces in an argument),
+`-timeout D`, `-checks A,B`, `-executor NAME`, `-model M`, `-effort E`, `-tools A,B`,
+`-attempts N`, `-prompt FILE`, `-schema FILE`, `-outcomes A,B` (of an agent or human
+node), `-on OUTCOME=TARGET` (repeatable), `-starters`, `-locks A,B` (any node),
+`-segment FILE` (segment and foreach), `-input REF` (segment), `-items REF` and
+`-parallel N` (foreach). The fields of `set` are `run`, `timeout`, `idle_timeout`,
+`executor`, `model`, `effort`, `tools`, `attempts`, `dialogue`, `prompt`, `schema`,
+`locks`, `segment`, `input`, `items` and `parallel`; `unset` takes the optional ones
+of these. For example, `hetman scribe add foreach build-all -after plan -segment
+segments/item.yaml -items output.plan.items -parallel 2` and
+`hetman scribe set test locks test-stand`.
 `hetman scribe help` lists everything.
 
 How the flow is wired:

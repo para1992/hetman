@@ -51,6 +51,11 @@ func (c *command) status(id int64, listEvents bool) int {
 	}
 	st := chronicle.Replay(events)
 	alive, _ := engine.Driven(c.o, k.ID)
+	// A child campaign is shown with the orders of its segment.
+	o, err := engine.OrdersOf(c.o, c.chron, k.ID)
+	if err != nil {
+		return c.fail(err)
+	}
 	views := map[string]*nodeView{}
 	view := func(n string) *nodeView {
 		if views[n] == nil {
@@ -110,20 +115,34 @@ func (c *command) status(id int64, listEvents bool) int {
 		}
 		fmt.Fprintf(w, "language for the person: %s\n", code)
 	}
+	if k.Parent != 0 {
+		top, _ := engine.Top(c.chron, k.ID)
+		where := events[0].ParentNode
+		if events[0].Item != "" {
+			where += ", item " + events[0].Item
+		}
+		fmt.Fprintf(w, "part of campaign %d: run by node %s of campaign %d; halt, resume and answer it through campaign %d\n", top, where, k.Parent, top)
+	}
 	fmt.Fprintf(w, "state: %s\n", c.describe(k.ID, st))
+	if st.End == "" {
+		ws, _ := engine.Waiters(c.chron, events)
+		for _, x := range ws {
+			fmt.Fprintf(w, "  %s\n", waiterLine(x))
+		}
+	}
 
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "  NODE\tTYPE\tSTATUS\tOUTCOME\tATTEMPTS\tTIME\t")
-	order := append([]string{}, c.o.Order...)
+	order := append([]string{}, o.Order...)
 	for n := range views {
-		if c.o.Nodes[n] == nil {
+		if o.Nodes[n] == nil {
 			order = append(order, n)
 		}
 	}
 	for _, n := range order {
 		typ := "?"
 		var node *orders.Node
-		if node = c.o.Nodes[n]; node != nil {
+		if node = o.Nodes[n]; node != nil {
 			typ = node.Type
 		}
 		v := views[n]
@@ -132,7 +151,11 @@ func (c *command) status(id int64, listEvents bool) int {
 			marker = ">"
 		}
 		if v == nil {
-			fmt.Fprintf(tw, "%s %s\t%s\tpending\t\t\t\t\n", marker, n, typ)
+			status, outcome := "pending", ""
+			if n == st.Node && st.End == "" && st.LockWait != "" {
+				status, outcome = "waiting for lock", st.LockWait+" (held by "+st.LockHolder+")"
+			}
+			fmt.Fprintf(tw, "%s %s\t%s\t%s\t%s\t\t\t\n", marker, n, typ, status, outcome)
 			continue
 		}
 		status, outcome, dur := "finished", v.outcome, ""
@@ -147,6 +170,8 @@ func (c *command) status(id int64, listEvents bool) int {
 			status, outcome = "error", v.err
 		case n == st.Node && st.End == "" && st.Waiting != "":
 			status, outcome = "waiting", st.Waiting
+		case n == st.Node && st.End == "" && st.LockWait != "" && !st.Running:
+			status, outcome = "waiting for lock", st.LockWait+" (held by "+st.LockHolder+")"
 		case v.outcome == "" && len(v.agent) > 0 && v.agent[len(v.agent)-1].failure != "":
 			status, outcome = "attempt failed", v.agent[len(v.agent)-1].failure
 		}
@@ -160,7 +185,10 @@ func (c *command) status(id int64, listEvents bool) int {
 		fmt.Fprintf(tw, "%s %s\t%s\t%s\t%s\t%s\t%s\t\n", marker, n, typ, status, outcome, attempts, dur)
 		if node != nil {
 			for _, name := range node.Checks {
-				fmt.Fprintf(tw, "    check %s\t%s\t\n", name, checkLine(v.checks, name, c.o.Checks[name]))
+				fmt.Fprintf(tw, "    check %s\t%s\t\n", name, checkLine(v.checks, name, o.Checks[name]))
+			}
+			if node.Composite() {
+				c.printChildren(tw, events, n, "    ", 0)
 			}
 		}
 	}
@@ -190,8 +218,10 @@ func (c *command) status(id int64, listEvents bool) int {
 			}
 		}
 	}
-	if st.Asking() && st.End == "" {
-		printAsked(w, c.o, k.ID, st.Ask, true)
+	top, _ := engine.Top(c.chron, k.ID)
+	if asked, _, _ := engine.Pending(c.chron, k.ID); asked != nil && st.End == "" {
+		ao, _ := engine.OrdersOf(c.o, c.chron, asked.Campaign)
+		printAsked(w, c.o, ao, top, asked, true)
 	}
 
 	var warnings []string
@@ -210,6 +240,84 @@ func (c *command) status(id int64, listEvents bool) int {
 		}
 	}
 	return exitDone
+}
+
+// printChildren lists the children of the latest attempt of a segment or
+// for-each node under its row, and the children of those that run a segment
+// themselves, indented further.
+func (c *command) printChildren(tw io.Writer, events []chronicle.Event, node, indent string, depth int) {
+	list, err := engine.ChildrenOf(c.chron, events, node)
+	if err != nil || depth > orders.MaxDepth {
+		return
+	}
+	for _, ch := range list {
+		name := "segment"
+		if ch.Item != "" {
+			name = "item " + ch.Item
+		}
+		switch {
+		case ch.NotRun != "":
+			fmt.Fprintf(tw, "%s%s\t\tnot run\t%s\t\t\t\n", indent, name, ch.NotRun)
+			continue
+		case ch.ID == 0:
+			needs := ""
+			if len(ch.Needs) > 0 {
+				needs = "needs " + strings.Join(ch.Needs, ", ")
+			}
+			fmt.Fprintf(tw, "%s%s\t\tpending\t%s\t\t\t\n", indent, name, needs)
+			continue
+		}
+		status, detail := childStatus(ch.State, c.childDriven(ch.ID))
+		fmt.Fprintf(tw, "%s%s\tcampaign %d\t%s\t%s\t\t\t\n", indent, name, ch.ID, status, detail)
+		if ch.State.End == "" && ch.State.Running {
+			c.printChildren(tw, ch.Events, ch.State.Node, indent+"  ", depth+1)
+		}
+	}
+}
+
+func (c *command) childDriven(id int64) bool {
+	alive, _ := engine.Driven(c.o, id)
+	return alive
+}
+
+// childStatus is the STATUS and OUTCOME cells of a child campaign's row.
+func childStatus(st chronicle.State, alive bool) (string, string) {
+	switch {
+	case st.End != "":
+		return "finished", st.End
+	case st.Error != "":
+		return "error", st.Error
+	case st.Asking():
+		return "asking", "at " + st.Node + ", waits for a person"
+	case st.Halted:
+		return "halted", "before " + st.Node
+	case st.LockWait != "" && !st.Running:
+		return "waiting for lock", st.LockWait + " at " + st.Node + " (held by " + st.LockHolder + ")"
+	case st.Waiting != "":
+		return "waiting", st.Waiting + " at " + st.Node
+	case st.Running && alive:
+		return "running", fmt.Sprintf("%s (attempt %d)", st.Node, st.Attempt)
+	case st.Running:
+		return "interrupted", st.Node
+	}
+	return "at " + st.Node, ""
+}
+
+// waiterLine says what holds a campaign up in one of its children.
+func waiterLine(x engine.Waiter) string {
+	st := x.State
+	at := fmt.Sprintf("%s (campaign %d)", x.Path, x.Campaign)
+	switch {
+	case st.Asking():
+		return fmt.Sprintf("%s waits for a person at %s: hetman answer", at, st.Node)
+	case st.Error != "":
+		return fmt.Sprintf("%s stopped in the error state: %s", at, st.Error)
+	case st.LockWait != "":
+		return fmt.Sprintf("%s waits at %s for the lock %s, held by %s", at, st.Node, st.LockWait, st.LockHolder)
+	case st.Waiting == chronicle.WaitOffline:
+		return fmt.Sprintf("%s stopped at %s: connectivity was lost (hetman resume runs it again)", at, st.Node)
+	}
+	return fmt.Sprintf("%s stopped at %s: the subscription limit was reached (hetman resume runs it again)", at, st.Node)
 }
 
 func (v *nodeView) lastAgent(attempt int) *agentAttempt {
@@ -307,6 +415,12 @@ func (c *command) describe(id int64, st chronicle.State) string {
 	}
 	alive, _ := engine.Driven(c.o, id)
 	where := "at " + st.Node
+	if st.LockWait != "" && !st.Running && !st.Halted {
+		if alive {
+			return fmt.Sprintf("waiting at %s for the lock %s, held by %s", st.Node, st.LockWait, st.LockHolder)
+		}
+		return fmt.Sprintf("waiting at %s for the lock %s, but no hetman process is running it (hetman resume to continue)", st.Node, st.LockWait)
+	}
 	if st.Asking() {
 		hint := "the running hetman process continues once answered"
 		if !alive {

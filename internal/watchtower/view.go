@@ -57,6 +57,11 @@ type Summary struct {
 	Started       time.Time  `json:"started"`
 	Ended         *time.Time `json:"ended,omitempty"` // last event once the campaign is not running
 	Marks         []Mark     `json:"marks"`
+	LockWait      string     `json:"lockWait,omitempty"`   // the lock the step at Node waits for
+	LockHolder    string     `json:"lockHolder,omitempty"` // who holds it
+	Parent        int64      `json:"parent,omitempty"`     // a child campaign: the campaign whose step runs it
+	Top           int64      `json:"top,omitempty"`        // a child campaign: the campaign a person started
+	Path          string     `json:"path,omitempty"`       // a child campaign: where it runs, such as "items/b"
 }
 
 // Mark is the status of one node in the list's mini pipeline.
@@ -104,8 +109,10 @@ type Ask struct {
 	By         string         `json:"by,omitempty"`
 	Via        string         `json:"via,omitempty"`
 	AnsweredAt *time.Time     `json:"answeredAt,omitempty"`
-	Command    string         `json:"command,omitempty"` // while open: the command that answers it
-	Example    string         `json:"example,omitempty"` // while open: the same with every answer given as a flag
+	Campaign   int64          `json:"campaign,omitempty"` // the child campaign that asks, when it is not this one
+	Path       string         `json:"path,omitempty"`     // where that child runs`
+	Command    string         `json:"command,omitempty"`  // while open: the command that answers it
+	Example    string         `json:"example,omitempty"`  // while open: the same with every answer given as a flag
 }
 
 // Outcome is one outcome a person may choose at a human node.
@@ -133,13 +140,18 @@ type Column struct {
 	MaxAttempts int    `json:"maxAttempts,omitempty"`
 }
 
-// Tile is one check of a gate, or the single command of a step.
+// Tile is one check of a gate, the single command of a step, or one child
+// campaign of a segment or for-each step.
 type Tile struct {
 	Check    string `json:"check,omitempty"`
 	Soft     bool   `json:"soft,omitempty"`
 	Status   string `json:"status"`
 	Outcome  string `json:"outcome,omitempty"`
 	Attempts int    `json:"attempts"`
+	Item     string `json:"item,omitempty"`  // for-each: the item id
+	Child    int64  `json:"child,omitempty"` // the child campaign; 0 for an item not started
+	Node     string `json:"node,omitempty"`  // where the child is
+	Note     string `json:"note,omitempty"`  // what the child waits for, or why an item does not run
 }
 
 // Exit is one transition out of a node.
@@ -270,6 +282,9 @@ func build(k chronicle.Campaign, events []chronicle.Event, o *orders.Orders, cam
 	if len(events) > 0 && events[0].Language != "" {
 		l, _ := language.Lookup(events[0].Language)
 		c.Language = &Language{Code: events[0].Language, English: l.English, Native: l.Native}
+	}
+	if st.End == "" && st.LockWait != "" && !st.Running {
+		c.LockWait, c.LockHolder = st.LockWait, st.LockHolder
 	}
 	if st.End == "" && st.Waiting != "" {
 		c.Wait = st.Waiting
@@ -566,7 +581,7 @@ func fill(col *Column, c *Campaign, st chronicle.State, soft map[string]bool) {
 	switch {
 	case col.Current && st.Asking():
 		col.Status = StatusAsking
-	case col.Current && c.Wait != "":
+	case col.Current && (c.Wait != "" || c.LockWait != ""):
 		col.Status = StatusWaiting
 	case len(list) > 0:
 		col.Status = list[len(list)-1].Status
