@@ -285,7 +285,11 @@ cli.usage: |
   прапорці (check, run, status, halt, resume, retry, rewind, serve):
     -f FILE  файл наказу (типово orders.yaml)
   прапорці (run):
-    -input FILE  JSON-файл із вхідними даними походу: об'єкт, на який можуть посилатися шаблони промптів
+    -input FILE  JSON-файл із вхідними даними походу: об'єкт, на який можуть посилатися шаблони промптів;
+                 якщо наказ має розділ input, файл перевіряється за ним
+    -ask         запитати вхідні дані в терміналі формою, зробленою з розділу input наказу;
+                 відповіді записуються в .hetman/inputs
+    -save-only   з -ask: записати файл вхідних даних, показати його шлях і нічого не починати
   прапорці (status, halt, resume, retry, rewind, answer):
     -c ID    номер походу (типово останній)
   прапорці (retry, rewind):
@@ -1078,6 +1082,9 @@ cli.task.usage: |
 
   команди:
     add     поставити завдання в чергу: hetman task add -kind KIND [-key KEY] [-input FILE] [-force]
+    new     запитати вхідні дані завдання формою, зробленою з розділу input наказу,
+            на який веде маршрут, і поставити його в чергу:
+            hetman task new -kind KIND [-key KEY] [-force] [-save-only]
     list    перелічити завдання з їхніми станами
     show    показати одне завдання і його похід: hetman task show ID
     cancel  скасувати завдання з черги: hetman task cancel ID
@@ -1091,6 +1098,8 @@ cli.task.usage: |
     -force       додати завдання, навіть коли його ключ уже зайнятий
     -input FILE  JSON-файл із вхідними даними завдання, один об'єкт; - читає стандартний
                  вхід; без нього вхідні дані — {}
+    -save-only   new: записати файл вхідних даних у .hetman/inputs, показати його шлях і
+                 нічого не ставити в чергу
     -state S     показати лише завдання в цьому стані (назва стану англійською: queued,
                  cancelled, running, waiting, done, failed, halted, error)
 cli.task.unknown_command: "hetman task: невідома команда {command}"
@@ -1308,3 +1317,85 @@ op.words.role_add: додати клієнта {client} у кінець ролі
 op.words.role_add_at: додати клієнта {client} до ролі {name} на позицію {at}
 op.words.role_remove: прибрати клієнта на позиції {at} з ролі {name}
 op.words.through_role: через роль {role}
+
+# ---- вхідні дані походу як форма: розділ input наказу, форма в терміналі
+# (hetman run -ask, hetman task new) і на сторінці, операції, що його описують
+
+form.invalid: "вхідні дані походу не відповідають розділу input наказу: {problems}"
+form.not_json: "вхідні дані походу не є JSON: {error}"
+form.not_object: "вхідні дані походу мають бути одним JSON-об'єктом"
+form.missing: "{field} — обов'язкове поле"
+form.unknown: "{field} не є полем вхідних даних (поля: {fields})"
+form.want_text: "{field} має бути текстом"
+form.one_line: "{field} має бути одним рядком"
+form.empty: "{field} не може бути порожнім"
+form.want_number: "{field} має бути числом"
+form.want_yesno: "{field} має бути true або false"
+form.want_option: "{field} має бути одним із варіантів: {options}"
+form.want_list: "{field} має бути списком текстів"
+form.want_item_text: "{field} має бути текстом в один рядок"
+form.empty_list: "{field} потребує принаймні одного елемента"
+form.want_objects: "{field} має бути списком об'єктів"
+form.want_item_object: "{field} має бути об'єктом"
+form.fixed: "(незмінне)"
+form.yes: "так"
+form.no: "ні"
+form.none: "немає"
+form.item: "{label} {n}"
+form.title: "Вхідні дані походу. Enter бере пропозицію в [дужках]; поле з позначкою (необов'язково) можна лишити порожнім."
+form.summary: "Вхідні дані походу:"
+form.action.use: "так, узяти"
+form.action.change: "змінити поле"
+form.action.cancel: "скасувати"
+form.what_now: "Що далі?"
+form.which_field: "Яке поле?"
+form.which_item: "Який елемент списку «{label}»?"
+form.which_remove: "Який елемент вилучити?"
+form.change_item: "змінити {item}"
+form.add_item: "додати елемент"
+form.remove_item: "вилучити елемент"
+form.back: "назад"
+form.optional: "(необов'язково)"
+form.not_a_number: "Введіть число, наприклад 3 або 2.5."
+form.long_keep: "Зараз (Enter у першому рядку лишає як є):"
+form.long_hint: "Кілька рядків; порожній рядок завершує текст."
+form.list_keep: "Зараз: {items} (Enter на першому елементі лишає їх)"
+form.list_hint: "По одному елементу в рядку; порожня відповідь завершує список."
+form.another: "Ще один елемент списку «{label}»?"
+form.add_first: "Додати елемент до списку «{label}»?"
+cli.form.no_section: "hetman {command}: у {path} немає розділу input, тож форми немає; передайте вхідні дані JSON-файлом або опишіть їх командою hetman scribe input-add"
+cli.form.cancelled: "Скасовано; нічого не почато й не поставлено в чергу."
+cli.form.wrote: "вхідні дані записано в {path}"
+cli.form.ask_or_input: "hetman run: укажіть або -ask, або -input, не обидва"
+cli.form.save_needs_ask: "hetman {command}: -save-only працює лише з -ask"
+cli.form.input_refused: "hetman {command}: {error}"
+flag.form_ask: "запитати вхідні дані походу в терміналі формою, зробленою з розділу input наказу"
+flag.form_save_only: "з формою: записати файл вхідних даних, показати його шлях і нічого не починати"
+flag.form_field_required: "поле потребує відповіді"
+flag.form_field_ask: "false для незмінного значення, про яке ніколи не питають"
+op.summary.input-add: "додати поле до вхідних даних, які людина дає, починаючи похід: вид {fields}; of називає список об'єктів, до якого воно належить, і цей список з'являється разом із першим полем; ask false разом із default — для незмінного значення"
+op.summary.input-remove: "вилучити поле вхідних даних або поле списку об'єктів, названого в of; розділ input зникає разом з останнім полем"
+op.summary.input-set: "встановити підпис (label), підказку (hint), обов'язковість (required: true або false), типове значення (default) чи ask (true або false) поля вхідних даних; підпис чи підказка з language записується окремо для цієї мови"
+op.summary.input-unset: "вилучити підпис, підказку чи типове значення поля вхідних даних; з language — лише текст цією мовою"
+op.words.input_field: "поле вхідних даних {name}"
+op.words.input_field_of: "поле {name} списку вхідних даних {of}"
+op.words.input_add: "додати {field} виду {kind}{more}"
+op.words.input_label: "з підписом {label}"
+op.words.input_hint: "з підказкою {hint}"
+op.words.input_in: "мовою {language}"
+op.words.input_required: "обов'язкове"
+op.words.input_default: "з типовим значенням {value}"
+op.words.input_fixed: "без запитання"
+op.words.input_options: "з варіантами {options}"
+op.words.input_remove: "вилучити {field}"
+op.words.input_set: "встановити {what} для {field}: {value}"
+op.words.input_set_in: "встановити {what} мовою {language} для {field}: {value}"
+op.words.input_unset: "вилучити {what} для {field}"
+op.words.input_unset_in: "вилучити {what} мовою {language} для {field}"
+page.input.hint: "Заповніть вхідні дані походу; поля з * обов'язкові. Останні надіслані значення зберігаються в цьому браузері."
+page.input.remove: "Вилучити"
+page.input.add_item: "Додати елемент"
+page.input.item: "{label} {n}"
+page.input.remove_item: "Вилучити цей елемент"
+page.input.add_object: "Додати до списку «{label}»"
+page.input.problems: "Вхідні дані походу неповні; похід не почато:"

@@ -9,32 +9,37 @@ import (
 
 	"hetman/internal/i18n"
 	"hetman/internal/language"
+	"hetman/internal/runinput"
 )
 
 // Operation names.
 const (
-	OpNew        = "new"         // create the orders file with its first node
-	OpAdd        = "add"         // add a node after or before another one
-	OpRemove     = "remove"      // remove a node and connect around it
-	OpRename     = "rename"      // rename a node everywhere it is referenced
-	OpLink       = "link"        // set or change the transition of an outcome
-	OpUnlink     = "unlink"      // remove the transition of an outcome
-	OpSet        = "set"         // set a field of a node
-	OpUnset      = "unset"       // remove a field of a node
-	OpCheck      = "check"       // declare a check, or change one
-	OpExecutor   = "executor"    // declare an executor, or change one
-	OpGateAdd    = "gate-add"    // add a declared check to a gate
-	OpGateRemove = "gate-remove" // remove a check from a gate
-	OpAsk        = "ask"         // add a question to a gate or a human node
-	OpAssistant  = "assistant"   // name the executor and model Scribe may ask
-	OpRole       = "role"        // declare a role, or change its selection mode
-	OpRoleAdd    = "role-add"    // add a client to a role
-	OpRoleRemove = "role-remove" // remove a client from a role
-	OpLanguage   = "language"    // set the language for the person
-	OpUnlanguage = "unlanguage"  // remove the language for the person
-	OpWorkdir    = "workdir"     // set the folder agent steps work in unless a node names its own
-	OpShowAdd    = "show-add"    // add a file to what a gate or human node shows the person
-	OpShowRemove = "show-remove" // remove a file from what a gate or human node shows
+	OpNew        = "new"          // create the orders file with its first node
+	OpAdd        = "add"          // add a node after or before another one
+	OpRemove     = "remove"       // remove a node and connect around it
+	OpRename     = "rename"       // rename a node everywhere it is referenced
+	OpLink       = "link"         // set or change the transition of an outcome
+	OpUnlink     = "unlink"       // remove the transition of an outcome
+	OpSet        = "set"          // set a field of a node
+	OpUnset      = "unset"        // remove a field of a node
+	OpCheck      = "check"        // declare a check, or change one
+	OpExecutor   = "executor"     // declare an executor, or change one
+	OpGateAdd    = "gate-add"     // add a declared check to a gate
+	OpGateRemove = "gate-remove"  // remove a check from a gate
+	OpAsk        = "ask"          // add a question to a gate or a human node
+	OpAssistant  = "assistant"    // name the executor and model Scribe may ask
+	OpRole       = "role"         // declare a role, or change its selection mode
+	OpRoleAdd    = "role-add"     // add a client to a role
+	OpRoleRemove = "role-remove"  // remove a client from a role
+	OpLanguage   = "language"     // set the language for the person
+	OpUnlanguage = "unlanguage"   // remove the language for the person
+	OpWorkdir    = "workdir"      // set the folder agent steps work in unless a node names its own
+	OpShowAdd    = "show-add"     // add a file to what a gate or human node shows the person
+	OpShowRemove = "show-remove"  // remove a file from what a gate or human node shows
+	OpInputAdd   = "input-add"    // add a field to the description of the run input
+	OpInputRm    = "input-remove" // remove a field of the run input
+	OpInputSet   = "input-set"    // set the label, hint, required, default or ask of a run input field
+	OpInputUnset = "input-unset"  // remove the label, hint or default of a run input field
 )
 
 // Op is one operation on an orders file. Only the fields its operation
@@ -85,6 +90,12 @@ type Op struct {
 	File     string            `json:"file,omitempty"`     // show-add, show-remove: a file relative to the orders folder, or {{work}}/FILE
 	Role     string            `json:"role,omitempty"`     // a new agent node: the role whose clients run it
 	Select   string            `json:"select,omitempty"`   // role: fixed, round_robin or quota
+	Of       string            `json:"of,omitempty"`       // input-*: the list of objects the field belongs to; empty for a top-level field
+	Label    string            `json:"label,omitempty"`    // input-add: the question or label shown to the person
+	Hint     string            `json:"hint,omitempty"`     // input-add: a hint shown with it
+	Required *bool             `json:"required,omitempty"` // input-add: whether an answer is needed
+	Ask      *bool             `json:"ask,omitempty"`      // input-add: false for a fixed value that is never asked
+	Default  string            `json:"default,omitempty"`  // input-add: the default, as text
 }
 
 // Spec describes one operation for people, the command line and a model.
@@ -146,7 +157,24 @@ var Specs = []Spec{
 		"remove a file from what a gate or human node shows the person"},
 	{OpWorkdir, []string{"workdir"}, []string{"workdir"}, nil,
 		"set the folder agent steps work in, relative to the orders folder, for every agent node that names none of its own"},
+	{OpInputAdd, []string{"name", "kind"}, []string{"name", "kind"}, []string{"of", "label", "hint", "language", "required", "ask", "default", "options"},
+		"add a field to the run input a person gives when starting a campaign: kind " + strings.Join(InputKinds, ", ") + "; of names the list of objects it belongs to, which is created by its first field; ask false with a default for a fixed value"},
+	{OpInputRm, []string{"name"}, []string{"name"}, []string{"of"},
+		"remove a field of the run input, or of a list of objects named by of; the input section goes with its last field"},
+	{OpInputSet, []string{"name", "field", "value"}, []string{"name", "field", "value"}, []string{"of", "language"},
+		"set the label, hint, required (true or false), default or ask (true or false) of a run input field; a label or hint with language is written per language"},
+	{OpInputUnset, []string{"name", "field"}, []string{"name", "field"}, []string{"of", "language"},
+		"remove the label, hint or default of a run input field; with language only that language's text"},
 }
+
+// InputKinds are the kinds of a run input field.
+var InputKinds = runinput.Kinds
+
+// The properties of a run input field input-set and input-unset change.
+var (
+	inputSetFields   = []string{"label", "hint", "required", "default", "ask"}
+	inputUnsetFields = []string{"label", "hint", "default"}
+)
 
 // SummaryIn is the summary in the language of p; in English it is Summary.
 func (s Spec) SummaryIn(p *i18n.Printer) string {
@@ -156,6 +184,8 @@ func (s Spec) SummaryIn(p *i18n.Printer) string {
 		fields = strings.Join(setFields, ", ")
 	case OpUnset:
 		fields = strings.Join(unsetFields, ", ")
+	case OpInputAdd:
+		fields = strings.Join(InputKinds, ", ")
 	}
 	return p.T("op.summary."+s.Op, "fields", fields)
 }
@@ -234,13 +264,25 @@ func (op Op) Validate() error {
 			return fmt.Errorf("%s: unknown field %q (known: %s)", op.Op, op.Field, strings.Join(list, ", "))
 		}
 	}
+	if (op.Op == OpInputSet || op.Op == OpInputUnset) && op.Field != "" {
+		list := inputSetFields
+		if op.Op == OpInputUnset {
+			list = inputUnsetFields
+		}
+		if !contains(list, op.Field) {
+			return fmt.Errorf("%s: unknown field %q (known: %s)", op.Op, op.Field, strings.Join(list, ", "))
+		}
+	}
+	if op.Op == OpInputAdd && op.Language != "" && op.Label == "" && op.Hint == "" {
+		return fmt.Errorf("input-add: language says which language the label and hint are in; give one of them")
+	}
 	if op.Op == OpRole && op.Executor == "" && (op.Model != "" || op.Effort != "") {
 		return fmt.Errorf("role: model and effort belong to the first client; give its executor too")
 	}
 	if op.Executor != "" && op.Role != "" {
 		return fmt.Errorf("%s: an agent node names either a role or an executor, not both", op.Op)
 	}
-	for _, s := range append(append(append([]string{op.Value, op.Question, op.Model, op.Effort, op.Segment, op.Input, op.Items, op.Workdir, op.Then, op.File}, op.Run...), op.Options...), op.Tools...) {
+	for _, s := range append(append(append([]string{op.Value, op.Question, op.Model, op.Effort, op.Segment, op.Input, op.Items, op.Workdir, op.Then, op.File, op.Of, op.Label, op.Hint, op.Default}, op.Run...), op.Options...), op.Tools...) {
 		if strings.ContainsAny(s, "\r\n") {
 			return fmt.Errorf("%s: values must be one line", op.Op)
 		}
@@ -343,6 +385,8 @@ func (op Op) WordsIn(p *i18n.Printer) string {
 		return p.T("op.words.language_code", "code", op.Language)
 	case OpUnlanguage:
 		return p.T("op.words.unlanguage")
+	case OpInputAdd, OpInputRm, OpInputSet, OpInputUnset:
+		return inputWords(p, op)
 	case OpAssistant:
 		key := "op.words.assistant"
 		if op.Effort != "" {

@@ -261,7 +261,11 @@ cli.usage: |
   flags (check, run, status, halt, resume, retry, rewind, serve):
     -f FILE  orders file (default orders.yaml)
   flags (run):
-    -input FILE  JSON file with the run input, an object prompt templates can refer to
+    -input FILE  JSON file with the run input, an object prompt templates can refer to;
+                 checked against the input section of the orders when they have one
+    -ask         ask for the run input in the terminal, through the form made from the
+                 input section of the orders; the answers are written under .hetman/inputs
+    -save-only   with -ask: write the input file, print its path and start nothing
   flags (status, halt, resume, retry, rewind, answer):
     -c ID    campaign id (default: the latest campaign)
   flags (retry, rewind):
@@ -1034,6 +1038,9 @@ cli.task.usage: |
 
   commands:
     add     queue a task: hetman task add -kind KIND [-key KEY] [-input FILE] [-force]
+    new     ask for the task's input through the form made from the input section of
+            the routed orders, then queue it: hetman task new -kind KIND [-key KEY]
+            [-force] [-save-only]
     list    list the tasks with their states
     show    show one task and its campaign: hetman task show ID
     cancel  cancel a queued task: hetman task cancel ID
@@ -1047,6 +1054,8 @@ cli.task.usage: |
     -force       add the task even when its key is taken
     -input FILE  JSON file with the task input, one object; - reads standard input;
                  without it the input is {}
+    -save-only   new: write the input file under .hetman/inputs, print its path and
+                 queue nothing
     -state S     list only tasks in this state
 cli.task.unknown_command: "hetman task: unknown command {command}"
 cli.task.need_id: "hetman task {command}: give one task id, as in hetman task {command} 3"
@@ -1251,3 +1260,86 @@ op.words.role_add: add the client {client} to the role {name} at the end
 op.words.role_add_at: add the client {client} to the role {name} at position {at}
 op.words.role_remove: remove the client at position {at} from the role {name}
 op.words.through_role: through the role {role}
+
+# ---- the run input as a form: the input section of the orders, the form in
+# the terminal (hetman run -ask, hetman task new) and on the page, and the
+# operations that declare it
+
+form.invalid: "the run input does not fit the input section of the orders: {problems}"
+form.not_json: "the run input is not JSON: {error}"
+form.not_object: the run input must be one JSON object
+form.missing: "{field} is required"
+form.unknown: "{field} is not a field of the run input (its fields: {fields})"
+form.want_text: "{field} must be a text"
+form.one_line: "{field} must be one line"
+form.empty: "{field} must not be empty"
+form.want_number: "{field} must be a number"
+form.want_yesno: "{field} must be true or false"
+form.want_option: "{field} must be one of {options}"
+form.want_list: "{field} must be a list of texts"
+form.want_item_text: "{field} must be a text of one line"
+form.empty_list: "{field} needs at least one item"
+form.want_objects: "{field} must be a list of objects"
+form.want_item_object: "{field} must be an object"
+form.fixed: (fixed)
+form.yes: "yes"
+form.no: "no"
+form.none: none
+form.item: "{label} {n}"
+form.title: "The run input. Enter takes the suggestion in [brackets]; a field marked (optional) may be left empty."
+form.summary: "The run input:"
+form.action.use: use it
+form.action.change: change a field
+form.action.cancel: cancel
+form.what_now: What now?
+form.which_field: Which field?
+form.which_item: "Which item of {label}?"
+form.which_remove: Remove which item?
+form.change_item: "change {item}"
+form.add_item: add an item
+form.remove_item: remove an item
+form.back: back
+form.optional: (optional)
+form.not_a_number: Type a number, such as 3 or 2.5.
+form.long_keep: "Now (Enter on the first line keeps it):"
+form.long_hint: Several lines; an empty line ends the text.
+form.list_keep: "Now: {items} (Enter on the first item keeps them)"
+form.list_hint: One item per line; an empty answer ends the list.
+form.another: "Another item of {label}?"
+form.add_first: "Add an item to {label}?"
+cli.form.no_section: "hetman {command}: {path} has no input section, so there is no form to ask; give the input as a JSON file, or describe it with hetman scribe input-add"
+cli.form.cancelled: Cancelled; nothing was started or queued.
+cli.form.wrote: "input written to {path}"
+cli.form.ask_or_input: "hetman run: give either -ask or -input, not both"
+cli.form.save_needs_ask: "hetman {command}: -save-only goes with -ask"
+cli.form.input_refused: "hetman {command}: {error}"
+flag.form_ask: ask for the run input in the terminal, through the form made from the input section of the orders
+flag.form_save_only: "with the form: write the input file, print its path and start nothing"
+flag.form_field_required: the field needs an answer
+flag.form_field_ask: false for a fixed value that is never asked
+op.summary.input-add: "add a field to the run input a person gives when starting a campaign: kind {fields}; of names the list of objects it belongs to, which is created by its first field; ask false with a default for a fixed value"
+op.summary.input-remove: remove a field of the run input, or of a list of objects named by of; the input section goes with its last field
+op.summary.input-set: set the label, hint, required (true or false), default or ask (true or false) of a run input field; a label or hint with language is written per language
+op.summary.input-unset: remove the label, hint or default of a run input field; with language only that language's text
+op.words.input_field: the run input field {name}
+op.words.input_field_of: "the field {name} of the run input list {of}"
+op.words.input_add: "add {field}, of kind {kind}{more}"
+op.words.input_label: "labelled {label}"
+op.words.input_hint: "with the hint {hint}"
+op.words.input_in: "in the language {language}"
+op.words.input_required: required
+op.words.input_default: "with the default {value}"
+op.words.input_fixed: never asked
+op.words.input_options: "with the options {options}"
+op.words.input_remove: "remove {field}"
+op.words.input_set: "set the {what} of {field} to {value}"
+op.words.input_set_in: "set the {what} of {field} in the language {language} to {value}"
+op.words.input_unset: "remove the {what} of {field}"
+op.words.input_unset_in: "remove the {what} of {field} in the language {language}"
+page.input.hint: "Fill in the run input; fields marked * are required. The values last sent are kept in this browser."
+page.input.remove: Remove
+page.input.add_item: Add an item
+page.input.item: "{label} {n}"
+page.input.remove_item: Remove this item
+page.input.add_object: "Add to {label}"
+page.input.problems: "The run input is not complete; nothing was started:"

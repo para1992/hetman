@@ -269,6 +269,33 @@ nodes:
   templates read through `{{input...}}` and every command reads from
   `HETMAN_INPUT_FILE`. It is stored with the campaign, so a resumed campaign sees the
   same input.
+- **Describing the run input.** When a flow needs input, describe it in the top-level
+  `input` section, so that nobody has to write the JSON by hand: `hetman run -ask`,
+  `hetman task new -kind KIND` and the start form of `hetman serve` ask for it field by
+  field, and `hetman run -input`, `hetman task add` and the page refuse an input that
+  does not fit, naming the field. Without the section nothing is checked.
+
+  ```yaml
+  input:
+    project: {kind: text, default: shop, ask: false}   # fixed: never asked, always given
+    tasks:
+      kind: objects                  # a list of objects, each with these fields
+      label: {en: Tasks, es: Tareas} # one text, or one per language code
+      required: true
+      fields:
+        id: {kind: text, label: Task id, hint: such as SHOP-12, required: true}
+        needs: {kind: list, label: Tasks that must be done first}
+        size: {kind: choice, options: [small, large], default: small}
+        notes: {kind: longtext}
+  ```
+
+  Kinds: `text` (one line), `longtext`, `number`, `yesno`, `choice` (with `options`),
+  `list` (a list of texts) and `objects` (with `fields`; a list of objects inside a list
+  of objects is not allowed). Per field: `label` and `hint` (a text, or a text per
+  language; the person's language is shown, else English, else the first written),
+  `required`, `default` and `ask: false` (needs a default). Field names use letters,
+  digits, `_` and `-`, no dots. An absent field gets its default. Declare the section
+  with the `input-*` operations below rather than by hand.
 - **Language for the person.** `language: CODE` at the top level makes what the flow
   addresses to a person (questions, summaries, plans, other documents a person reads)
   come in that language, while code, comments, identifiers, commit messages, file
@@ -454,7 +481,8 @@ routes:
 - `hetman task check` checks the routing file and every flow it routes to. The routing
   file has no scribe operations; edit it by hand and check it.
 - Tasks are added with `hetman task add -kind KIND [-key KEY] -input FILE` (`-input -`
-  reads standard input). A key makes a repeat a no-op while a task with that key exists
+  reads standard input), or with `hetman task new -kind KIND`, which asks for the input
+  through the form made from the routed flow's `input` section. A key makes a repeat a no-op while a task with that key exists
   that was not cancelled; `-force` adds it anyway.
 - `hetman dispatch` runs the queue (`-once` stops when nothing is left to start). A
   campaign that waits for a person takes no place in the limits; it is answered as
@@ -500,6 +528,15 @@ hetman scribe unlanguage                     remove it: English, nothing added t
 hetman scribe workdir FOLDER                 the folder agent steps work in, such as ..
 hetman scribe show-add NODE FILE             show a file at a gate or human node; {{work}}/FILE for the work folder
 hetman scribe show-remove NODE FILE          stop showing it
+hetman scribe input-add NAME KIND [-of LIST] [-label TEXT] [-hint TEXT] [-language CODE]
+                       [-required] [-default VALUE [-ask=false]] [-options A,B]
+                                             add a field to the run input; -of puts it in a list of
+                                             objects, which its first field creates
+hetman scribe input-remove NAME [-of LIST]   remove a field; the section goes with its last field
+hetman scribe input-set NAME FIELD VALUE [-of LIST] [-language CODE]
+                                             FIELD: label, hint, required, default or ask
+hetman scribe input-unset NAME FIELD [-of LIST] [-language CODE]
+                                             FIELD: label, hint or default
 ```
 
 Node flags: `-run 'CMD ARGS'` (one string, split at spaces; quote an argument that has
@@ -608,6 +645,9 @@ order, because each answer narrows the next question:
 7. **Language.** If the flow asks a person questions or writes documents for one:
    "In which language should the person read them?" Set it with
    `hetman scribe language CODE`; leave it out for English.
+8. **Input.** If a template or script reads `{{input...}}` or `HETMAN_INPUT_FILE`:
+   "What does a person give when starting a campaign?" Declare each field with
+   `hetman scribe input-add`, so the person can start work through a form.
 
 Stop asking when every step has a command, every outcome has a destination, every
 check is marked required or soft, and you know which steps have side effects. Do not

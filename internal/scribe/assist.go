@@ -18,6 +18,7 @@ import (
 	"hetman/internal/i18n"
 	"hetman/internal/language"
 	"hetman/internal/orders"
+	"hetman/internal/runinput"
 	"hetman/internal/schema"
 )
 
@@ -111,7 +112,8 @@ func opSchema() map[string]any {
 	}
 	props := map[string]any{"op": map[string]any{"type": "string", "enum": ops}}
 	for _, f := range []string{"node", "type", "after", "via", "before", "name", "outcome", "target", "field", "value",
-		"check", "id", "question", "kind", "flow", "timeout", "executor", "role", "model", "effort", "prompt", "schema", "segment", "input", "items", "workdir", "then", "file"} {
+		"check", "id", "question", "kind", "flow", "timeout", "executor", "role", "model", "effort", "prompt", "schema", "segment", "input", "items", "workdir", "then", "file",
+		"of", "label", "hint", "default"} {
 		props[f] = str
 	}
 	for _, f := range []string{"options", "run", "checks", "tools", "outcomes", "locks"} {
@@ -123,6 +125,8 @@ func opSchema() map[string]any {
 	props["max"] = map[string]any{"type": "integer"}
 	props["soft"] = map[string]any{"type": "boolean"}
 	props["starters"] = map[string]any{"type": "boolean"}
+	props["required"] = map[string]any{"type": "boolean"}
+	props["ask"] = map[string]any{"type": "boolean"}
 	props["on"] = map[string]any{"type": "object", "additionalProperties": str}
 	props["language"] = map[string]any{"type": "string", "enum": language.Codes()}
 	props["select"] = map[string]any{"type": "string", "enum": orders.SelectModes}
@@ -235,6 +239,9 @@ func Describe(o *orders.Orders, campaigns []int64) string {
 		roles = append(roles, fmt.Sprintf("%s (%s: %s)", name, r.Select, strings.Join(cs, ", ")))
 	}
 	fmt.Fprintf(&b, "declared roles: %s\n", orNone(roles))
+	if o.Input != nil {
+		fmt.Fprintf(&b, "run input fields: %s\n", describeInput(o.Input.Fields))
+	}
 	if n := len(campaigns); n > 0 {
 		var ids []string
 		for _, id := range campaigns {
@@ -245,6 +252,25 @@ func Describe(o *orders.Orders, campaigns []int64) string {
 		b.WriteString("campaigns: none yet\n")
 	}
 	return b.String()
+}
+
+// describeInput lists the fields of the run input with their kinds.
+func describeInput(fields []*runinput.Field) string {
+	var out []string
+	for _, f := range fields {
+		s := f.Name + " (" + f.Kind
+		if f.Required {
+			s += ", required"
+		}
+		if !f.Ask {
+			s += ", fixed"
+		}
+		if len(f.Fields) > 0 {
+			s += " of " + describeInput(f.Fields)
+		}
+		out = append(out, s+")")
+	}
+	return strings.Join(out, ", ")
 }
 
 // short writes a duration without zero units: 5m, not 5m0s.
@@ -318,6 +344,10 @@ const fieldHelp = `  node: a node id (for new and add: the new node's id); type:
   max and then (link): the transition may be taken max times per campaign, then the outcome then is taken instead;
   file (show-add, show-remove): a file a gate or human node shows, relative to the orders folder or as {{work}}/FILE;
   workdir: the folder agent steps work in, relative to the orders folder (workdir; add: one agent node's own);
+  for input-add, input-remove, input-set and input-unset: name is a run input field, of the list of objects it belongs to,
+  kind one of text, longtext, number, yesno, choice, list, objects; label and hint what the person reads (in language when given),
+  required true for a field that needs an answer, default its value when none is given (a list: items separated by commas),
+  ask false for a fixed value that is never asked; field (input-set, input-unset) is label, hint, required, default or ask;
   language: the code of the language for the person, one of ` + "%s" + `.
 `
 

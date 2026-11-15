@@ -212,6 +212,72 @@ $ hetman status
 ...
 ```
 
+### Starting work without writing JSON
+
+A flow can describe the input it expects in an `input` section of its orders. Then
+nobody has to write the JSON by hand: `hetman run -ask` asks for each field in the
+terminal, shows what was given, and starts once you confirm; `hetman task new -kind
+KIND` does the same for a task; the start form of `hetman serve` shows the same fields.
+`examples/foreach/tasks.yaml` takes a list of tasks this way:
+
+```yaml
+input:
+  project: {kind: text, default: demo, ask: false}   # fixed: never asked
+  tasks:
+    kind: objects                                    # a list of objects
+    label: {en: Tasks, uk: Завдання}                 # a text, or one per language
+    required: true
+    fields:
+      id: {kind: text, label: Task id, required: true}
+      needs: {kind: list, label: Ids of the tasks that must be done first}
+      title: {kind: text, label: Title, required: true}
+      description: {kind: longtext, label: Description}
+      criteria: {kind: list, label: Acceptance criteria, required: true}
+```
+
+```sh
+$ cd examples/foreach
+$ hetman run -f tasks.yaml -ask
+The run input. Enter takes the suggestion in [brackets]; a field marked (optional) may be left empty.
+  Tasks 1
+    Task id: TASK-1
+    Ids of the tasks that must be done first (optional)
+      One item per line; an empty answer ends the list.
+      1:
+    Title: Storage layer
+...
+Another item of Tasks? (y/n) [n]: n
+
+The run input:
+project (fixed): demo
+Tasks:
+  Tasks 1
+    Task id: TASK-1
+    Title: Storage layer
+    Acceptance criteria:
+      - records survive a restart
+What now?
+  1) use it
+  2) change a field
+  3) cancel
+Choice [use it]:
+input written to .../examples/foreach/.hetman/inputs/tasks-demo-20261115-101500.json
+campaign 1 started (flow tasks-demo)
+```
+
+The kinds are `text` (one line), `longtext`, `number`, `yesno`, `choice` (with
+`options`), `list` (a list of texts) and `objects` (a list of objects with their own
+`fields`, one level deep). Each field may have a `label` and a `hint`, as one text or
+as a text per language code (the person's language from `HETMAN_LANGUAGE` is shown,
+else English, else the first one written), `required`, a `default`, and `ask: false`
+for a fixed value. The answers are written to a new file under `.hetman/inputs`, never
+over an old one; `-save-only` writes it, prints its path and starts nothing. When the
+section is there, `hetman run -input`, `hetman task add` and the page check every input
+against it and refuse one that does not fit, naming the field
+(`tasks[2].criteria is required`); an absent field gets its default. Without the
+section nothing changes. The `input-*` operations of `hetman scribe` declare it
+without editing the file.
+
 ## Concepts
 
 **Orders.** The config file, `orders.yaml` by default. It names the first node and
@@ -1352,7 +1418,9 @@ HETMAN_CLAUDE_REAL=1 go test ./cmd/hetman-adapter-claude -run RealClient -v
 
 ```
 hetman check  [-f FILE]                 check the orders without running anything
-hetman run    [-f FILE] [-input FILE]   start a new campaign and run it
+hetman run    [-f FILE] [-input FILE | -ask [-save-only]]
+                                        start a new campaign and run it; -ask asks for the
+                                        input through the form of the input section
 hetman status [-f FILE] [-c ID] [-events]  show where a campaign is
 hetman halt   [-f FILE] [-c ID]         halt a campaign after its current step
 hetman resume [-f FILE] [-c ID]         continue a halted, stopped or interrupted campaign
@@ -1364,6 +1432,8 @@ hetman answer [-f FILE] [-c ID] [-a ID=ANSWER ...] [-comment ID=TEXT ...] [-outc
 hetman serve  [-f FILE] [-addr ADDRESS] show every campaign live on a web page (Watchtower)
 hetman task add    [-r FILE] -kind KIND [-key KEY] [-input FILE|-] [-force]
                                         queue an internal task (see Tasks and the dispatcher)
+hetman task new    [-r FILE] -kind KIND [-key KEY] [-force] [-save-only]
+                                        ask for a task's input through the form, then queue it
 hetman task list   [-r FILE] [-state STATE]   list the tasks with their states
 hetman task show   [-r FILE] ID         show one task, its campaign and its input
 hetman task cancel [-r FILE] ID         cancel a queued task
@@ -1382,7 +1452,11 @@ hetman version                          print the version of hetman
 ```
 
 - `-f FILE` is the orders file, `orders.yaml` in the current folder by default.
-- `-input FILE` is a JSON file holding one object, the run input of the campaign.
+- `-input FILE` is a JSON file holding one object, the run input of the campaign;
+  orders with an `input` section check it against that section first.
+- `-ask` asks for the run input through the form made from the `input` section, writes
+  it under `.hetman/inputs` and starts; with `-save-only` it only writes the file and
+  prints its path.
 - `-c ID` is the campaign number; the latest campaign by default.
 - `-events` makes `status` also list every chronicle event.
 - `-to NODE` is the node `rewind` sends the campaign back to; `-by NAME` records who
@@ -1527,7 +1601,11 @@ folder that passes the check, shows the language for the person the campaign wil
 get, and takes the run input as a JSON object typed or pasted into the form. The page
 checks that it is one object before sending it, and remembers the last input of each
 orders file in that browser. The server checks the orders and their programs as
-`hetman run` does; their problems are shown instead of starting.
+`hetman run` does; their problems are shown instead of starting. For orders with an
+`input` section (see Starting work without writing JSON) the page shows a form made
+from it instead: a field per entry, items of a list added and removed in the page;
+the server checks the result with the same code as `hetman run` and names every field
+that does not fit.
 
 **Editing the flow.** Each orders file of the folder has a Flow view: its pipeline,
 and for each node the operations of `hetman scribe` that make sense there (add a step
@@ -1779,6 +1857,16 @@ hetman scribe unlanguage                     remove it: English, and nothing add
 hetman scribe workdir FOLDER                 set the folder agent steps work in by default
 hetman scribe show-add NODE FILE             show a file to the person at a gate or human node
 hetman scribe show-remove NODE FILE          stop showing it
+hetman scribe input-add NAME KIND [-of LIST] [-label TEXT] [-hint TEXT] [-language CODE]
+                       [-required] [-default VALUE [-ask=false]] [-options A,B]
+                                             add a field to the run input (see Starting work
+                                             without writing JSON); -of puts it in a list of
+                                             objects, which its first field creates
+hetman scribe input-remove NAME [-of LIST]   remove a field of the run input
+hetman scribe input-set NAME FIELD VALUE [-of LIST] [-language CODE]
+                                             set its label, hint, required, default or ask
+hetman scribe input-unset NAME FIELD [-of LIST] [-language CODE]
+                                             remove its label, hint or default
 ```
 
 `TYPE` is `script`, `gate`, `agent`, `human`, `segment` or `foreach`. The node flags

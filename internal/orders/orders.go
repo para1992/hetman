@@ -20,6 +20,7 @@ import (
 	"hetman/internal/ask"
 	"hetman/internal/language"
 	"hetman/internal/prompt"
+	"hetman/internal/runinput"
 	"hetman/internal/schema"
 )
 
@@ -67,12 +68,13 @@ type Orders struct {
 	Executors map[string]*Executor
 	Roles     map[string]*Role // pools of clients agent nodes may run on
 	Nodes     map[string]*Node
-	Order     []string // node ids in file order
-	Notify    *Notify  // the notification hook, or nil
-	Scribe    *Scribe  // the model the setup assistant may ask, or nil
-	Language  string   // code of the language text for a person is written in; empty for none
-	Workdir   string   // the folder agent steps work in unless a node names its own, absolute; empty when not set
-	Later     Problems // ParseBuilding only: placeholders naming a node the orders do not have yet
+	Order     []string       // node ids in file order
+	Notify    *Notify        // the notification hook, or nil
+	Scribe    *Scribe        // the model the setup assistant may ask, or nil
+	Language  string         // code of the language text for a person is written in; empty for none
+	Workdir   string         // the folder agent steps work in unless a node names its own, absolute; empty when not set
+	Input     *runinput.Spec // the fields of the run input, or nil when the orders do not describe them
+	Later     Problems       // ParseBuilding only: placeholders naming a node the orders do not have yet
 
 	programs []program // the program of every run list, in file order
 }
@@ -487,7 +489,7 @@ func (p *parser) duration(n *yaml.Node, what string) time.Duration {
 }
 
 func (p *parser) top(root *yaml.Node, o *Orders) {
-	entries, ok := p.mapping(root, "orders", "version", "flow", "start", "language", workdirKey, "scribe", "checks", "executors", "roles", "notify", "nodes")
+	entries, ok := p.mapping(root, "orders", "version", "flow", "start", "language", workdirKey, "scribe", inputKey, "checks", "executors", "roles", "notify", "nodes")
 	if !ok {
 		return
 	}
@@ -526,6 +528,8 @@ func (p *parser) top(root *yaml.Node, o *Orders) {
 			o.Workdir = p.workdir(e.value, "workdir")
 		case "scribe":
 			scribeN = e.value
+		case inputKey:
+			p.input(e.value, o)
 		case "nodes":
 			nodesN = e.value
 		}

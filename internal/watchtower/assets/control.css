@@ -22,3 +22,9 @@ pre.log.diff .del { color: var(--failed); }
 .ctl-op > summary { font-size: 13.5px; }
 .ctl-rewind { margin: 10px 0 0; }
 .ctl-note { display: block; margin: 4px 4px 0; font-size: 11.5px; color: var(--muted); }
+.form-list { border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px 8px; margin: 0 0 8px; }
+.form-list > legend, .form-object > legend { color: var(--muted); padding: 0 4px; }
+.form-object { border: 1px dashed var(--line); border-radius: 8px; padding: 4px 10px 6px; margin: 0 0 8px; }
+.form-item { display: flex; gap: 6px; align-items: center; margin: 0 0 6px; }
+.form-item input[type="text"] { flex: 1; min-width: 8em; }
+.answer label.form-field textarea { flex-basis: 100%; }

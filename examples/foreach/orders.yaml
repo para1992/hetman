@@ -17,6 +17,7 @@
 #
 #   hetman check
 #   hetman run -input input.json
+#   hetman run -ask           the same, asking for the goal instead of reading a file
 #   hetman status          the items, their campaigns and who waits for the stand
 #   hetman serve           the same on a web page; an item's tile opens its campaign
 #
@@ -27,6 +28,15 @@ version: 0
 flow: foreach-demo
 workdir: .   # the folder agent steps work in, relative to this file
 start: plan
+
+# What a person gives when starting a campaign. hetman run -ask and the
+# page's start form ask for it; hetman run -input checks a file against it.
+input:
+  goal:
+    kind: longtext
+    label: What should be built?
+    hint: the plan step splits it into work items
+    required: true
 
 executors:
   stub: {run: [./bin/stub-adapter, plans/happy.json]}
