@@ -213,8 +213,8 @@ func SpecOf(op string) (Spec, bool) {
 // Node fields set and unset can change.
 var (
 	setFields = []string{"run", "timeout", "idle_timeout", "executor", "role", "model", "effort", "tools", "attempts", "dialogue", "prompt", "schema",
-		"locks", "segment", "input", "items", "parallel", "workdir", "fail_on_denied"}
-	unsetFields = []string{"timeout", "idle_timeout", "model", "effort", "tools", "attempts", "dialogue", "locks", "input", "parallel", "workdir", "fail_on_denied"}
+		"locks", "segment", "input", "items", "parallel", "workdir", "fail_on_denied", "keep_session"}
+	unsetFields = []string{"timeout", "idle_timeout", "model", "effort", "tools", "attempts", "dialogue", "locks", "input", "parallel", "workdir", "fail_on_denied", "keep_session"}
 )
 
 // Fields lists the fields an Op has set, by their JSON names.

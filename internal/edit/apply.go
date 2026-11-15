@@ -21,7 +21,7 @@ import (
 // The order keys are written in, used to place a key that is added.
 var (
 	topOrder      = []string{"version", "flow", "workdir", "start", "language", "start_label", "input", "scribe", "notify", "executors", "roles", "checks", "nodes"}
-	nodeOrder     = []string{"type", "run", "segment", "input", "items", "parallel", "executor", "role", "prompt", "schema", "model", "effort", "tools", "workdir", "checks", "ask", "show", "timeout", "idle_timeout", "max_attempts", "dialogue", "fail_on_denied", "locks", "on"}
+	nodeOrder     = []string{"type", "run", "segment", "input", "items", "parallel", "executor", "role", "prompt", "schema", "model", "effort", "tools", "workdir", "checks", "ask", "show", "timeout", "idle_timeout", "max_attempts", "dialogue", "fail_on_denied", "keep_session", "locks", "on"}
 	checkOrder    = []string{"run", "timeout", "soft", "locks"}
 	questionOrder = []string{"id", "question", "kind", "options"}
 	scribeOrder   = []string{"executor", "model", "effort", "timeout"}
@@ -916,7 +916,7 @@ func (e *editing) setField() error {
 	}
 	typ := scalarOf(n, "type")
 	agentOnly := map[string]bool{"idle_timeout": true, "executor": true, "role": true, "model": true, "effort": true, "tools": true,
-		"attempts": true, "dialogue": true, "prompt": true, "schema": true, "workdir": true, "fail_on_denied": true}
+		"attempts": true, "dialogue": true, "prompt": true, "schema": true, "workdir": true, "fail_on_denied": true, "keep_session": true}
 	if agentOnly[op.Field] && typ != orders.Agent {
 		return fmt.Errorf("%s is a %s node; %s is set only on an agent node", op.Node, typ, op.Field)
 	}
@@ -956,6 +956,11 @@ func (e *editing) setField() error {
 			return fmt.Errorf("%s must be a whole number from 1 to 100, not %q", op.Field, op.Value)
 		}
 		v = num(k)
+	case "keep_session":
+		if op.Value != "true" && op.Value != "false" {
+			return fmt.Errorf("keep_session is true or false, not %q", op.Value)
+		}
+		v = &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: op.Value}
 	case "fail_on_denied":
 		// true, false, or the tools whose denied calls fail the attempt.
 		if op.Value == "true" || op.Value == "false" {

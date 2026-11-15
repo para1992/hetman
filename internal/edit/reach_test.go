@@ -184,6 +184,27 @@ func TestSetFailOnDenied(t *testing.T) {
 	}
 }
 
+// keep_session takes true or false, and unset removes it.
+func TestSetKeepSession(t *testing.T) {
+	d := fixture(t)
+	if err := d.Apply(Op{Op: OpSet, Node: "review", Field: "keep_session", Value: "yes"}); err == nil {
+		t.Fatal("keep_session took yes")
+	}
+	if err := d.Apply(Op{Op: OpSet, Node: "review", Field: "keep_session", Value: "true"}); err != nil {
+		t.Fatal(err)
+	}
+	o, err := d.Check()
+	if err != nil || !o.Nodes["review"].KeepSession {
+		t.Fatalf("%v", err)
+	}
+	if err := d.Apply(Op{Op: OpUnset, Node: "review", Field: "keep_session"}); err != nil {
+		t.Fatal(err)
+	}
+	if o, err = d.Check(); err != nil || o.Nodes["review"].KeepSession || strings.Contains(string(d.Text()), "keep_session") {
+		t.Fatalf("%v\n%s", err, d.Text())
+	}
+}
+
 // workdir sets the default folder of agent steps; set and unset change the
 // folder of one agent node.
 func TestWorkdirOperations(t *testing.T) {

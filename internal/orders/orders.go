@@ -159,6 +159,9 @@ type Node struct {
 	// FailOnDenied, else after a denied call of one of FailOnDeniedTools.
 	FailOnDenied      bool
 	FailOnDeniedTools []string
+	// Agent nodes: a later visit of the node in the same campaign continues
+	// the conversation of its previous visit on the same client.
+	KeepSession bool
 
 	// Any node: resources its steps hold exclusively, as written.
 	Locks []string

@@ -18,7 +18,11 @@ import (
 )
 
 // agentKeys are the keys only an agent node may have.
-var agentKeys = []string{"executor", "role", "prompt", "model", "effort", "tools", "schema", "idle_timeout", "max_attempts", "dialogue", FailOnDeniedKey}
+var agentKeys = []string{"executor", "role", "prompt", "model", "effort", "tools", "schema", "idle_timeout", "max_attempts", "dialogue", FailOnDeniedKey, KeepSessionKey}
+
+// KeepSessionKey makes a later visit of an agent node continue the
+// conversation of its previous visit.
+const KeepSessionKey = "keep_session"
 
 // OutcomeField is the field of an agent's output that names its outcome.
 const OutcomeField = "outcome"
@@ -180,6 +184,13 @@ func (p *parser) agentRest(node *Node, fields map[string]entry) {
 			p.errorf(v, "%s: dialogue must be a whole number of question rounds from 1 to 100, got %q", what, v.Value)
 		} else {
 			node.Dialogue = n
+		}
+	}
+	if f, ok := fields[KeepSessionKey]; ok {
+		if v := f.value; v.Kind == yaml.ScalarNode && v.Tag == "!!bool" {
+			node.KeepSession = v.Value == "true"
+		} else {
+			p.errorf(v, "%s: %s is true (a later visit continues the conversation of the previous one) or false, got %q", what, KeepSessionKey, v.Value)
 		}
 	}
 	if f, ok := fields["prompt"]; ok {

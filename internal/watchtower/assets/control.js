@@ -734,7 +734,7 @@
     }
     if (n.type === 'agent') {
       const agentFields = (n.role ? ['role', 'executor'] : ['executor', 'model', 'effort'].concat(f.roles.length ? ['role'] : []))
-        .concat(['attempts', 'dialogue', 'idle_timeout', 'tools', 'workdir', 'fail_on_denied', 'prompt', 'schema']);
+        .concat(['attempts', 'dialogue', 'idle_timeout', 'tools', 'workdir', 'fail_on_denied', 'keep_session', 'prompt', 'schema']);
       const first = n.role ? 'role' : 'model';
       const valueField = (field) => {
         if (field === 'executor') return { name: 'value', kind: 'select', options: f.executors, value: n.executor };

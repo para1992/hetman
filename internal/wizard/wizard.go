@@ -744,7 +744,7 @@ func (w *wizard) changeAgent() ([]edit.Op, error) {
 	if err != nil {
 		return nil, err
 	}
-	field, err := w.choose(w.p.T("wizard.what_to_change"), []string{"executor", "model", "effort", "tools", "attempts", "fail_on_denied"}, "model")
+	field, err := w.choose(w.p.T("wizard.what_to_change"), []string{"executor", "model", "effort", "tools", "attempts", "fail_on_denied", "keep_session"}, "model")
 	if err != nil {
 		return nil, err
 	}
@@ -756,7 +756,8 @@ func (w *wizard) changeAgent() ([]edit.Op, error) {
 		return w.changeExecutor(n)
 	}
 	cur := map[string]string{"executor": node.Executor, "model": node.Model, "effort": node.Effort,
-		"tools": strings.Join(node.Tools, ", "), "attempts": strconv.Itoa(node.MaxAttempts), "fail_on_denied": failOnDenied(node)}[field]
+		"tools": strings.Join(node.Tools, ", "), "attempts": strconv.Itoa(node.MaxAttempts), "fail_on_denied": failOnDenied(node),
+		"keep_session": strconv.FormatBool(node.KeepSession)}[field]
 	if field == "fail_on_denied" {
 		fmt.Fprintln(w.out, w.p.T("wizard.fail_on_denied_hint"))
 	}

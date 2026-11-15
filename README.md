@@ -523,6 +523,7 @@ nodes:
     idle_timeout: 5m                 # optional: limit for silence from the adapter
     max_attempts: 3                  # optional, 1 to 100, default 3
     fail_on_denied: [Bash]           # optional: an answer after a denied Bash call fails the attempt (true: any tool)
+    keep_session: true               # optional: a later visit continues the previous visit's conversation
     on: {ok: review, fail: failed}
 ```
 
@@ -668,6 +669,17 @@ continued, an error, a timeout), the attempt fails with `invalid_output` as it w
 have without them. Each round is an `output_repair` event in the chronicle, a few
 lines in the step's log (the rejected answer among them), a `repair` line under the
 attempt in `hetman status` and a line on the step card.
+
+**Keeping the conversation across visits.** By default every visit of a node starts
+a fresh conversation. With `keep_session: true`, the first attempt of a later visit
+in the same campaign (a reviewer the flow comes back to after rework, say) continues
+the conversation of the node's previous visit, with the newly rendered prompt as the
+next message, so the agent remembers what it said before; this needs an adapter that
+declares `resume` (else the campaign stops in the error state) and the same executor
+and model as the previous visit, otherwise the visit starts afresh. If that attempt
+fails, even with a permanent error such as an expired session, the next attempt
+starts afresh with the full prompt. The trade-off: the conversation grows with every
+visit, and so does what the client has to read each time.
 
 **Denied tool calls.** An adapter reports the tool calls its client denied in a step
 with the answer; they are recorded with the attempt and shown in `hetman status`
@@ -2181,7 +2193,7 @@ entry only at a comma or a space outside parentheses and quotes, so
 whole; quotes keep an entry with a comma together and are dropped. The fields of
 `set` are `run`, `timeout`, `idle_timeout`, `executor`, `role`, `model`, `effort`,
 `tools`, `attempts`, `dialogue`, `prompt`, `schema`, `workdir`, `fail_on_denied`
-(`true` or `false`), `locks`, `segment`,
+(`true` or `false`), `keep_session` (`true` or `false`), `locks`, `segment`,
 `input`, `items` and `parallel`; `unset` takes the optional ones of these. For
 example, `hetman scribe add foreach build-all -after plan -segment segments/item.yaml
 -items output.plan.items -parallel 2` and `hetman scribe set test locks test-stand`.

@@ -212,6 +212,7 @@ engine.check_required: "  перевірка {check}: {outcome} (обов'язк
 engine.cannot_record_process: "не вдалося записати процес {pid} кроку {node}: {error}"
 engine.limit_wait: "{node} чекає, доки скинеться ліміт підписки; знову запуститься {until}"
 engine.agent_started: "{node}: спроба {attempt} почалася (виконавець {executor})"
+engine.agent_kept_session: "{node}: спроба {attempt} почалася (виконавець {executor}, продовжує сесію {session} з попереднього відвідування)"
 engine.agent_started_session: "{node}: спроба {attempt} почалася (виконавець {executor}, продовжує сесію {session})"
 engine.session: "  {node}: сесія {session}"
 engine.dialogue:
@@ -547,8 +548,8 @@ scribe.usage_flags: |
     -starters (створити відсутні файли промпту й схеми), -locks A,B (ресурси, які крок тримає сам),
     -segment FILE (segment, foreach), -input REF (segment), -items REF і -parallel N (foreach)
   поля для set: run, timeout, idle_timeout, executor, role, model, effort, tools, attempts, dialogue, prompt, schema,
-    locks, segment, input, items, parallel
-  поля для unset: timeout, idle_timeout, model, effort, tools, attempts, dialogue, locks, input, parallel
+    locks, segment, input, items, parallel, keep_session
+  поля для unset: timeout, idle_timeout, model, effort, tools, attempts, dialogue, locks, input, parallel, keep_session
   коди мов: {codes}
   прапорці кожної операції:
     -f FILE    файл наказу (типово orders.yaml)

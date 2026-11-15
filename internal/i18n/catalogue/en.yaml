@@ -203,6 +203,7 @@ engine.check_required: "  check {check}: {outcome} (required, gate blocked)"
 engine.cannot_record_process: "cannot record process {pid} of {node}: {error}"
 engine.limit_wait: "{node} waits for the subscription limit to reset; runs again at {until}"
 engine.agent_started: "{node} attempt {attempt} started (executor {executor})"
+engine.agent_kept_session: "{node} attempt {attempt} started (executor {executor}, continuing session {session} of its previous visit)"
 engine.agent_started_session: "{node} attempt {attempt} started (executor {executor}, continuing session {session})"
 engine.session: "  {node} session {session}"
 engine.dialogue: "{node} asks the person {n} question(s), round {round} of at most {rounds} ({took})"
@@ -507,8 +508,8 @@ scribe.usage_flags: |
     -starters (create missing prompt and schema files), -locks A,B (resources held exclusively),
     -segment FILE (segment, foreach), -input REF (segment), -items REF and -parallel N (foreach)
   set fields: run, timeout, idle_timeout, executor, role, model, effort, tools, attempts, dialogue, prompt, schema,
-    locks, segment, input, items, parallel
-  unset fields: timeout, idle_timeout, model, effort, tools, attempts, dialogue, locks, input, parallel
+    locks, segment, input, items, parallel, keep_session
+  unset fields: timeout, idle_timeout, model, effort, tools, attempts, dialogue, locks, input, parallel, keep_session
   language codes: {codes}
   flags of every operation:
     -f FILE    orders file (default orders.yaml)

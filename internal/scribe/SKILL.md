@@ -340,6 +340,13 @@ nodes:
   the client's shell tool, by the name its adapter uses), so that an answer after a denied
   command fails the attempt instead of being accepted, while a harmless denied read
   does not; recommend it to the person for such steps. `true` counts every tool.
+- **Keeping a conversation across visits.** `keep_session: true` on an agent node
+  makes a later visit in the same campaign (a reviewer the flow comes back to after
+  rework, say) continue the conversation of its previous visit, with the new prompt
+  as the next message, so it remembers what it asked for. It needs an adapter that
+  declares `resume`, and the same executor and model as the previous visit, else the
+  visit starts afresh. The conversation grows with every visit; suggest it for a
+  reviewer that keeps raising new remarks each round.
 - **Thinking takes time.** A node with an `effort` needs an `idle_timeout` of 15
   minutes or more unless its adapter sends progress messages; `hetman check` warns. Give the commands as narrow patterns
   the client can match whole: `Bash(make -C work *)` rather than a `cd work && make`
@@ -513,13 +520,14 @@ hetman scribe link NODE OUTCOME TARGET       set or change a transition (TARGET:
 hetman scribe unlink NODE OUTCOME            remove a transition
 hetman scribe set NODE FIELD VALUE           run, timeout, idle_timeout, executor, role, model, effort,
                                              tools, attempts, dialogue, prompt, schema, workdir,
-                                             fail_on_denied, locks, segment, input, items, parallel
+                                             fail_on_denied, keep_session, locks, segment, input, items,
+                                             parallel
 hetman scribe set NODE executor EXECUTOR -model MODEL [-effort EFFORT]
                                              switch a node to another client in one operation; the
                                              model and effort are checked against EXECUTOR's catalogue
                                              (an effort not given is removed)
 hetman scribe unset NODE FIELD               timeout, idle_timeout, model, effort, tools, attempts, dialogue,
-                                             workdir, fail_on_denied, locks, input, parallel
+                                             workdir, fail_on_denied, keep_session, locks, input, parallel
 hetman scribe check NAME -run CMD [-timeout D] [-soft | -required] [-locks A,B]   declare a check or change one
 hetman scribe executor NAME -run CMD         declare an executor or change its command
 hetman scribe gate-add GATE CHECK [-at N]    put a declared check into a gate, at position N from 1

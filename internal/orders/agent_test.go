@@ -108,6 +108,13 @@ func TestAgentNode(t *testing.T) {
 	if r.MaxAttempts != 5 || !reflect.DeepEqual(r.Outcomes(), []string{"ok", "needs_rework", "fail"}) {
 		t.Fatalf("review %+v outcomes %v", r, r.Outcomes())
 	}
+	if w.KeepSession || r.KeepSession {
+		t.Fatalf("keep_session is off unless set")
+	}
+	o, err = Load(agentFiles(t, strings.Replace(agentOrders, "max_attempts: 5", "max_attempts: 5\n    keep_session: true", 1), nil))
+	if err != nil || !o.Nodes["review"].KeepSession {
+		t.Fatalf("keep_session not read: %v", err)
+	}
 	errs, _ := o.CheckPrograms()
 	if len(errs) != 2 || !strings.Contains(errs[0].Msg, "./adapters/stub") || errs[0].Line != 4 {
 		t.Fatalf("executor program must be looked for: %v", errs)
@@ -181,6 +188,7 @@ func TestAgentRejected(t *testing.T) {
 		{"run on an agent", "    executor: stub\n    prompt: prompts/write.md=>    executor: stub\n    run: [x]\n    prompt: prompts/write.md", nil, "", 10, `an agent node has no run`},
 		{"max attempts zero", "max_attempts: 5=>max_attempts: 0", nil, "", 23, `max_attempts must be a whole number`},
 		{"idle timeout", "idle_timeout: 1m=>idle_timeout: soon", nil, "", 16, `idle_timeout must be a positive duration`},
+		{"keep_session not a bool", "max_attempts: 5=>max_attempts: 5\n    keep_session: yes please", nil, "", 24, `keep_session is true`},
 		{"executor without run", "stub: {run: [./adapters/stub, --quiet]}=>stub: {}", nil, "", 4, `missing key "run"`},
 	}
 	for _, c := range cases {

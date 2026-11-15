@@ -182,6 +182,47 @@ func carry(visit []chronicle.Event, node string, canResume bool) carryOver {
 	return c
 }
 
+// keptSession is the conversation a node with keep_session continues on a
+// later visit: the latest session id its previous visit reported, with the
+// executor and model of the attempt that reported it. start is the first
+// event of the current visit; on a first visit it is empty.
+type keptSession struct {
+	session, executor, model string
+}
+
+func keptOf(events []chronicle.Event, start int, node string) keptSession {
+	var k keptSession
+	if start == 0 {
+		return k
+	}
+	var executor, model string
+	for _, ev := range events[visitStart(events[:start-1], node) : start-1] {
+		if ev.Node != node {
+			continue
+		}
+		switch ev.Kind {
+		case chronicle.StepStarted:
+			executor, model = ev.Executor, ev.Model
+			if ev.Session != "" {
+				k = keptSession{ev.Session, executor, model}
+			}
+		case chronicle.AgentSession:
+			k = keptSession{ev.Session, executor, model}
+		}
+	}
+	return k
+}
+
+// attempted reports whether a node has started an attempt in these events.
+func attempted(events []chronicle.Event, node string) bool {
+	for _, ev := range events {
+		if ev.Kind == chronicle.StepStarted && ev.Node == node {
+			return true
+		}
+	}
+	return false
+}
+
 // agentStep runs one attempt of an agent node.
 func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, st chronicle.State, events []chronicle.Event) error {
 	run, unlock, err := e.runner(ctx, node, events)
@@ -204,6 +245,10 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 		return e.stop(node.ID, fmt.Sprintf("%s holds a dialogue, but the adapter of executor %s (%s) does not declare the %q feature, "+
 			"so it cannot continue the conversation with a person's answers; use an adapter that can, or remove dialogue", node.ID, x.Name, desc.Name, adapter.FeatureResume))
 	}
+	if node.KeepSession && !desc.Has(adapter.FeatureResume) {
+		return e.stop(node.ID, fmt.Sprintf("%s keeps its session across visits, but the adapter of executor %s (%s) does not declare the %q feature, "+
+			"so it cannot continue the conversation of an earlier visit; use an adapter that can, or remove %s", node.ID, x.Name, desc.Name, adapter.FeatureResume, orders.KeepSessionKey))
+	}
 	if !desc.Has(adapter.FeatureProtect) && !e.unfenced[x.Name] {
 		e.say("engine.unprotected", "executor", x.Name, "adapter", desc.Name)
 		if e.unfenced == nil {
@@ -211,13 +256,27 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 		}
 		e.unfenced[x.Name] = true
 	}
-	visit := events[visitStart(events, node.ID):]
+	start := visitStart(events, node.ID)
+	visit := events[start:]
 	c := carry(visit, node.ID, desc.Has(adapter.FeatureResume))
 	// A conversation belongs to one client: on another client the step
 	// starts afresh, with the full prompt and what the person said so far.
 	moved := c.client != "" && c.client != clientKey(x.Name, run.model, run.effort)
 	if moved {
 		c.session = ""
+	}
+	// A node that keeps its session continues, in the first attempt of a
+	// later visit, the conversation of its previous visit when that ran on
+	// the same executor and model. An attempt resumed after being cut off
+	// continues it as well; once such an attempt fails, the next one starts
+	// afresh.
+	kept := false // this attempt continues the conversation of an earlier visit
+	if node.KeepSession {
+		k := keptOf(events, start, node.ID)
+		if !attempted(visit, node.ID) && k.session != "" && k.executor == x.Name && k.model == run.model {
+			c.session = k.session
+		}
+		kept = c.session != "" && c.session == k.session
 	}
 	left := node.Dialogue - c.rounds // rounds of questions the step may still ask
 	lang, langSet, err := e.language()
@@ -288,7 +347,9 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 		return err
 	}
 	unlock()
-	if c.session != "" {
+	if kept {
+		e.say("engine.agent_kept_session", "node", node.ID, "attempt", attempt, "executor", x.Name, "session", c.session)
+	} else if c.session != "" {
 		e.say("engine.agent_started_session", "node", node.ID, "attempt", attempt, "executor", x.Name, "session", c.session)
 	} else {
 		e.say("engine.agent_started", "node", node.ID, "attempt", attempt, "executor", x.Name)
@@ -346,6 +407,9 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 				e.say("engine.session", "node", node.ID, "session", id)
 			},
 		})
+	}
+	if kept {
+		fmt.Fprintf(logf, "hetman: continuing session %s of the previous visit of %s (%s)\n", c.session, node.ID, orders.KeepSessionKey)
 	}
 	r := launch(step, node.Timeout)
 	if recordErr != nil {
@@ -447,6 +511,11 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 			fin.Failure, fin.Error = chronicle.FailProtocol, "the step asked questions but its adapter reported no session, so the conversation cannot be continued with the answers"
 		}
 	}
+	if kept && fin.Failure == chronicle.FailPermanent {
+		// The kept conversation may be lost or expired: the attempt counts
+		// as failed, and the next one starts afresh.
+		fin.Outcome = ""
+	}
 	if chronicle.Counts(fin.Failure) && fin.Failure != chronicle.FailUnable && fin.Outcome == "" && st.Failures+1 >= node.MaxAttempts {
 		fin.Outcome = orders.Fail
 	}
@@ -467,7 +536,7 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 		e.say("engine.finished", "node", node.ID, "outcome", fin.Outcome, "took", took)
 	case fin.Failure == chronicle.FailUnable:
 		return e.stop(node.ID, fmt.Sprintf("%s attempt %d cannot proceed: %s%s", node.ID, attempt, fin.Error, allowedAfterAll(node, fin.Denied)))
-	case fin.Failure == chronicle.FailPermanent:
+	case fin.Failure == chronicle.FailPermanent && !kept:
 		e.say("engine.failed_permanent", "node", node.ID, "attempt", attempt, "error", fin.Error)
 	case fin.Failure == chronicle.FailLimit && run.choice != nil:
 		role := e.Orders.Roles[node.Role]
