@@ -505,10 +505,11 @@ scribe.usage: |
 scribe.usage_flags: |
 
   прапорці вузла (new, add): -run CMD, -timeout D, -checks A,B, -executor NAME, -model M, -effort E,
+    -role NAME (агентський вузол, що працює через роль, замість -executor, -model і -effort),
     -tools A,B, -attempts N, -prompt FILE, -schema FILE, -outcomes A,B, -on OUTCOME=TARGET (повторюваний),
     -starters (створити відсутні файли промпту й схеми), -locks A,B (ресурси, які крок тримає сам),
     -segment FILE (segment, foreach), -input REF (segment), -items REF і -parallel N (foreach)
-  поля для set: run, timeout, idle_timeout, executor, model, effort, tools, attempts, dialogue, prompt, schema,
+  поля для set: run, timeout, idle_timeout, executor, role, model, effort, tools, attempts, dialogue, prompt, schema,
     locks, segment, input, items, parallel
   поля для unset: timeout, idle_timeout, model, effort, tools, attempts, dialogue, locks, input, parallel
   коди мов: {codes}
@@ -1174,3 +1175,102 @@ page.tasks.state.done: завершено
 page.tasks.state.failed: провалено
 page.tasks.state.halted: на привалі
 page.tasks.state.error: помилка
+
+# ---- ролі: набори клієнтів, на яких працює агентський крок
+
+engine.client_chosen: "{node} працює на клієнті {client} ролі {role} ({reason})"
+engine.client_switched: "{node} змінює клієнта: клієнт {client} ролі {role} вперся в ліміт; далі працює клієнт {to} ({reason})"
+engine.client_limit: "{node}, спроба {attempt}: клієнт {client} ролі {role} вперся в ліміт ({error}); не зараховується"
+engine.no_client_until: "{node}: жоден клієнт ролі {role} зараз не може працювати; чекає до {until}, коли знову зможе перший"
+engine.no_client: "{node} чекає на людину: жоден клієнт ролі {role} не може працювати і жоден не каже, коли зможе; hetman resume спробує їх знову"
+engine.usage_failed: "не вдалося прочитати використання виконавця {executor}: {error}"
+engine.chose.fixed: перший клієнт, що може працювати
+engine.chose.turn: його черга
+engine.chose.quota: найменша використана частка
+engine.chose.resume: він продовжує спробу, яку виконував
+explain.client: "Крок {node}, спроба {attempt}, працює на клієнті {client} ролі {role} ({mode}): {why}."
+explain.client_from: " Клієнт {from} перед тим вперся в ліміт."
+explain.client_compared: " Порівняно: {usage}."
+explain.chose.fixed: перший клієнт, що може працювати
+explain.chose.turn: його черга
+explain.chose.quota: найменша використана частка
+explain.chose.resume: він продовжує спробу, яку виконував
+explain.chose.none: жоден клієнт не може працювати
+explain.no_client_until: "Жоден клієнт ролі {role} не може виконати {node} ({usage}); крок чекає до {until}."
+explain.no_client: "Жоден клієнт ролі {role} не може виконати {node} ({usage}); крок чекає на людину."
+explain.where.no_client_until: "З {at} похід чекає на кроці {node}: жоден клієнт ролі {role} не може працювати ({usage}); крок запуститься знову {until}."
+explain.where.no_client: "З {at} похід зупинено на кроці {node}: жоден клієнт ролі {role} не може працювати ({usage}) і жоден не каже, коли зможе; крок запуститься знову, коли похід відновлять."
+explain.usage.client: "клієнт {client}: {windows}"
+explain.usage.window: "{window} {used} {source}"
+explain.usage.window_unknown: "{window} невідомо"
+explain.usage.exhausted_until: "вичерпаний до {until}"
+explain.usage.exhausted: вичерпаний, доки людина не відновить похід або не буде видно, що його вікно скинулося
+explain.usage.can_run: може працювати
+explain.source.measured: виміряно
+explain.source.estimated: оцінено
+explain.source.limit: за лімітом
+explain.source.unknown: невідомо
+status.agent.client: "    клієнт   {client} ролі {role} ({mode}): {why}"
+status.agent.switched: "    змінено з клієнта {from}, який вперся в ліміт"
+status.agent.compared: "    порівняно {usage}"
+status.agent.client_limit: "ліміт цього клієнта (не зараховується), далі працює інший клієнт: {error}"
+status.no_client: "{node} чекає: жоден клієнт ролі {role} не може працювати: {usage}"
+page.client.chosen: "{client} ролі {role} ({mode}): {why}"
+page.client.switched: "клієнт {from} перед тим вперся в ліміт"
+page.client.none: "Жоден клієнт ролі {role} не може виконати {node}: {usage}."
+page.kv.client: Клієнт
+page.kv.switched: Змінено клієнта
+page.kv.compared: Порівняно
+page.card.role: роль
+page.wait.no_client: Жоден клієнт ролі не може працювати.
+page.wait.no_client_resume: Жоден не каже, коли зможе знову, тож похід чекає на людину; відновлення спробує клієнтів знову.
+page.roles.title: Ролі
+page.roles.none: Наказ не оголошує жодної ролі.
+page.roles.hint: "Кожен клієнт із часткою п'ятигодинного й тижневого вікна: виміряною самим клієнтом через адаптер, оціненою за спробами, які бачив Hetman, відносно обсягу, вказаного в ролі, або встановленою лімітом, про який повідомив клієнт. У режимі quota працює клієнт, чия більша частка найменша; вичерпаний клієнт чекає, доки його вікно скинеться."
+page.roles.unknown: невідомо
+page.roles.source.measured: виміряно
+page.roles.source.estimated: оцінено
+page.roles.source.limit: ліміт досягнуто
+page.roles.source.unknown: невідомо
+page.roles.measured_at: "виміряно {at}"
+page.roles.allowance: "дозволено {allowance}"
+page.roles.resets: "скинеться {at}"
+page.roles.seen:
+  one: "помічено {n} спробу, {took}"
+  few: "помічено {n} спроби, {took}"
+  many: "помічено {n} спроб, {took}"
+page.roles.can_run: може працювати
+page.roles.exhausted_until: "вичерпаний до {until} ({why})"
+page.roles.exhausted: "вичерпаний ({why}), доки людина не відновить похід або не буде видно, що його вікно скинулося"
+page.roles.mode.fixed: фіксований
+page.roles.mode.round_robin: по черзі
+page.roles.mode.quota: за залишком підписки
+page.roles.col.client: Клієнт
+page.roles.col.executor: Виконавець
+page.roles.col.model: Модель
+page.roles.col.effort: Зусилля
+page.roles.col.five_hour: П'ять годин
+page.roles.col.weekly: Тиждень
+page.roles.col.state: Стан
+page.flow.no_roles: Потік ще не оголошує жодної ролі. Роль — це набір клієнтів, на яких може працювати агентський крок.
+page.op.role_new: Оголосити роль
+page.op.role_select: Змінити режим ролі
+page.op.role_add: Додати клієнта до ролі
+page.op.role_remove: Прибрати клієнта з ролі
+page.field.rolename: Роль
+page.field.role: Роль
+page.field.select: Режим
+page.field.effort: Зусилля
+page.field.none: немає
+page.field.value.fixed: фіксований (перший клієнт)
+page.field.value.round_robin: по черзі (клієнти працюють по черзі)
+page.field.value.quota: за залишком підписки (найменша використана частка)
+op.summary.role: "оголосити роль (її режим вибору, fixed, round_robin або quota, і першого клієнта: виконавець, модель, зусилля) або змінити режим уже оголошеної"
+op.summary.role-add: додати до ролі клієнта (виконавця з власними моделлю й зусиллям) на позицію від 1 (у кінець, якщо не вказано)
+op.summary.role-remove: прибрати з ролі клієнта на позиції від 1; у ролі лишається щонайменше один клієнт
+op.words.role: "оголосити роль {name}, що вибирає {select}, з клієнтом {client}"
+op.words.role_select: зробити так, щоб роль {name} вибирала {select}
+op.words.role_add: додати клієнта {client} у кінець ролі {name}
+op.words.role_add_at: додати клієнта {client} до ролі {name} на позицію {at}
+op.words.role_remove: прибрати клієнта на позиції {at} з ролі {name}
+op.words.through_role: через роль {role}

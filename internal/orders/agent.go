@@ -17,7 +17,7 @@ import (
 )
 
 // agentKeys are the keys only an agent node may have.
-var agentKeys = []string{"executor", "prompt", "model", "effort", "tools", "schema", "idle_timeout", "max_attempts", "dialogue"}
+var agentKeys = []string{"executor", "role", "prompt", "model", "effort", "tools", "schema", "idle_timeout", "max_attempts", "dialogue"}
 
 // OutcomeField is the field of an agent's output that names its outcome.
 const OutcomeField = "outcome"
@@ -94,10 +94,29 @@ func (p *parser) scribe(n *yaml.Node, o *Orders) {
 func (p *parser) agentNode(node *Node, keyN *yaml.Node, fields map[string]entry, o *Orders) {
 	what := fmt.Sprintf("node %q", node.ID)
 	node.MaxAttempts = DefaultMaxAttempts
-	for _, k := range []string{"executor", "prompt", "schema"} {
+	for _, k := range []string{"prompt", "schema"} {
 		if _, ok := fields[k]; !ok {
 			p.errorf(keyN, "%s: missing key %q", what, k)
 		}
+	}
+	if f, ok := fields["role"]; ok {
+		// A role names the executor, model and effort of each of its
+		// clients, so the node names none of them.
+		clash := false
+		for _, k := range []string{"executor", "model", "effort"} {
+			if g, ok := fields[k]; ok {
+				p.errorf(g.keyN, "%s: %s is given by each client of role %q; a node names either a role or an executor, not both", what, k, f.value.Value)
+				clash = true
+			}
+		}
+		if !clash {
+			p.roleKey(node, f, o)
+		}
+		p.agentRest(node, fields)
+		return
+	}
+	if _, ok := fields["executor"]; !ok {
+		p.errorf(keyN, "%s: missing key \"executor\" (or \"role\", a pool of clients declared under the top-level roles)", what)
 	}
 	if f, ok := fields["executor"]; ok {
 		if name, ok := p.name(f.value, what+": executor"); ok {
@@ -123,6 +142,12 @@ func (p *parser) agentNode(node *Node, keyN *yaml.Node, fields map[string]entry,
 			node.Effort = s
 		}
 	}
+	p.agentRest(node, fields)
+}
+
+// agentRest reads the keys of an agent node that do not name who runs it.
+func (p *parser) agentRest(node *Node, fields map[string]entry) {
+	what := fmt.Sprintf("node %q", node.ID)
 	if f, ok := fields["tools"]; ok {
 		if f.value.Kind != yaml.SequenceNode {
 			p.errorf(f.value, "%s: tools must be a list", what)

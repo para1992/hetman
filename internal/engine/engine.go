@@ -150,6 +150,9 @@ type Engine struct {
 	node   string   // the node of the parent that runs this campaign
 	item   string   // the for-each item this campaign runs; empty for a segment
 	held   []string // the locks held by the step running now
+
+	rolesOnce sync.Once  // of the campaign a person started: makes roleState
+	roleState *roleState // of the campaign a person started: shared by the campaigns of its tree
 }
 
 // top is the engine of the campaign a person started that this one belongs

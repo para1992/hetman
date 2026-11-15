@@ -1,0 +1,13 @@
+{
+  "name": "stub-second",
+  "usage": {
+    "five_hour": {"used": 0.2, "resets_in": "4h"},
+    "weekly": {"used": 0.4, "resets_in": "50h"}
+  },
+  "nodes": {
+    "outline": [[{"session": "second-outline"}, {"result": {"outcome": "ok", "text": "1. Rename. 2. Signal. 3. Compress."}}]],
+    "draft": [[{"session": "second-draft"}, {"log": "drafting"}, {"result": {"outcome": "ok", "text": "Rename the log file, then send the program the signal that makes it reopen its log."}}]],
+    "review": [[{"session": "second-review"}, {"log": "reviewing"}, {"result": {"outcome": "ok", "text": "Name the signal (often HUP) and say to compress the old file afterwards."}}]],
+    "polish": [[{"session": "second-polish"}, {"log": "polishing from the start"}, {"result": {"outcome": "ok", "text": "Rename the log file, send the program HUP so it reopens its log, then compress the old file."}}]]
+  }
+}

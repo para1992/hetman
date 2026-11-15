@@ -10,6 +10,11 @@
 // Before a step the engine runs the adapter with the single extra argument
 // --describe; the adapter prints one Description and exits with code 0.
 //
+// An adapter that declares the usage feature also answers the argument
+// --usage followed by the names of usage windows (five_hour, weekly): it
+// prints one Usage line with its client's current usage of those windows,
+// makes no model request, and exits with code 0.
+//
 // For a step the engine writes one Start message, then the adapter writes
 // any number of log and session messages followed by exactly one result or
 // error message, and exits with code 0. The engine may write a cancel
@@ -35,7 +40,82 @@ const (
 	// FeatureResume: the adapter can continue an earlier conversation when
 	// the start message carries the session id it reported then.
 	FeatureResume = "resume"
+	// FeatureUsage: the adapter answers UsageFlag with its client's usage
+	// of the named windows, measured by the client, without a model
+	// request.
+	FeatureUsage = "usage"
 )
+
+// UsageFlag is the argument that asks an adapter for its client's usage; the
+// names of the windows follow it as further arguments.
+const UsageFlag = "--usage"
+
+// Usage windows an adapter may be asked about.
+const (
+	WindowFiveHour = "five_hour" // the client's five-hour window
+	WindowWeekly   = "weekly"    // the client's weekly window; a client that counts by month reports that share here
+)
+
+// UsageWindows lists the usage windows of the protocol.
+var UsageWindows = []string{WindowFiveHour, WindowWeekly}
+
+// Usage is what an adapter prints for UsageFlag. A window the client does
+// not report is left out.
+type Usage struct {
+	Windows []UsageWindow `json:"windows"`
+}
+
+// UsageWindow is the usage of one window: the share of the allowance used
+// (0 for none, 1 for all of it) and when the window resets.
+type UsageWindow struct {
+	Name     string  `json:"name"`
+	Used     float64 `json:"used"`
+	ResetsAt string  `json:"resets_at,omitempty"` // RFC 3339 time
+}
+
+// ResetTime returns when the window resets, or the zero time when the
+// adapter did not say.
+func (w UsageWindow) ResetTime() time.Time {
+	t, _ := time.Parse(time.RFC3339Nano, w.ResetsAt)
+	return t
+}
+
+// ParseUsage reads the output of UsageFlag and checks it against the
+// windows that were asked for.
+func ParseUsage(out []byte, asked []string) (Usage, error) {
+	var u Usage
+	text := strings.TrimSpace(string(out))
+	if text == "" {
+		return u, errors.New("printed nothing for " + UsageFlag)
+	}
+	if strings.Contains(text, "\n") {
+		return u, errors.New("printed more than one line for " + UsageFlag)
+	}
+	dec := json.NewDecoder(strings.NewReader(text))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&u); err != nil {
+		return u, fmt.Errorf("usage is not valid: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, w := range u.Windows {
+		known := false
+		for _, a := range asked {
+			known = known || a == w.Name
+		}
+		switch {
+		case !known:
+			return u, fmt.Errorf("usage reports window %q, which was not asked for (asked: %s)", w.Name, strings.Join(asked, ", "))
+		case seen[w.Name]:
+			return u, fmt.Errorf("usage reports window %q twice", w.Name)
+		case w.Used < 0:
+			return u, fmt.Errorf("usage of window %q is negative", w.Name)
+		case w.ResetsAt != "" && w.ResetTime().IsZero():
+			return u, fmt.Errorf("resets_at %q of window %q is not an RFC 3339 time", w.ResetsAt, w.Name)
+		}
+		seen[w.Name] = true
+	}
+	return u, nil
+}
 
 // Message types.
 const (

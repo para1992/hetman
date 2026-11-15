@@ -124,6 +124,63 @@ var opCases = []struct {
 	{name: "set and unset locks", ops: []Op{{Op: OpSet, Node: "ship", Field: "locks", Value: "prod, writer"},
 		{Op: OpSet, Node: "build", Field: "locks", Value: "writer"}, {Op: OpUnset, Node: "build", Field: "locks"}}},
 	{name: "check locks", ops: []Op{{Op: OpCheck, Name: "tests", Locks: []string{"stand"}}}},
+	{name: "role declared and pointed at", ops: []Op{
+		{Op: OpExecutor, Name: "other", Run: []string{"./bin/other"}},
+		{Op: OpRole, Name: "coder", Select: "round_robin", Executor: "stub", Model: "m1", Effort: "high"},
+		{Op: OpRoleAdd, Name: "coder", Executor: "other", Model: "m2"},
+		{Op: OpSet, Node: "review", Field: "role", Value: "coder"}}},
+	{name: "role mode, clients added and removed", ops: []Op{
+		{Op: OpExecutor, Name: "other", Run: []string{"./bin/other"}},
+		{Op: OpRole, Name: "coder", Select: "fixed", Executor: "stub"},
+		{Op: OpRoleAdd, Name: "coder", Executor: "other", At: 1},
+		{Op: OpRoleAdd, Name: "coder", Executor: "stub", Model: "m3"},
+		{Op: OpRoleRemove, Name: "coder", At: 2},
+		{Op: OpRole, Name: "coder", Select: "quota"}}},
+	{name: "agent added through a role, then given an executor", ops: []Op{
+		{Op: OpRole, Name: "coder", Select: "fixed", Executor: "stub"},
+		{Op: OpAdd, Type: "agent", Node: "plan", Before: "build", Role: "coder", Starters: true},
+		{Op: OpSet, Node: "plan", Field: "executor", Value: "stub"}}},
+}
+
+// TestRoleOperationsRefused: a role operation that would leave the file
+// wrong changes nothing and says why.
+func TestRoleOperationsRefused(t *testing.T) {
+	cases := []struct {
+		ops  []Op
+		want string
+	}{
+		{[]Op{{Op: OpRole, Name: "coder", Select: "fixed"}}, "a new role needs select"},
+		{[]Op{{Op: OpRole, Name: "coder", Executor: "stub"}}, "a new role needs select"},
+		{[]Op{{Op: OpRole, Name: "coder", Select: "cheapest", Executor: "stub"}}, `unknown select "cheapest"`},
+		{[]Op{{Op: OpRole, Name: "coder", Select: "fixed", Executor: "nobody"}}, `executor "nobody" is not declared`},
+		{[]Op{{Op: OpRole, Name: "coder", Select: "fixed", Executor: "stub"}, {Op: OpRole, Name: "coder", Select: "fixed", Executor: "stub"}}, "add a client with role-add"},
+		{[]Op{{Op: OpRole, Name: "coder", Select: "fixed", Executor: "stub"}, {Op: OpRoleRemove, Name: "coder", At: 1}}, "a role needs at least one"},
+		{[]Op{{Op: OpRole, Name: "coder", Select: "fixed", Executor: "stub"}, {Op: OpRoleRemove, Name: "coder", At: 3}}, "at must be from 1 to 1"},
+		{[]Op{{Op: OpRoleAdd, Name: "coder", Executor: "stub"}}, `role "coder" is not declared`},
+		{[]Op{{Op: OpSet, Node: "review", Field: "role", Value: "coder"}}, `role "coder" is not declared`},
+		{[]Op{{Op: OpRole, Name: "coder", Select: "fixed", Executor: "stub"}, {Op: OpSet, Node: "review", Field: "role", Value: "coder"},
+			{Op: OpSet, Node: "review", Field: "model", Value: "m"}}, "runs through role coder"},
+		{[]Op{{Op: OpSet, Node: "build", Field: "role", Value: "coder"}}, "role is set only on an agent node"},
+	}
+	for _, c := range cases {
+		d := fixture(t)
+		orig := string(d.Text())
+		var err error
+		for _, op := range c.ops {
+			if err = d.Apply(op); err != nil {
+				break
+			}
+		}
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%v: %v, want %q", c.ops, err, c.want)
+		}
+		if len(c.ops) == 1 && string(d.Text()) != orig {
+			t.Errorf("%v changed the file", c.ops)
+		}
+	}
+	if err := (Op{Op: OpAdd, Type: "agent", Node: "x", After: "build", Executor: "stub", Role: "coder"}).Validate(); err == nil || !strings.Contains(err.Error(), "either a role or an executor") {
+		t.Errorf("validate: %v", err)
+	}
 }
 
 // TestOperationsOnCommentedFile applies every operation to a file full of

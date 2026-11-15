@@ -121,6 +121,8 @@ type carryOver struct {
 	feedback string // why the previous output was rejected
 	rejected int    // the attempt whose output was rejected
 
+	client string // the client (clientKey) of the latest attempt of the visit
+
 	// Dialogue steps.
 	rounds  int              // rounds of questions asked in this visit
 	asked   *chronicle.Event // the latest round of questions
@@ -155,6 +157,7 @@ func carry(visit []chronicle.Event, node string, canResume bool) carryOver {
 			// An attempt with no finish after it was cut off by the engine
 			// stopping, whether or not its step_interrupted is recorded yet.
 			last, cutOff = ev.Attempt, true
+			c.client = clientKey(ev.Executor, ev.Model, ev.Effort)
 			if ev.Session != "" {
 				sessions[ev.Attempt] = ev.Session
 				c.current = ev.Session
@@ -180,7 +183,15 @@ func carry(visit []chronicle.Event, node string, canResume bool) carryOver {
 
 // agentStep runs one attempt of an agent node.
 func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, st chronicle.State, events []chronicle.Event) error {
-	x := e.Orders.Executors[node.Executor]
+	run, unlock, err := e.runner(ctx, node, events)
+	defer unlock()
+	if err != nil {
+		return err
+	}
+	if run == nil {
+		return nil // no client of the role can run; the campaign waits
+	}
+	x := run.x
 	desc, err := e.describe(ctx, x)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -192,14 +203,21 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 		return e.stop(node.ID, fmt.Sprintf("%s holds a dialogue, but the adapter of executor %s (%s) does not declare the %q feature, "+
 			"so it cannot continue the conversation with a person's answers; use an adapter that can, or remove dialogue", node.ID, x.Name, desc.Name, adapter.FeatureResume))
 	}
-	c := carry(events[visitStart(events, node.ID):], node.ID, desc.Has(adapter.FeatureResume))
+	visit := events[visitStart(events, node.ID):]
+	c := carry(visit, node.ID, desc.Has(adapter.FeatureResume))
+	// A conversation belongs to one client: on another client the step
+	// starts afresh, with the full prompt and what the person said so far.
+	moved := c.client != "" && c.client != clientKey(x.Name, run.model, run.effort)
+	if moved {
+		c.session = ""
+	}
 	left := node.Dialogue - c.rounds // rounds of questions the step may still ask
 	lang, langSet, err := e.language()
 	if err != nil {
 		return e.stop(node.ID, fmt.Sprintf("%s: %v", node.ID, err))
 	}
 	var text string
-	if c.answer != nil {
+	if c.answer != nil && !moved {
 		// The person answered the step's questions: the same conversation
 		// continues with the answers as the next message.
 		c.session = c.current
@@ -213,7 +231,10 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 	if langSet {
 		text += languageInstruction(lang)
 	}
-	if c.answer == nil && left > 0 {
+	if moved && c.rounds > 0 {
+		text += dialogueHistory(visit, node.ID)
+	}
+	if (c.answer == nil || moved) && left > 0 {
 		text += askInstructions(left)
 	}
 	schemaJSON := node.SchemaJSON
@@ -241,9 +262,10 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 		return err
 	}
 	if err := e.record(chronicle.Event{Kind: chronicle.StepStarted, Node: node.ID, Attempt: attempt, Details: chronicle.Details{
-		Executor: x.Name, Model: node.Model, Effort: node.Effort, Prompt: promptRel, Session: c.session}}); err != nil {
+		Executor: x.Name, Model: run.model, Effort: run.effort, Prompt: promptRel, Session: c.session, Choice: run.choice}}); err != nil {
 		return err
 	}
+	unlock()
 	if c.session != "" {
 		e.say("engine.agent_started_session", "node", node.ID, "attempt", attempt, "executor", x.Name, "session", c.session)
 	} else {
@@ -251,7 +273,7 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 	}
 	began := time.Now()
 	fin := chronicle.Event{Kind: chronicle.StepFinished, Node: node.ID, Attempt: attempt,
-		Details: chronicle.Details{Log: LogFile(node.ID, "", attempt), Stderr: StderrFile(node.ID, attempt)}}
+		Details: chronicle.Details{Log: LogFile(node.ID, "", attempt), Stderr: StderrFile(node.ID, attempt), Executor: x.Name, Role: node.Role}}
 	logf, err := os.Create(filepath.Join(dir, filepath.FromSlash(fin.Log)))
 	if err != nil {
 		return err
@@ -269,7 +291,7 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 	}
 	start := adapter.EncodeStart(adapter.Step{
 		RunID: strconv.FormatInt(e.Campaign, 10), NodeID: node.ID, Attempt: attempt, Prompt: text,
-		Model: node.Model, Effort: node.Effort, Tools: node.Tools, Workdir: e.Orders.Dir,
+		Model: run.model, Effort: run.effort, Tools: node.Tools, Workdir: e.Orders.Dir,
 		Schema: schemaJSON, Session: session,
 	})
 	reported := "" // the session id this attempt reported
@@ -345,6 +367,10 @@ func (e *Engine) agentStep(ctx context.Context, node *orders.Node, attempt int, 
 		e.say("engine.finished", "node", node.ID, "outcome", fin.Outcome, "took", took)
 	case fin.Failure == chronicle.FailPermanent:
 		e.say("engine.failed_permanent", "node", node.ID, "attempt", attempt, "error", fin.Error)
+	case fin.Failure == chronicle.FailLimit && run.choice != nil:
+		role := e.Orders.Roles[node.Role]
+		e.say("engine.client_limit", "node", node.ID, "attempt", attempt, "client", role.Clients[run.choice.Client-1].Label(run.choice.Client-1),
+			"role", role.Name, "error", fin.Error)
 	case fin.Failure == chronicle.FailLimit && fin.RetryAt != nil:
 		e.say("engine.limit_hit", "node", node.ID, "attempt", attempt, "error", fin.Error)
 	case fin.Failure == chronicle.FailLimit:
@@ -663,6 +689,27 @@ If you cannot finish this step well without answers from a person, you may ask i
 {"outcome": %[1]q, %[2]q: [{"id": "scope", "question": "Should the export be included?", "kind": "yesno"}]}
 Each question has an "id" (letters, digits, '_', '-' and '.'), the "question" and a "kind": "yesno", "choice" (with "options", a list of at least two answers) or "text". The answers come back as the next message in this conversation. You may ask %[3]d more time(s); ask everything you need at once.
 `, ask.Outcome, ask.Field, left)
+}
+
+// dialogueHistory repeats every round of questions of this visit with the
+// person's answers, for a step that continues on another client and so
+// without the conversation in which they were asked.
+func dialogueHistory(visit []chronicle.Event, node string) string {
+	var b strings.Builder
+	b.WriteString("\n\n---\nEarlier in this step you asked a person questions, and they answered. The conversation in which you asked is not available, so here is everything that was asked and answered; take it into account and do not ask it again:\n")
+	var asked *chronicle.Event
+	for i := range visit {
+		ev := &visit[i]
+		switch {
+		case ev.Node != node:
+		case ev.Kind == chronicle.Asked:
+			asked = ev
+		case ev.Kind == chronicle.Answered && asked != nil && ev.Ask == asked.Seq:
+			fmt.Fprintf(&b, "Round %d:\n%s\n", asked.Round, ask.Write(asked.Questions, ev.Answers))
+			asked = nil
+		}
+	}
+	return b.String()
 }
 
 // dialogueMessage is the next message of a dialogue step: the person's

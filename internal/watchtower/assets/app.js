@@ -247,6 +247,7 @@
     streamKey: '',
     list: null,
     tasks: null,       // null while the folder has no task queue
+    roles: null,       // null while the served orders declare no role
     campaign: null,
     events: [],
     freshFrom: 0,
@@ -264,6 +265,7 @@
     }
     if (parts[0] === 'flow' && parts[1]) return { view: 'flow', file: parts[1], node: parts[2] || '' };
     if (parts[0] === 'tasks') return { view: 'tasks' };
+    if (parts[0] === 'roles') return { view: 'roles' };
     return { view: 'list' };
   }
 
@@ -276,7 +278,7 @@
   function onRoute() {
     const prev = S.route;
     S.route = parseRoute();
-    const lists = (v) => v === 'list' || v === 'tasks';
+    const lists = (v) => v === 'list' || v === 'tasks' || v === 'roles';
     if (lists(prev.view) && lists(S.route.view)) {
       render();
     } else if (prev.view !== S.route.view || prev.id !== S.route.id || prev.file !== S.route.file) {
@@ -319,6 +321,7 @@
     };
     es.addEventListener('list', (ev) => { S.list = JSON.parse(ev.data); render(); });
     es.addEventListener('tasks', (ev) => { S.tasks = JSON.parse(ev.data); render(); });
+    es.addEventListener('roles', (ev) => { const r = JSON.parse(ev.data); S.roles = r.length ? r : null; render(); });
     es.addEventListener('campaign', (ev) => {
       S.campaign = JSON.parse(ev.data);
       S.campaign.columns = S.campaign.columns || [];
@@ -343,6 +346,7 @@
     if (S.route.view === 'list') renderList();
     else if (S.route.view === 'flow') W.hooks.renderFlow();
     else if (S.route.view === 'tasks') renderTasks();
+    else if (S.route.view === 'roles') renderRoles();
     else if (S.campaign) renderCampaign();
     restoreScroll(keep);
     if (focusKey) {
@@ -390,11 +394,53 @@
   // Tabs between the campaigns and the tasks, shown once the folder has a
   // task queue.
   function listTabs(current) {
-    if (!S.tasks) return null;
+    if (!S.tasks && !S.roles) return null;
     const n = (list) => list ? ' (' + list.length + ')' : '';
     return h('nav', { class: 'tabs' },
       h('a', { href: '#/', 'aria-current': current === 'list' ? 'page' : false, text: t('page.list.title') + n(S.list) }),
-      h('a', { href: '#/tasks', 'aria-current': current === 'tasks' ? 'page' : false, text: t('page.tasks.title') + n(S.tasks) }));
+      S.tasks ? h('a', { href: '#/tasks', 'aria-current': current === 'tasks' ? 'page' : false, text: t('page.tasks.title') + n(S.tasks) }) : null,
+      S.roles ? h('a', { href: '#/roles', 'aria-current': current === 'roles' ? 'page' : false, text: t('page.roles.title') + n(S.roles) }) : null);
+  }
+
+  // The roles of the served orders: each client with its usage per window,
+  // where the number comes from, and whether it can run. Read-only.
+  function renderRoles() {
+    document.title = t('page.roles.title') + ' · ' + t('page.brand');
+    if (!S.roles) {
+      app.replaceChildren(listTabs('roles') || h('h1', { text: t('page.roles.title') }), h('p', { class: 'empty', text: t('page.roles.none') }));
+      return;
+    }
+    const pct = (x) => Math.round(x * 100) + '%';
+    const windowCell = (cl, name) => {
+      const w = (cl.windows || []).find((x) => x.name === name);
+      if (!w) return h('td', { text: '—' });
+      const lines = [h('b', { text: w.used !== undefined ? pct(w.used) : t('page.roles.unknown') }), ' ',
+        h('span', { class: 'tag', text: tk('page.roles.source.', w.source) })];
+      if (w.source === 'measured' && w.at) lines.push(h('div', { class: 'sub', text: t('page.roles.measured_at', { at: fmtTime(w.at) }) }));
+      if (w.allowance) lines.push(h('div', { class: 'sub', text: t('page.roles.allowance', { allowance: w.allowance }) }));
+      if (w.resets_at) lines.push(h('div', { class: 'sub', text: t('page.roles.resets', { at: fmtTime(w.resets_at) }) }));
+      lines.push(h('div', { class: 'sub', text: t('page.roles.seen', { n: w.attempts || 0, took: fmtDur(w.ms || 0) }) }));
+      return h('td', null, lines);
+    };
+    const state = (cl) => {
+      if (!cl.exhausted) return h('td', null, mark('passed'), ' ', t('page.roles.can_run'));
+      return h('td', null, mark('waiting'), ' ', cl.until ? t('page.roles.exhausted_until', { until: fmtTime(cl.until), why: tk('page.roles.source.', cl.why) })
+        : t('page.roles.exhausted', { why: tk('page.roles.source.', cl.why) }));
+    };
+    const cols = ['client', 'executor', 'model', 'effort', 'five_hour', 'weekly', 'state'];
+    const out = [listTabs('roles') || h('h1', { text: t('page.roles.title') }), h('p', { class: 'hint', text: t('page.roles.hint') })];
+    for (const r of S.roles) {
+      out.push(h('h2', null, r.name + ' ', h('span', { class: 'tag', text: tk('page.roles.mode.', r.select) }), ' ', h('span', { class: 'sub', text: r.flow })),
+        h('table', { class: 'list roles' },
+          h('thead', null, h('tr', null, cols.map((c) => h('th', { text: t('page.roles.col.' + c) })))),
+          h('tbody', null, r.clients.map((cl) => h('tr', { class: 'still' },
+            h('td', { class: 'id', text: String(cl.client) }),
+            h('td', null, h('code', { text: cl.executor })),
+            h('td', null, cl.model ? h('code', { text: cl.model }) : '—'),
+            h('td', null, cl.effort ? h('code', { text: cl.effort }) : '—'),
+            windowCell(cl, 'five_hour'), windowCell(cl, 'weekly'), state(cl))))));
+    }
+    app.replaceChildren(...out);
   }
 
   const TASK_MARK = {
@@ -552,6 +598,11 @@
     }
     if (!c.wait || c.end) return null;
     const node = h('code', { text: c.node });
+    if (c.noClient) {
+      return h('div', { class: c.waitUntil ? 'problem info' : 'problem soft' }, h('b', { text: t('page.wait.no_client') + ' ' }), c.noClient, ' ',
+        c.waitUntil ? tn('page.wait.reset_text', { node: node, at: fmtTime(c.waitUntil) }) : t('page.wait.no_client_resume'),
+        c.state === 'interrupted' ? ' ' + t('page.wait.undriven') : '');
+    }
     if (c.state === 'limit') {
       return h('div', { class: 'problem soft' }, h('b', { text: t('page.wait.limit') + ' ' }), tn('page.wait.limit_text', { node: node }));
     }
@@ -739,6 +790,7 @@
         mark(status, 'large'),
         h('h2', { text: node }),
         col && col.known ? h('span', { class: 'tag', text: col.type }) : h('span', { class: 'tag', text: t('page.not_in_orders') }),
+        col && col.role ? h('span', { class: 'tag', title: t('page.card.role'), text: col.role }) : null,
         col && col.executor ? h('span', { class: 'tag', title: t('page.card.executor'), text: col.executor }) : null,
         col && col.model ? h('span', { class: 'tag', title: t('page.card.model'), text: col.model }) : null,
         col && col.effort ? h('span', { class: 'tag', title: t('page.card.effort'), text: t('page.card.effort_value', { effort: col.effort }) }) : null,
@@ -760,6 +812,9 @@
       a.executor ? kv(t('page.kv.executor'), h('code', { text: a.executor })) : null,
       a.model ? kv(t('page.kv.model'), h('code', { text: a.model })) : null,
       a.effort ? kv(t('page.kv.effort'), h('code', { text: a.effort })) : null,
+      a.client ? kv(t('page.kv.client'), a.client) : null,
+      a.switched ? kv(t('page.kv.switched'), a.switched) : null,
+      a.compared ? kv(t('page.kv.compared'), a.compared) : null,
       a.sessionIn ? kv(t('page.kv.continued'), tn('page.kv.continued_session', { session: h('code', { text: a.sessionIn }) })) : null,
       a.session ? kv(t('page.kv.session'), h('code', { text: a.session })) : null,
       a.failure ? kv(t('page.kv.why_failed'), [h('code', { text: a.failure }), ' — ', I.texts['page.failure.' + a.failure] !== undefined ? t('page.failure.' + a.failure) : '']) : null,
@@ -1097,6 +1152,9 @@
       if (e.prompt) det.push('prompt=' + e.prompt);
       if (e.session) det.push('session=' + e.session);
       if (e.failure) det.push('failure=' + e.failure);
+      if (e.role) det.push('role=' + e.role);
+      if (e.choice) det.push('choice=' + e.choice.role + '/' + e.choice.mode + '/' + e.choice.client + '/' + e.choice.reason + (e.choice.from ? ' from=' + e.choice.from : ''));
+      if (e.waitUntil) det.push('wait_until=' + fmtTime(e.waitUntil, true));
       if (e.retryAt) det.push('retry_at=' + fmtTime(e.retryAt, true));
       if (e.input) det.push('input=' + JSON.stringify(e.input));
       if (e.language) det.push('language=' + e.language);

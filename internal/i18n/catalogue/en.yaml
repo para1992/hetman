@@ -465,10 +465,11 @@ scribe.usage: |
 scribe.usage_flags: |
 
   node flags (new, add): -run CMD, -timeout D, -checks A,B, -executor NAME, -model M, -effort E,
+    -role NAME (an agent node run through a role, instead of -executor, -model and -effort),
     -tools A,B, -attempts N, -prompt FILE, -schema FILE, -outcomes A,B, -on OUTCOME=TARGET (repeat),
     -starters (create missing prompt and schema files), -locks A,B (resources held exclusively),
     -segment FILE (segment, foreach), -input REF (segment), -items REF and -parallel N (foreach)
-  set fields: run, timeout, idle_timeout, executor, model, effort, tools, attempts, dialogue, prompt, schema,
+  set fields: run, timeout, idle_timeout, executor, role, model, effort, tools, attempts, dialogue, prompt, schema,
     locks, segment, input, items, parallel
   unset fields: timeout, idle_timeout, model, effort, tools, attempts, dialogue, locks, input, parallel
   language codes: {codes}
@@ -1118,3 +1119,101 @@ page.tasks.state.done: done
 page.tasks.state.failed: failed
 page.tasks.state.halted: halted
 page.tasks.state.error: error
+
+# ---- roles: pools of clients an agent step runs on
+
+engine.client_chosen: "{node} runs on client {client} of role {role} ({reason})"
+engine.client_switched: "{node} changes client: client {client} of role {role} hit its limit; client {to} continues ({reason})"
+engine.client_limit: "{node} attempt {attempt}: client {client} of role {role} hit its limit ({error}); it does not count"
+engine.no_client_until: "{node}: no client of role {role} can run now; waiting until {until}, when the first one can again"
+engine.no_client: "{node} waits for a person: no client of role {role} can run and none says when it can again; hetman resume tries them again"
+engine.usage_failed: "cannot read the usage of executor {executor}: {error}"
+engine.chose.fixed: the first client that can run
+engine.chose.turn: its turn
+engine.chose.quota: the smallest share used
+engine.chose.resume: it continues the attempt it was running
+explain.client: "{node} attempt {attempt} runs on client {client} of role {role} ({mode}): {why}."
+explain.client_from: " Client {from} had hit its limit."
+explain.client_compared: " Compared: {usage}."
+explain.chose.fixed: the first client that can run
+explain.chose.turn: its turn
+explain.chose.quota: the smallest share used
+explain.chose.resume: it continues the attempt it was running
+explain.chose.none: no client can run
+explain.no_client_until: "No client of role {role} can run {node} ({usage}); it waits until {until}."
+explain.no_client: "No client of role {role} can run {node} ({usage}); it waits for a person."
+explain.where.no_client_until: "It is waiting at {node} since {at}: no client of role {role} can run ({usage}); the step runs again at {until}."
+explain.where.no_client: "It has been stopped at {node} since {at}: no client of role {role} can run ({usage}) and none says when it can again; the step runs again when the campaign is resumed."
+explain.usage.client: "client {client}: {windows}"
+explain.usage.window: "{window} {used} {source}"
+explain.usage.window_unknown: "{window} unknown"
+explain.usage.exhausted_until: "exhausted until {until}"
+explain.usage.exhausted: exhausted until a person resumes or its window is seen to reset
+explain.usage.can_run: can run
+explain.source.measured: measured
+explain.source.estimated: estimated
+explain.source.limit: by its limit
+explain.source.unknown: unknown
+status.agent.client: "    client   {client} of role {role} ({mode}): {why}"
+status.agent.switched: "    switched from client {from}, which had hit its limit"
+status.agent.compared: "    compared {usage}"
+status.agent.client_limit: "limit of this client (does not count), another client continues: {error}"
+status.no_client: "{node} waits: no client of role {role} can run: {usage}"
+page.client.chosen: "{client} of role {role} ({mode}): {why}"
+page.client.switched: "client {from} had hit its limit"
+page.client.none: "No client of role {role} can run {node}: {usage}."
+page.kv.client: Client
+page.kv.switched: Changed client
+page.kv.compared: Compared
+page.card.role: role
+page.wait.no_client: No client of the role can run.
+page.wait.no_client_resume: None says when it can again, so the campaign waits for a person; resume tries the clients again.
+page.roles.title: Roles
+page.roles.none: The orders declare no role.
+page.roles.hint: "Each client with its share of the five-hour and the weekly window: measured by the client through its adapter, estimated by Hetman from the attempts it saw against the allowance the role states, or set by a limit the client reported. In the quota mode the client whose larger share is smallest runs; an exhausted client waits until its window resets."
+page.roles.unknown: unknown
+page.roles.source.measured: measured
+page.roles.source.estimated: estimated
+page.roles.source.limit: limit reached
+page.roles.source.unknown: not known
+page.roles.measured_at: "measured at {at}"
+page.roles.allowance: "allowance {allowance}"
+page.roles.resets: "resets at {at}"
+page.roles.seen:
+  one: "{n} attempt seen, {took}"
+  other: "{n} attempts seen, {took}"
+page.roles.can_run: can run
+page.roles.exhausted_until: "exhausted until {until} ({why})"
+page.roles.exhausted: "exhausted ({why}) until a person resumes or its window is seen to reset"
+page.roles.mode.fixed: fixed
+page.roles.mode.round_robin: round robin
+page.roles.mode.quota: by remaining subscription
+page.roles.col.client: Client
+page.roles.col.executor: Executor
+page.roles.col.model: Model
+page.roles.col.effort: Effort
+page.roles.col.five_hour: Five hours
+page.roles.col.weekly: Week
+page.roles.col.state: State
+page.flow.no_roles: The flow declares no role yet. A role is a pool of clients an agent step may run on.
+page.op.role_new: Declare a role
+page.op.role_select: Change the mode of a role
+page.op.role_add: Add a client to a role
+page.op.role_remove: Remove a client from a role
+page.field.rolename: Role
+page.field.role: Role
+page.field.select: Mode
+page.field.effort: Effort
+page.field.none: none
+page.field.value.fixed: fixed (the first client)
+page.field.value.round_robin: round robin (the clients take turns)
+page.field.value.quota: quota (the smallest share used)
+op.summary.role: "declare a role (its selection mode, fixed, round_robin or quota, and its first client: executor, model, effort), or change the mode of a declared one"
+op.summary.role-add: add a client (an executor with its own model and effort) to a role, at a position from 1 (the end when not given)
+op.summary.role-remove: remove the client at a position from 1 from a role; a role keeps at least one client
+op.words.role: "declare the role {name}, choosing {select}, with the client {client}"
+op.words.role_select: make the role {name} choose {select}
+op.words.role_add: add the client {client} to the role {name} at the end
+op.words.role_add_at: add the client {client} to the role {name} at position {at}
+op.words.role_remove: remove the client at position {at} from the role {name}
+op.words.through_role: through the role {role}

@@ -26,7 +26,7 @@ var (
 	// drainGrace is how long standard output is still read after the
 	// adapter exited, in case a process it started holds it open.
 	drainGrace = time.Second
-	// describeTimeout limits an adapter's --describe.
+	// describeTimeout limits an adapter's --describe and --usage.
 	describeTimeout = 30 * time.Second
 )
 
@@ -256,14 +256,24 @@ func clip(line []byte) string {
 
 // describe runs an adapter with --describe.
 func describe(ctx context.Context, argv []string, dir string, env []string) (adapter.Description, error) {
-	cmd := exec.Command(argv[0], append(append([]string{}, argv[1:]...), adapter.DescribeFlag)...)
+	out, err := query(ctx, argv, []string{adapter.DescribeFlag}, dir, env)
+	if err != nil {
+		return adapter.Description{}, err
+	}
+	return adapter.ParseDescription(out)
+}
+
+// query runs an adapter with extra arguments that ask it something, such as
+// --describe, and returns what it printed.
+func query(ctx context.Context, argv, extra []string, dir string, env []string) ([]byte, error) {
+	cmd := exec.Command(argv[0], append(append([]string{}, argv[1:]...), extra...)...)
 	cmd.Dir, cmd.Env = dir, env
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	cmd.WaitDelay = time.Second // a process it left behind must not hold the output open
 	configure(cmd)
 	if err := cmd.Start(); err != nil {
-		return adapter.Description{}, fmt.Errorf("cannot start %s: %v", argv[0], err)
+		return nil, fmt.Errorf("cannot start %s: %v", argv[0], err)
 	}
 	exited := make(chan error, 1)
 	go func() { exited <- cmd.Wait() }()
@@ -272,16 +282,16 @@ func describe(ctx context.Context, argv []string, dir string, env []string) (ada
 	select {
 	case err := <-exited:
 		if err != nil {
-			return adapter.Description{}, fmt.Errorf("%s %s failed: %v %s", argv[0], adapter.DescribeFlag, err, bytes.TrimSpace(stderr.Bytes()))
+			return nil, fmt.Errorf("%s %s failed: %v %s", argv[0], extra[0], err, bytes.TrimSpace(stderr.Bytes()))
 		}
 	case <-t.C:
 		killTree(cmd.Process)
 		<-exited
-		return adapter.Description{}, fmt.Errorf("%s %s did not finish within %s", argv[0], adapter.DescribeFlag, describeTimeout)
+		return nil, fmt.Errorf("%s %s did not finish within %s", argv[0], extra[0], describeTimeout)
 	case <-ctx.Done():
 		killTree(cmd.Process)
 		<-exited
-		return adapter.Description{}, errors.New("interrupted")
+		return nil, errors.New("interrupted")
 	}
-	return adapter.ParseDescription(stdout.Bytes())
+	return stdout.Bytes(), nil
 }

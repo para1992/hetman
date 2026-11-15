@@ -20,11 +20,12 @@ import (
 
 // The order keys are written in, used to place a key that is added.
 var (
-	topOrder      = []string{"version", "flow", "start", "language", "scribe", "notify", "executors", "checks", "nodes"}
-	nodeOrder     = []string{"type", "run", "segment", "input", "items", "parallel", "executor", "prompt", "schema", "model", "effort", "tools", "checks", "ask", "show", "timeout", "idle_timeout", "max_attempts", "dialogue", "locks", "on"}
+	topOrder      = []string{"version", "flow", "start", "language", "scribe", "notify", "executors", "roles", "checks", "nodes"}
+	nodeOrder     = []string{"type", "run", "segment", "input", "items", "parallel", "executor", "role", "prompt", "schema", "model", "effort", "tools", "checks", "ask", "show", "timeout", "idle_timeout", "max_attempts", "dialogue", "locks", "on"}
 	checkOrder    = []string{"run", "timeout", "soft", "locks"}
 	questionOrder = []string{"id", "question", "kind", "options"}
 	scribeOrder   = []string{"executor", "model", "effort", "timeout"}
+	roleOrder     = []string{"select", "clients"}
 )
 
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
@@ -250,6 +251,12 @@ func (e *editing) apply() error {
 		return e.gateRemove()
 	case OpAsk:
 		return e.addQuestion()
+	case OpRole:
+		return e.declareRole()
+	case OpRoleAdd:
+		return e.roleAdd()
+	case OpRoleRemove:
+		return e.roleRemove()
 	case OpAssistant:
 		return e.assistant()
 	case OpLanguage:
@@ -288,7 +295,7 @@ func (e *editing) build(op Op, next string, flowNode, flowOn bool) (*yaml.Node, 
 	allowed := map[string][]string{
 		orders.Script:  {"run", "timeout", "locks", "on"},
 		orders.Gate:    {"run", "timeout", "checks", "locks", "on"},
-		orders.Agent:   {"executor", "model", "effort", "tools", "attempts", "prompt", "schema", "outcomes", "timeout", "starters", "locks", "on"},
+		orders.Agent:   {"executor", "role", "model", "effort", "tools", "attempts", "prompt", "schema", "outcomes", "timeout", "starters", "locks", "on"},
 		orders.Human:   {"outcomes", "locks", "on"},
 		orders.Segment: {"segment", "input", "locks", "on"},
 		orders.ForEach: {"segment", "items", "parallel", "locks", "on"},
@@ -446,10 +453,17 @@ func orNone(list []string) string {
 // prompt or schema file that does not exist is created as a starter when
 // asked for.
 func (e *editing) agent(op Op, add func(string, *yaml.Node)) ([]string, error) {
-	if op.Executor == "" {
-		return nil, fmt.Errorf("an agent node needs an executor (Hetman has no default)")
-	}
-	if e.t != nil {
+	switch {
+	case op.Role != "":
+		if op.Model != "" || op.Effort != "" {
+			return nil, fmt.Errorf("a node run through role %s takes the model and effort of each client of the role; leave model and effort out", op.Role)
+		}
+		if err := e.declared("roles", op.Role); err != nil {
+			return nil, err
+		}
+	case op.Executor == "":
+		return nil, fmt.Errorf("an agent node needs an executor or a role (Hetman has no default)")
+	case e.t != nil:
 		if err := e.declared("executors", op.Executor); err != nil {
 			return nil, err
 		}
@@ -488,7 +502,11 @@ func (e *editing) agent(op Op, add func(string, *yaml.Node)) ([]string, error) {
 	if _, ok := e.d.read(promptRel); !ok && op.Starters {
 		e.d.create(promptRel, StarterPrompt(op.Node, outcomes))
 	}
-	add("executor", str(op.Executor))
+	if op.Role != "" {
+		add("role", str(op.Role))
+	} else {
+		add("executor", str(op.Executor))
+	}
 	add("prompt", str(promptRel))
 	add("schema", str(schemaRel))
 	if op.Model != "" {
@@ -850,7 +868,7 @@ func (e *editing) setField() error {
 		return err
 	}
 	typ := scalarOf(n, "type")
-	agentOnly := map[string]bool{"idle_timeout": true, "executor": true, "model": true, "effort": true, "tools": true,
+	agentOnly := map[string]bool{"idle_timeout": true, "executor": true, "role": true, "model": true, "effort": true, "tools": true,
 		"attempts": true, "dialogue": true, "prompt": true, "schema": true}
 	if agentOnly[op.Field] && typ != orders.Agent {
 		return fmt.Errorf("%s is a %s node; %s is set only on an agent node", op.Node, typ, op.Field)
@@ -911,6 +929,22 @@ func (e *editing) setField() error {
 	case "executor":
 		if err := e.declared("executors", op.Value); err != nil {
 			return err
+		}
+		v = str(op.Value)
+		// The node runs on this executor now, not through a role.
+		e.unset(n, "role")
+	case "role":
+		if err := e.declared("roles", op.Value); err != nil {
+			return err
+		}
+		v = str(op.Value)
+		// Each client of the role names its executor, model and effort.
+		for _, k := range []string{"executor", "model", "effort"} {
+			e.unset(n, k)
+		}
+	case "model", "effort":
+		if r := scalarOf(n, "role"); r != "" {
+			return fmt.Errorf("%s runs through role %s, whose clients each name their %s; change the client with role-remove and role-add, or set the executor of the node instead", op.Node, r, op.Field)
 		}
 		v = str(op.Value)
 	default:
@@ -1055,6 +1089,119 @@ func (e *editing) declareExecutor() error {
 	if _, added := e.section("executors", op.Name, v); !added {
 		e.t.insert(sec, len(sec.Content)/2, str(op.Name), v)
 	}
+	return nil
+}
+
+// selectMode checks a selection mode of a role.
+func selectMode(s string) error {
+	if !contains(orders.SelectModes, s) {
+		return fmt.Errorf("unknown select %q (known: %s)", s, strings.Join(orders.SelectModes, ", "))
+	}
+	return nil
+}
+
+// client is the entry of a role's client list for an operation.
+func client(op Op) *yaml.Node {
+	v := mapping(true, str("executor"), str(op.Executor))
+	if op.Model != "" {
+		v.Content = append(v.Content, str("model"), str(op.Model))
+	}
+	if op.Effort != "" {
+		v.Content = append(v.Content, str("effort"), str(op.Effort))
+	}
+	return v
+}
+
+// role returns a declared role and its client list.
+func (e *editing) role(name string) (role, clients *yaml.Node, err error) {
+	if err := e.declared("roles", name); err != nil {
+		return nil, nil, err
+	}
+	_, sec := lookup(e.root(), "roles")
+	_, role = lookup(sec, name)
+	if role.Kind != yaml.MappingNode {
+		return nil, nil, fmt.Errorf("role %q is not a mapping", name)
+	}
+	_, clients = lookup(role, "clients")
+	if clients == nil || clients.Kind != yaml.SequenceNode {
+		return nil, nil, fmt.Errorf("role %q has no client list", name)
+	}
+	return role, clients, nil
+}
+
+func (e *editing) declareRole() error {
+	op := e.op
+	if !namePattern.MatchString(op.Name) {
+		return fmt.Errorf("role name %q: use letters, digits, '_', '-' and '.' only", op.Name)
+	}
+	_, sec := lookup(e.root(), "roles")
+	if i, _ := lookup(sec, op.Name); i >= 0 {
+		if op.Executor != "" {
+			return fmt.Errorf("role %q is declared already; add a client with role-add", op.Name)
+		}
+		if op.Select == "" {
+			return fmt.Errorf("role %q is declared already; give select to change its mode", op.Name)
+		}
+		if err := selectMode(op.Select); err != nil {
+			return err
+		}
+		role, _, err := e.role(op.Name)
+		if err != nil {
+			return err
+		}
+		e.set(role, "select", str(op.Select), roleOrder)
+		return nil
+	}
+	if op.Select == "" || op.Executor == "" {
+		return fmt.Errorf("a new role needs select (%s) and the executor of its first client; Hetman has no default", strings.Join(orders.SelectModes, ", "))
+	}
+	if err := selectMode(op.Select); err != nil {
+		return err
+	}
+	if err := e.declared("executors", op.Executor); err != nil {
+		return err
+	}
+	clients := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Content: []*yaml.Node{client(op)}}
+	v := mapping(false, str("select"), str(op.Select), str("clients"), clients)
+	if _, added := e.section("roles", op.Name, v); !added {
+		e.t.insert(sec, len(sec.Content)/2, str(op.Name), v)
+	}
+	return nil
+}
+
+func (e *editing) roleAdd() error {
+	op := e.op
+	_, clients, err := e.role(op.Name)
+	if err != nil {
+		return err
+	}
+	if err := e.declared("executors", op.Executor); err != nil {
+		return err
+	}
+	at := len(clients.Content)
+	if op.At > 0 {
+		if op.At > len(clients.Content)+1 {
+			return fmt.Errorf("role %s has %d client(s); at must be from 1 to %d", op.Name, len(clients.Content), len(clients.Content)+1)
+		}
+		at = op.At - 1
+	}
+	e.t.insert(clients, at, nil, client(op))
+	return nil
+}
+
+func (e *editing) roleRemove() error {
+	op := e.op
+	_, clients, err := e.role(op.Name)
+	if err != nil {
+		return err
+	}
+	switch {
+	case op.At < 1 || op.At > len(clients.Content):
+		return fmt.Errorf("role %s has %d client(s); at must be from 1 to %d", op.Name, len(clients.Content), len(clients.Content))
+	case len(clients.Content) == 1:
+		return fmt.Errorf("role %s has only this client; a role needs at least one", op.Name)
+	}
+	e.t.remove(clients, op.At-1)
 	return nil
 }
 

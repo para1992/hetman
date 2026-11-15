@@ -10,6 +10,7 @@ import (
 
 	"hetman/internal/chronicle"
 	"hetman/internal/engine"
+	"hetman/internal/explain"
 	"hetman/internal/i18n"
 	"hetman/internal/language"
 	"hetman/internal/orders"
@@ -38,7 +39,8 @@ type agentAttempt struct {
 	outcome, failure, err   string
 	output                  string
 	retryAt                 *time.Time
-	asked                   int // questions this attempt asked the person
+	asked                   int               // questions this attempt asked the person
+	choice                  *chronicle.Choice // how the client of a step run through a role was chosen
 }
 
 func (c *command) status(id int64, listEvents bool) int {
@@ -73,7 +75,7 @@ func (c *command) status(id int64, listEvents bool) int {
 			v.checks = map[string]chronicle.Event{}
 			if e.Executor != "" {
 				v.agent = append(v.agent, &agentAttempt{n: e.Attempt, executor: e.Executor, model: e.Model, effort: e.Effort,
-					prompt: e.Prompt, sessionIn: e.Session, running: true})
+					prompt: e.Prompt, sessionIn: e.Session, running: true, choice: e.Choice})
 			}
 		case chronicle.StepInterrupted:
 			v := view(e.Node)
@@ -207,6 +209,19 @@ func (c *command) status(id int64, listEvents bool) int {
 	for _, n := range order {
 		if v := views[n]; v != nil && len(v.agent) > 0 {
 			printAgent(p, w, n, v.agent, st.Running && st.Node == n && alive)
+		}
+	}
+	if st.End == "" && st.Waiting != "" {
+		// The step waits because no client of its role can run.
+		for i := len(events) - 1; i >= 0; i-- {
+			e := &events[i]
+			if e.Node == st.Node && (e.Kind == chronicle.StepStarted || e.Kind == chronicle.StepFinished) {
+				break
+			}
+			if e.Kind == chronicle.NoClient && e.Node == st.Node && e.Choice != nil {
+				fmt.Fprintln(w, p.T("status.no_client", "node", e.Node, "role", e.Choice.Role, "usage", explain.UsageWords(p, e.Choice, time.Local)))
+				break
+			}
 		}
 	}
 
@@ -380,6 +395,8 @@ func printAgent(p *i18n.Printer, w io.Writer, node string, attempts []*agentAtte
 			status = p.T("status.st.running")
 		case a.running || a.interrupted:
 			status = p.T("status.st.interrupted")
+		case a.failure == chronicle.FailLimit && a.choice != nil:
+			status = p.T("status.agent.client_limit", "error", a.err)
 		case a.failure == chronicle.FailLimit && a.retryAt != nil:
 			status = p.T("status.agent.limit_retry", "at", a.retryAt.Local().Format("2006-01-02 15:04:05"), "error", a.err)
 		case a.failure == chronicle.FailLimit || a.failure == chronicle.FailOffline:
@@ -394,6 +411,15 @@ func printAgent(p *i18n.Printer, w io.Writer, node string, attempts []*agentAtte
 			status = p.T("status.agent.outcome", "outcome", a.outcome)
 		}
 		fmt.Fprintln(w, p.T("status.agent.attempt", "n", a.n, "status", status, "facts", strings.Join(facts, ", ")))
+		if c := a.choice; c != nil {
+			fmt.Fprintln(w, p.T("status.agent.client", "client", explain.ClientName(c, c.Client), "role", c.Role, "mode", c.Mode, "why", explain.Why(p, c)))
+			if c.From > 0 {
+				fmt.Fprintln(w, p.T("status.agent.switched", "from", explain.ClientName(c, c.From)))
+			}
+			if c.Reason == chronicle.ChoseQuota {
+				fmt.Fprintln(w, p.T("status.agent.compared", "usage", explain.UsageWords(p, c, time.Local)))
+			}
+		}
 		if a.prompt != "" {
 			fmt.Fprintln(w, p.T("status.agent.prompt", "file", a.prompt))
 		}
@@ -527,6 +553,20 @@ func eventLine(e chronicle.Event) string {
 	}
 	if e.Effort != "" {
 		parts = append(parts, "effort="+e.Effort)
+	}
+	if e.Role != "" {
+		parts = append(parts, "role="+e.Role)
+	}
+	if c := e.Choice; c != nil {
+		parts = append(parts, fmt.Sprintf("role=%s select=%s client=%d reason=%s", c.Role, c.Mode, c.Client, c.Reason))
+		if c.From > 0 {
+			parts = append(parts, fmt.Sprintf("from=%d", c.From))
+		}
+		u, _ := json.Marshal(c.Usage)
+		parts = append(parts, "usage="+string(u))
+	}
+	if e.WaitUntil != nil {
+		parts = append(parts, "wait_until="+e.WaitUntil.Local().Format(time.RFC3339))
 	}
 	if e.Prompt != "" {
 		parts = append(parts, "prompt="+e.Prompt)

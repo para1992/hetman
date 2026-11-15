@@ -147,7 +147,8 @@ func (s *sse) ping() error {
 const pingEvery = 15 * time.Second
 
 // handleStream keeps a page current. Without a campaign parameter it sends
-// "list" events with the campaign list and, once the folder has a task
+// "list" events with the campaign list, "roles" events with the roles of
+// the served orders once they declare any, and, once the folder has a task
 // queue, "tasks" events with the tasks; with one it sends "campaign" events
 // with the campaign view and "chronicle" events with the events not sent
 // yet. The first event of each kind after connecting carries everything
@@ -170,7 +171,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	wake := s.subscribe()
 	defer s.unsubscribe(wake)
 	out := startSSE(w)
-	var lastView, lastTasks []byte
+	var lastView, lastTasks, lastRoles []byte
 	sentSeq := int64(-1)
 	update := func() error {
 		if id == 0 {
@@ -183,6 +184,15 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 				lastView = data
 				if err := out.send("list", data); err != nil {
 					return err
+				}
+			}
+			if roles := s.roleViews(); roles != nil || lastRoles != nil {
+				data, _ = json.Marshal(nonNilRoles(roles))
+				if !bytes.Equal(data, lastRoles) {
+					lastRoles = data
+					if err := out.send("roles", data); err != nil {
+						return err
+					}
 				}
 			}
 			tasks, err := s.taskViews(p)

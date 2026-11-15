@@ -414,3 +414,97 @@
 +  tests:  {run: [sh, checks/tests.sh], timeout: 20m, locks: [stand]}
  
  nodes:
+== role declared and pointed at
+--- orders.yaml
++++ orders.yaml
+@@ -8,5 +8,13 @@
+ executors:
+   stub:   {run: [./bin/stub, plan.json]}   # no real model
++  other: {run: [./bin/other]}
+ 
++roles:
++  coder:
++    select: round_robin
++    clients:
++      - {executor: stub, model: m1, effort: high}
++      - {executor: other, model: m2}
++
+ checks:
+   # quick ones first
+@@ -25,5 +33,5 @@
+   review:
+     type: agent
+-    executor: stub
++    role: coder
+     prompt: prompts/review.md
+     schema: schemas/review.json
+== role mode, clients added and removed
+--- orders.yaml
++++ orders.yaml
+@@ -8,5 +8,13 @@
+ executors:
+   stub:   {run: [./bin/stub, plan.json]}   # no real model
++  other: {run: [./bin/other]}
+ 
++roles:
++  coder:
++    select: quota
++    clients:
++      - {executor: other}
++      - {executor: stub, model: m3}
++
+ checks:
+   # quick ones first
+== agent added through a role, then given an executor
+--- orders.yaml
++++ orders.yaml
+@@ -3,5 +3,5 @@
+ version: 0
+ flow: release   # the name shown on the page
+-start: build
++start: plan
+ 
+ # Adapters that run agent steps.
+@@ -9,4 +9,10 @@
+   stub:   {run: [./bin/stub, plan.json]}   # no real model
+ 
++roles:
++  coder:
++    select: fixed
++    clients:
++      - {executor: stub}
++
+ checks:
+   # quick ones first
+@@ -15,4 +21,11 @@
+ 
+ nodes:
++  plan:
++    type: agent
++    executor: stub
++    prompt: prompts/plan.md
++    schema: schemas/plan.json
++    on: {ok: build, fail: failed}
++
+   # Compile everything.
+   build:
+--- /dev/null
++++ prompts/plan.md
+@@ -0,0 +1,5 @@
++Step plan. Replace this text with what the step must do.
++
++{{rework}}
++
++Reply with a single JSON object: "outcome" is one of ok, and "summary" says in a sentence what you did.
+--- /dev/null
++++ schemas/plan.json
+@@ -0,0 +1,9 @@
++{
++  "type": "object",
++  "properties": {
++    "outcome": {"type": "string", "enum": ["ok"]},
++    "summary": {"type": "string"}
++  },
++  "required": ["outcome"],
++  "additionalProperties": false
++}

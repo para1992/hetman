@@ -6,6 +6,30 @@ import (
 	"testing"
 )
 
+func TestParseUsage(t *testing.T) {
+	u, err := ParseUsage([]byte(`{"windows":[{"name":"five_hour","used":0.42,"resets_at":"2030-01-02T03:04:05Z"},{"name":"weekly","used":1.2}]}`+"\n"), UsageWindows)
+	if err != nil || len(u.Windows) != 2 || u.Windows[0].Used != 0.42 || u.Windows[0].ResetTime().IsZero() || !u.Windows[1].ResetTime().IsZero() {
+		t.Fatalf("%+v %v", u, err)
+	}
+	if u, err := ParseUsage([]byte(`{"windows":[]}`), UsageWindows); err != nil || len(u.Windows) != 0 {
+		t.Fatalf("no windows: %+v %v", u, err)
+	}
+	bad := map[string]string{
+		``:                                   "printed nothing",
+		"{\"windows\":[]}\n{\"windows\":[]}": "more than one line",
+		`{"windows":[{"name":"daily"}]}`:     `window "daily", which was not asked for`,
+		`{"windows":[{"name":"weekly","used":-1}]}`:          "negative",
+		`{"windows":[{"name":"weekly","resets_at":"soon"}]}`: "not an RFC 3339 time",
+		`{"windows":[{"name":"weekly"},{"name":"weekly"}]}`:  "twice",
+		`{"windows":[],"extra":1}`:                           "not valid",
+	}
+	for out, want := range bad {
+		if _, err := ParseUsage([]byte(out), UsageWindows); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v, want %q", out, err, want)
+		}
+	}
+}
+
 func TestParseMessage(t *testing.T) {
 	good := map[string]Message{
 		`{"v":0,"type":"log","text":""}`:      {Type: TypeLog},

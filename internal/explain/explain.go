@@ -211,7 +211,18 @@ func (x *explainer) where() []string {
 		s = p.T("explain.where.answered", "who", x.who(st.Answer), "node", st.Ask.Node, "at", x.at(st.Answer.At))
 	case st.Waiting != "":
 		f := x.last(chronicle.StepFinished, st.Node)
+		nc := x.last(chronicle.NoClient, st.Node)
 		switch {
+		case nc != nil && (f == nil || nc.Seq > f.Seq):
+			role, usage := "", ""
+			if nc.Choice != nil {
+				role, usage = nc.Choice.Role, UsageWords(p, nc.Choice, x.loc)
+			}
+			if nc.WaitUntil != nil {
+				s = p.T("explain.where.no_client_until", "node", st.Node, "at", x.at(nc.At), "role", role, "usage", usage, "until", x.at(st.WaitUntil))
+			} else {
+				s = p.T("explain.where.no_client", "node", st.Node, "at", x.at(nc.At), "role", role, "usage", usage)
+			}
 		case st.Waiting == chronicle.WaitLimit && !st.WaitUntil.IsZero():
 			s = p.T("explain.where.limit_until", "node", st.Node, "attempt", f.Attempt, "at", x.at(f.At), "error", f.Error, "until", x.at(st.WaitUntil))
 		case st.Waiting == chronicle.WaitLimit:
@@ -358,6 +369,13 @@ func (x *explainer) history() []string {
 		}
 		var s string
 		switch e.Kind {
+		case chronicle.StepStarted:
+			if e.Choice == nil {
+				continue
+			}
+			s = x.choice(e)
+		case chronicle.NoClient:
+			s = x.noClient(e)
 		case chronicle.StepFinished:
 			switch {
 			case e.Failure == chronicle.FailLimit || e.Failure == chronicle.FailOffline:

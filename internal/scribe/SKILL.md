@@ -25,7 +25,7 @@ explain a term the first time you use it.
 
 This is everything the config supports. If the person wants something that is not
 here (a retry limit on a script, a person answering on a fixed schedule,
-conditions in the file or in a prompt template, a pool of several clients for one step),
+conditions in the file or in a prompt template),
 say plainly that Hetman does not do that, and offer the
 nearest thing that works: usually a script that does the extra logic itself. Do not
 invent keys; `hetman check` rejects any key it does not know.
@@ -44,6 +44,12 @@ checks:               # optional: checks that gates can use, declared once
 
 executors:            # optional: adapter programs that run agent steps, declared once
   coder: {run: [./adapters/my-adapter]}
+  other: {run: [./adapters/other-adapter]}
+
+roles:                # optional: pools of clients an agent step may run on (see Agent steps)
+  writer:
+    select: round_robin
+    clients: [{executor: coder, model: "..."}, {executor: other, model: "..."}]
 
 notify: {run: [./notify.sh], timeout: 30s}   # optional: run when a campaign waits for a person
 scribe: {executor: coder, model: "..."}      # optional: the model hetman scribe may ask (see below)
@@ -244,6 +250,32 @@ nodes:
   Ukrainian. Without the key nothing is added. A person can override it for their own
   runs with the environment variable `HETMAN_LANGUAGE`; a campaign keeps the language
   it started with.
+- **Roles: several clients for one step.** Instead of `executor`, `model` and
+  `effort`, an agent node may name `role: NAME`, a pool declared under the top-level
+  `roles`. Naming both is an error. A role must say `select` (no default) and list
+  at least one client; each client has its own `executor` (declared under
+  `executors`), `model` and `effort`, because a model name means nothing to another
+  client. `select` is one of:
+  - `fixed`: always the first client that can run;
+  - `round_robin`: the clients take turns, per role across the campaign and its
+    child campaigns; the turn is kept in the chronicle, so it survives a restart;
+  - `quota`: the client that has used the smallest share of its allowance runs. Each
+    client's larger share of its five-hour and weekly windows is compared, the
+    smaller one breaks a tie, then the order of the list; a client whose share is
+    not known at all comes last, and one that has used up a window is skipped until
+    the window resets. Shares come from the adapter when it declares the `usage`
+    feature (measured), else from Hetman's own count of the attempts it saw against
+    `allowance: {five_hour: N, weekly: N}` on the client (estimated; N is a number of
+    attempts or a duration of work such as `20h`; `monthly:` instead of `weekly:` is
+    converted to a weekly share). Ask the person for an allowance only if they know
+    it; never invent one.
+
+  When a client reports a subscription limit, the step moves to the next client that
+  can run at once, without using an attempt; a client whose limit resets at a known
+  time is skipped by every role until then. Only when no client can run does the
+  campaign wait, until the earliest reset, else for a person. A lost connection does
+  not change client. A step continued on another client starts a fresh conversation
+  with the full prompt and every question a person answered so far.
 - **Attempts.** An answer that does not match the schema, a transient error, a crash,
   a timeout or an idle timeout uses one attempt and the step runs again; after a
   rejected answer the next prompt says what was wrong. When `max_attempts` is used up
@@ -402,7 +434,7 @@ hetman scribe remove NODE                    what led to it then leads where its
 hetman scribe rename NODE NEW                also renames it in the start, transitions and prompt templates
 hetman scribe link NODE OUTCOME TARGET       set or change a transition (TARGET: a node, done or failed)
 hetman scribe unlink NODE OUTCOME            remove a transition
-hetman scribe set NODE FIELD VALUE           run, timeout, idle_timeout, executor, model, effort,
+hetman scribe set NODE FIELD VALUE           run, timeout, idle_timeout, executor, role, model, effort,
                                              tools, attempts, dialogue, prompt, schema,
                                              locks, segment, input, items, parallel
 hetman scribe unset NODE FIELD               timeout, idle_timeout, model, effort, tools, attempts, dialogue,
@@ -412,6 +444,10 @@ hetman scribe executor NAME -run CMD         declare an executor or change its c
 hetman scribe gate-add GATE CHECK [-at N]    put a declared check into a gate, at position N from 1
 hetman scribe gate-remove GATE CHECK
 hetman scribe ask NODE ID QUESTION [-kind yesno|choice|text] [-options A,B]
+hetman scribe role NAME -select MODE -executor X [-model M] [-effort E]   declare a role with its first client
+hetman scribe role NAME -select MODE         change the mode of a declared role (fixed, round_robin, quota)
+hetman scribe role-add ROLE EXECUTOR [-model M] [-effort E] [-at N]   add a client to a role
+hetman scribe role-remove ROLE N             remove the client at position N from 1 (a role keeps one)
 hetman scribe assistant EXECUTOR MODEL [-effort E]   the model hetman scribe may ask
 hetman scribe language CODE                  the language for the person, such as es
 hetman scribe unlanguage                     remove it: English, nothing added to prompts
@@ -419,7 +455,7 @@ hetman scribe unlanguage                     remove it: English, nothing added t
 
 Node flags: `-run 'CMD ARGS'` (one string, split at spaces; quote an argument that has
 spaces), `-timeout 5m`, `-checks a,b` (declared checks, in order), `-executor NAME`,
-`-model M`, `-effort E`, `-tools a,b`, `-attempts N`, `-prompt FILE`, `-schema FILE`,
+`-role NAME` (instead of `-executor`, `-model` and `-effort`), `-model M`, `-effort E`, `-tools a,b`, `-attempts N`, `-prompt FILE`, `-schema FILE`,
 `-outcomes a,b` (of an agent or human node), `-on OUTCOME=TARGET` (repeat it; every
 outcome other than the main one leads to `failed` unless given), `-starters`
 (create a minimal prompt template and schema for an agent node where those files do
@@ -437,8 +473,12 @@ How they wire the flow:
   whose main outcome leads to Y; transitions back to Y (rework loops) stay as they are.
 - `set NODE timeout` on a script adds `timeout: failed` when the node has no
   transition for `timeout`; `unset NODE timeout` removes it.
-- Declare a check before a gate uses it, and an executor before an agent node or
-  `assistant` names it.
+- Declare a check before a gate uses it, an executor before an agent node, a role
+  or `assistant` names it, and a role before a node names it.
+- `set NODE role R` removes the node's `executor`, `model` and `effort`; `set NODE
+  executor X` on a node run through a role removes its `role`. The model and effort
+  of a node run through a role belong to the role's clients: change them with
+  `role-remove` and `role-add`. An allowance is written by hand.
 
 Examples:
 
@@ -458,7 +498,8 @@ check, such as a gate that only asks a person (add it with `-force`, then `ask`)
 `hetman check` passes in the end. Do not use `-force` to get past a problem you do not
 understand.
 
-There is no operation for the content of prompt templates and schemas, for `show`,
+There is no operation for the content of prompt templates and schemas, for a client's
+`allowance`, for `show`,
 `notify`, comments, or moving a node to another place in the file. Edit those by hand,
 keep the rest of the file as it is, and run `hetman check` afterwards. Never edit by
 hand what an operation can do.

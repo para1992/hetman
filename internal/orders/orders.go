@@ -65,6 +65,7 @@ type Orders struct {
 	Start     string
 	Checks    map[string]*Check
 	Executors map[string]*Executor
+	Roles     map[string]*Role // pools of clients agent nodes may run on
 	Nodes     map[string]*Node
 	Order     []string // node ids in file order
 	Notify    *Notify  // the notification hook, or nil
@@ -127,6 +128,7 @@ type Node struct {
 	Decisions []string
 
 	// Agent nodes only.
+	Role        string // the role whose clients run the step; empty when it names an executor
 	Executor    string
 	Model       string
 	Effort      string
@@ -318,6 +320,7 @@ func parse(path string, data []byte, files map[string][]byte, stack []string) (*
 		Dir:       filepath.Dir(path),
 		Checks:    map[string]*Check{},
 		Executors: map[string]*Executor{},
+		Roles:     map[string]*Role{},
 		Nodes:     map[string]*Node{},
 	}
 	p.top(resolve(doc.Content[0]), o)
@@ -465,11 +468,11 @@ func (p *parser) duration(n *yaml.Node, what string) time.Duration {
 }
 
 func (p *parser) top(root *yaml.Node, o *Orders) {
-	entries, ok := p.mapping(root, "orders", "version", "flow", "start", "language", "scribe", "checks", "executors", "notify", "nodes")
+	entries, ok := p.mapping(root, "orders", "version", "flow", "start", "language", "scribe", "checks", "executors", "roles", "notify", "nodes")
 	if !ok {
 		return
 	}
-	var startN, nodesN, scribeN *yaml.Node
+	var startN, nodesN, scribeN, rolesN *yaml.Node
 	hasVersion := false
 	for _, e := range entries {
 		switch e.key {
@@ -495,6 +498,8 @@ func (p *parser) top(root *yaml.Node, o *Orders) {
 			p.checks(e.value, o)
 		case "executors":
 			p.executors(e.value, o)
+		case "roles":
+			rolesN = e.value
 		case "notify":
 			p.notify(e.value, o)
 		case "scribe":
@@ -503,8 +508,12 @@ func (p *parser) top(root *yaml.Node, o *Orders) {
 			nodesN = e.value
 		}
 	}
-	// Nodes are read after checks and executors so that nodes can refer to
-	// them wherever they are declared in the file.
+	// Roles are read after executors, and nodes after checks, executors and
+	// roles, so that each can refer to the others wherever they are declared
+	// in the file.
+	if rolesN != nil {
+		p.roles(rolesN, o)
+	}
 	if nodesN != nil {
 		p.nodes(nodesN, o)
 	}
