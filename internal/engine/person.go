@@ -244,13 +244,14 @@ type Notice struct {
 	Outcomes  []string       `json:"outcomes,omitempty"`
 	Show      []string       `json:"show,omitempty"`
 	Command   string         `json:"command"`
+	Task      *TaskRef       `json:"task,omitempty"` // the task the campaign handles, when a dispatcher started it
 }
 
 // notice builds the notice for an event that makes the campaign wait for a
 // person, or reports false for any other event.
 func (e *Engine) notice(ev chronicle.Event) (Notice, bool) {
 	n := Notice{Campaign: e.Campaign, Flow: e.Orders.Flow, Orders: e.Orders.Path, Node: ev.Node, Event: ev.Seq, At: ev.At,
-		Command: ResumeCommand(e.Orders, e.Campaign)}
+		Command: ResumeCommand(e.Orders, e.Campaign), Task: e.task()}
 	switch {
 	case ev.Kind == chronicle.Asked:
 		n.Reason, n.Questions, n.Outcomes, n.Command = ev.Reason, ev.Questions, ev.Outcomes, AnswerCommand(e.Orders, e.Campaign)

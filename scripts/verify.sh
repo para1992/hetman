@@ -21,7 +21,7 @@ echo "== client names"
 # The core never names a client: adapters do. Client and vendor names may
 # appear only in cmd/hetman-adapter-*, the examples of those adapters and the
 # README section on adapters.
-names='claude|anthropic|codex|openai|gemini'
+names='claude|anthropic|codex|openai|gemini|opencode'
 if found=$(grep -rniE "$names" internal cmd/hetman); then
   echo "client or vendor names in the core ($names):"
   echo "$found"
@@ -54,6 +54,7 @@ for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 wi
   if [ "$os" = windows ]; then ext=".exe"; fi
   GOOS=$os GOARCH=$arch go build -trimpath -o "$out/hetman-$os-$arch$ext" ./cmd/hetman
   GOOS=$os GOARCH=$arch go build -trimpath -o "$out/hetman-adapter-claude-$os-$arch$ext" ./cmd/hetman-adapter-claude
+  GOOS=$os GOARCH=$arch go build -trimpath -o "$out/hetman-adapter-opencode-$os-$arch$ext" ./cmd/hetman-adapter-opencode
   echo "ok $target"
 done
 

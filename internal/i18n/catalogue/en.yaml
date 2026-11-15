@@ -203,6 +203,10 @@ cli.usage: |
     rewind   send a campaign back to a node it visited; the steps after it run again
     answer   answer the questions a campaign asks a person
     serve    show every campaign live on a web page (Watchtower)
+    task     queue internal tasks, list, show and cancel them, check the routing
+             file (hetman task help lists it all)
+    dispatch run a campaign of the routed flow for each queued task
+             (hetman dispatch -h lists its flags)
     scribe   set the flow up: a wizard, operations on the orders file, a
              sentence through a model, campaigns explained in plain words
              (hetman scribe help lists it all)
@@ -898,3 +902,141 @@ page.kv.run: Command
 page.kv.timeout: Timeout
 page.kv.attempts: Attempts
 page.kv.questions: Questions
+
+# ---- tasks and the dispatcher (hetman task, hetman dispatch, the Tasks tab)
+
+status.task: "task {id} (kind {kind}), started by the dispatcher"
+cli.orders_of_failed: "hetman: campaign {id} was started from {orders}, which does not load ({error}); using {used}"
+flag.task_r: routing file
+flag.task_kind: kind of the task
+flag.task_key: de-duplication key
+flag.task_input: JSON file with the task input; - for standard input
+flag.task_force: add the task even when its key is taken
+flag.task_state: list only tasks in this state
+flag.task_once: stop once nothing is queued or running
+flag.task_limit: campaigns running at once
+flag.task_poll: how often the queue is looked at
+cli.task.usage: |
+  usage: hetman task <command> [flags]
+
+  commands:
+    add     queue a task: hetman task add -kind KIND [-key KEY] [-input FILE] [-force]
+    list    list the tasks with their states
+    show    show one task and its campaign: hetman task show ID
+    cancel  cancel a queued task: hetman task cancel ID
+    check   check the routing file and every orders file it routes to
+
+  flags:
+    -r FILE      routing file (default routes.yaml)
+    -kind KIND   the kind of the task; the routing file names the flow that handles it
+    -key KEY     de-duplication key: nothing is added while a task with this key exists
+                 that was not cancelled, whatever its state
+    -force       add the task even when its key is taken
+    -input FILE  JSON file with the task input, one object; - reads standard input;
+                 without it the input is {}
+    -state S     list only tasks in this state
+cli.task.unknown_command: "hetman task: unknown command {command}"
+cli.task.need_id: "hetman task {command}: give one task id, as in hetman task {command} 3"
+cli.task.bad_id: "hetman task {command}: {arg} is not a task id"
+cli.task.unexpected_argument: "hetman task {command}: unexpected argument {arg}"
+cli.task.check_ok: "{path}: ok ({n} route(s), up to {limit} campaign(s) at once)"
+cli.task.route: "  {kind} -> {file}{note}"
+cli.task.route_priority: "priority {priority}"
+cli.task.route_limit: "at most {limit} at once"
+cli.task.routes_rejected: "routing file rejected: {n} problem(s)"
+cli.task.kind_required: "hetman task add: -kind is required"
+cli.task.unknown_kind: "no route for task kind {kind} in {path} (routed kinds: {kinds})"
+cli.task.nothing_added: nothing was added
+cli.task.bad_input: "hetman task add: -input {file}: {error}"
+cli.task.input_not_object: "the task input must be one JSON object: {error}"
+cli.task.input_null: "the task input must be one JSON object, not null"
+cli.task.input_reserved: "the task input must not have the field {field}: hetman sets it to name the task"
+cli.task.duplicate: "task {id} already has the key {key} and is {state}; nothing added (-force adds it again)"
+cli.task.queued: "task {id} queued (kind {kind})"
+cli.task.list_header: "TASK\tKIND\tSTATE\tCAMPAIGN\tAGE\tKEY\tWAITS FOR"
+cli.task.no_tasks: no tasks
+cli.task.state.queued: queued
+cli.task.state.cancelled: cancelled
+cli.task.state.running: running
+cli.task.state.waiting: waiting
+cli.task.state.done: done
+cli.task.state.failed: failed
+cli.task.state.halted: halted
+cli.task.state.error: error
+cli.task.show.head: "task {id}  kind {kind}"
+cli.task.show.key: "  key {key}"
+cli.task.show.state: "state: {state}"
+cli.task.show.waits: "waits for {waits}"
+cli.task.show.added: "added {at}"
+cli.task.show.started: "started {at}"
+cli.task.show.ended: "ended {at}"
+cli.task.show.campaign: "campaign {id} (flow {flow}, {orders})"
+cli.task.show.status: "  status: {command}"
+cli.task.show.next: "  next: {command}"
+cli.task.show.input: "input:"
+cli.task.cancelled: "task {id} cancelled (kind {kind})"
+cli.task.no_such_task: "task {id}: no such task"
+cli.task.not_queued: "task {id} is {state}: only a queued task can be cancelled"
+cli.task.waits.error: "a person to fix the cause and resume: {error}"
+cli.task.waits.halted: a person to resume it
+cli.task.waits.human: "a person to decide at {node} ({outcomes})"
+cli.task.waits.dialogue: "a person to answer {n} question(s) of agent step {node}"
+cli.task.waits.gate: "a person to answer {n} question(s) of gate {node}"
+cli.task.waits.limit: a person to resume after the subscription limit was reached at {node}
+cli.task.waits.offline: a person to resume after connectivity was lost at {node}
+cli.task.waits.limit_reset: the subscription limit to reset at {at}
+cli.dispatch.usage: |
+  usage: hetman dispatch [-r FILE] [-once] [-limit N]
+
+  Starts a campaign of the routed flow for each queued task, by priority and
+  then age, and keeps going. Campaigns that nobody drives and that can go on
+  without a person, such as those cut off when a dispatcher stopped, are
+  continued first.
+
+  flags:
+    -r FILE   routing file (default routes.yaml)
+    -once     stop once nothing is queued or running, instead of waiting for new tasks
+    -limit N  campaigns running at once (default: the limit of the routing file, else 1)
+    -poll D   how often the queue is looked at for new tasks (default 1s)
+cli.dispatch.unexpected_argument: "hetman dispatch: unexpected argument {arg}"
+cli.dispatch.bad_limit: "hetman dispatch: -limit must be at least 1"
+cli.dispatch.not_contained: "hetman: step processes are not tied to this process ({error}); they are cleaned up when a campaign continues instead"
+cli.dispatch.start: "dispatching tasks of {path}: {n} route(s), up to {limit} campaign(s) at once ({mode})"
+cli.dispatch.mode_stay: Ctrl+C to stop
+cli.dispatch.mode_once: until nothing is queued or running
+cli.dispatch.stopped: dispatcher stopped
+cli.dispatch.left_waiting: "nothing left to start; {n} task(s) wait for a person (hetman task list)"
+cli.dispatch.left: nothing left to start
+cli.dispatch.busy: another dispatcher runs for this folder
+cli.dispatch.waits: "task {id} waits: {error}"
+cli.dispatch.recovered: "task {id}: campaign {campaign} was created before the last dispatcher stopped; it continues"
+cli.dispatch.rejected: "task {id} waits: {path} is rejected:\n{error}"
+cli.dispatch.started: "task {id} ({kind}): campaign {campaign} started (flow {flow})"
+cli.dispatch.continues: "task {id} ({kind}): campaign {campaign} continues at {node}"
+cli.dispatch.task_error: "task {id}: {error}"
+cli.dispatch.interrupted: "task {id}: campaign {campaign} interrupted; the next dispatcher continues it"
+cli.dispatch.drive_error: "task {id}: campaign {campaign}: {error}; tried again in a minute"
+cli.dispatch.a_person: a person
+cli.dispatch.asking: "task {id}: campaign {campaign} waits for {what}; answer with: {command}"
+cli.dispatch.stopped_halted: "task {id}: campaign {campaign} halted; continue it with: {command}"
+cli.dispatch.stopped_error: "task {id}: campaign {campaign} error; continue it with: {command}"
+cli.dispatch.stopped_waiting: "task {id}: campaign {campaign} waiting; continue it with: {command}"
+cli.dispatch.ended_done: "task {id}: campaign {campaign} done"
+cli.dispatch.ended_failed: "task {id}: campaign {campaign} failed"
+page.tasks.title: Tasks
+page.tasks.no_queue: "This folder has no task queue. Add a task with {command}."
+page.tasks.empty: No tasks yet.
+page.tasks.col.task: Task
+page.tasks.col.kind: Kind
+page.tasks.col.state: State
+page.tasks.col.campaign: Campaign
+page.tasks.col.age: Age
+page.tasks.col.waits: Waits for
+page.tasks.state.queued: queued
+page.tasks.state.cancelled: cancelled
+page.tasks.state.running: running
+page.tasks.state.waiting: waiting for a person
+page.tasks.state.done: done
+page.tasks.state.failed: failed
+page.tasks.state.halted: halted
+page.tasks.state.error: error

@@ -59,6 +59,10 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		return scribeCmd(args, stdout, stderr)
 	case "version":
 		return version(p, args, stdout, stderr)
+	case "task":
+		return taskCmd(args, stdout, stderr)
+	case "dispatch":
+		return dispatchCmd(args, stdout, stderr)
 	}
 	fs := flag.NewFlagSet("hetman "+cmd, flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -229,9 +233,29 @@ func (c *command) campaign(id int64) (chronicle.Campaign, error) {
 		if errors.Is(err, chronicle.ErrNoCampaign) {
 			return k, errors.New(c.p.T("cli.no_campaigns"))
 		}
+		c.ordersOf(k)
 		return k, err
 	}
-	return c.chron.Campaign(id)
+	k, err := c.chron.Campaign(id)
+	if err == nil {
+		c.ordersOf(k)
+	}
+	return k, err
+}
+
+// ordersOf makes the command work with the orders file a campaign was
+// started from, when it is another flow in the same folder than the one
+// given with -f, so that it is driven and shown by its own nodes.
+func (c *command) ordersOf(k chronicle.Campaign) {
+	if k.Orders == "" || k.Orders == c.o.Path || filepath.Dir(k.Orders) != c.o.Dir {
+		return
+	}
+	o, err := orders.Load(k.Orders)
+	if err != nil {
+		fmt.Fprintln(c.stderr, c.p.T("cli.orders_of_failed", "id", k.ID, "orders", k.Orders, "error", err, "used", c.o.Path))
+		return
+	}
+	c.o = o
 }
 
 func (c *command) state(id int64) (chronicle.State, error) {

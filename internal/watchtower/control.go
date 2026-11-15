@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"hetman/internal/chronicle"
@@ -47,62 +46,6 @@ var (
 	errStale     = errors.New("the orders file changed since the change was shown; look at it again")       // i18n: keep (API error)
 	errNewOnPage = errors.New("the page changes existing orders files; start a new one with hetman scribe") // i18n: keep (API error)
 )
-
-// otherOrders keeps the other orders files of the folder that campaigns
-// were started with, read again when a file changes.
-type otherOrders struct {
-	mu sync.Mutex
-	m  map[string]*cachedOrders
-}
-
-type cachedOrders struct {
-	stamp time.Time
-	size  int64
-	o     *orders.Orders
-}
-
-func (c *otherOrders) load(path string) *orders.Orders {
-	fi, err := os.Stat(path)
-	if err != nil {
-		return nil
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if x := c.m[path]; x != nil && x.stamp.Equal(fi.ModTime()) && x.size == fi.Size() {
-		return x.o
-	}
-	o, err := orders.Load(path)
-	if err != nil {
-		return nil
-	}
-	if c.m == nil {
-		c.m = map[string]*cachedOrders{}
-	}
-	c.m[path] = &cachedOrders{stamp: fi.ModTime(), size: fi.Size(), o: o}
-	return o
-}
-
-// ordersOf is the orders a campaign runs by: the file it was started with
-// when that is another orders file of the same folder and it loads, else
-// the server's own.
-func (s *Server) ordersOf(k chronicle.Campaign, own *orders.Orders) *orders.Orders {
-	if own == nil || k.Orders == "" || k.Orders == own.Path || filepath.Dir(k.Orders) != own.Dir {
-		return own
-	}
-	if o := s.others.load(k.Orders); o != nil {
-		return o
-	}
-	return own
-}
-
-func (s *Server) campaignOrders(id int64) (*orders.Orders, error) {
-	k, err := s.Chron.Campaign(id)
-	if err != nil {
-		return nil, err
-	}
-	o, _ := s.currentOrders()
-	return s.ordersOf(k, o), nil
-}
 
 // FlowFile is an orders file in the folder of the server.
 type FlowFile struct {
@@ -395,11 +338,7 @@ func (s *Server) again(w http.ResponseWriter, r *http.Request, rewind bool) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	o, err := s.campaignOrders(id)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
+	o := s.ordersFor(id)
 	by := strings.TrimSpace(req.By)
 	var release func()
 	node := req.Node

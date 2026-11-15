@@ -136,6 +136,13 @@ func TestStartFromThePage(t *testing.T) {
 	if c.Flow != "other" || len(c.Columns) != 1 || c.Columns[0].Node != "x" || c.Nodes["x"][0].Status != watchtower.StatusPassed {
 		t.Fatalf("other campaign %+v", c.Summary)
 	}
+	// It is rewound and driven by its own orders too: x is not a node of
+	// the served orders.
+	if code, res := w.post("/api/campaigns/2/rewind", map[string]any{"node": "x"}, pageHeaders); code != http.StatusOK {
+		t.Fatalf("rewind of the other campaign: %d %v", code, res)
+	}
+	for c = w.campaign(2); len(c.Nodes["x"]) < 2 || c.State != watchtower.StateDone; c = w.campaign(2) {
+	}
 }
 
 func TestRetryAndRewindOverHTTP(t *testing.T) {

@@ -1,0 +1,4 @@
+Release notes  
+
+The build is faster.	
+Nothing else changed.

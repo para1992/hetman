@@ -246,6 +246,7 @@
     stream: null,
     streamKey: '',
     list: null,
+    tasks: null,       // null while the folder has no task queue
     campaign: null,
     events: [],
     freshFrom: 0,
@@ -262,6 +263,7 @@
       return { view: 'campaign', id: Number(parts[1]), tab: tab, node: tab === 'pipeline' ? parts[3] || '' : '' };
     }
     if (parts[0] === 'flow' && parts[1]) return { view: 'flow', file: parts[1], node: parts[2] || '' };
+    if (parts[0] === 'tasks') return { view: 'tasks' };
     return { view: 'list' };
   }
 
@@ -274,7 +276,10 @@
   function onRoute() {
     const prev = S.route;
     S.route = parseRoute();
-    if (prev.view !== S.route.view || prev.id !== S.route.id || prev.file !== S.route.file) {
+    const lists = (v) => v === 'list' || v === 'tasks';
+    if (lists(prev.view) && lists(S.route.view)) {
+      render();
+    } else if (prev.view !== S.route.view || prev.id !== S.route.id || prev.file !== S.route.file) {
       S.campaign = null;
       S.events = [];
       S.open.clear();
@@ -313,6 +318,7 @@
       }
     };
     es.addEventListener('list', (ev) => { S.list = JSON.parse(ev.data); render(); });
+    es.addEventListener('tasks', (ev) => { S.tasks = JSON.parse(ev.data); render(); });
     es.addEventListener('campaign', (ev) => {
       S.campaign = JSON.parse(ev.data);
       S.campaign.columns = S.campaign.columns || [];
@@ -336,6 +342,7 @@
     const keep = saveScroll();
     if (S.route.view === 'list') renderList();
     else if (S.route.view === 'flow') W.hooks.renderFlow();
+    else if (S.route.view === 'tasks') renderTasks();
     else if (S.campaign) renderCampaign();
     restoreScroll(keep);
     if (focusKey) {
@@ -380,11 +387,55 @@
     return el;
   }
 
+  // Tabs between the campaigns and the tasks, shown once the folder has a
+  // task queue.
+  function listTabs(current) {
+    if (!S.tasks) return null;
+    const n = (list) => list ? ' (' + list.length + ')' : '';
+    return h('nav', { class: 'tabs' },
+      h('a', { href: '#/', 'aria-current': current === 'list' ? 'page' : false, text: t('page.list.title') + n(S.list) }),
+      h('a', { href: '#/tasks', 'aria-current': current === 'tasks' ? 'page' : false, text: t('page.tasks.title') + n(S.tasks) }));
+  }
+
+  const TASK_MARK = {
+    queued: 'notrun', cancelled: 'notrun', running: 'running', waiting: 'asking',
+    done: 'passed', failed: 'failed', halted: 'halted', error: 'error',
+  };
+
+  function renderTasks() {
+    document.title = t('page.tasks.title') + ' · ' + t('page.brand');
+    if (!S.tasks) {
+      app.replaceChildren(h('h1', { text: t('page.tasks.title') }),
+        h('p', { class: 'empty' }, tn('page.tasks.no_queue', { command: h('code', { text: 'hetman task add' }) }))); // i18n: keep (a command)
+      return;
+    }
+    if (S.tasks.length === 0) {
+      app.replaceChildren(listTabs('tasks'), h('p', { class: 'empty', text: t('page.tasks.empty') }));
+      return;
+    }
+    const rows = S.tasks.map((task) => {
+      const go = task.campaign ? () => { location.hash = href(task.campaign); } : null;
+      const st = TASK_MARK[task.state] || task.state;
+      return h('tr', { onclick: go, class: go ? '' : 'still' },
+        h('td', { class: 'id', text: '#' + task.id }),
+        h('td', { class: 'flow' }, task.kind, task.key ? h('div', { class: 'sub', text: task.key }) : null),
+        h('td', { class: 'state' }, h('span', { class: 'badge st-' + st }, mark(st), h('span', { class: 'txt', text: tk('page.tasks.state.', task.state) }))),
+        h('td', { class: 'id' }, task.campaign ? h('a', { href: href(task.campaign), 'data-fkey': 'task-' + task.id, onclick: (e) => e.stopPropagation(), text: '#' + task.campaign }) : '—'),
+        h('td', { class: 'num started' }, liveDur(task.added)),
+        h('td', { class: 'waits', text: task.waits || '' }));
+    });
+    const cols = ['task', 'kind', 'state', 'campaign', 'age', 'waits'];
+    app.replaceChildren(listTabs('tasks'),
+      h('table', { class: 'list tasks' },
+        h('thead', null, h('tr', null, cols.map((c) => h('th', { text: t('page.tasks.col.' + c) })))),
+        h('tbody', null, rows)));
+  }
+
   function renderList() {
     document.title = t('page.brand');
     if (!S.list) return;
     if (S.list.length === 0) {
-      app.replaceChildren(h('h1', { text: t('page.list.title') }), W.hooks.listTop(),
+      app.replaceChildren(listTabs('list') || h('h1', { text: t('page.list.title') }), W.hooks.listTop(),
         h('p', { class: 'empty' }, tn('page.list.empty', { command: h('code', { text: 'hetman run' }) }))); // i18n: keep (a command)
       return;
     }
@@ -398,7 +449,7 @@
         h('td', { class: 'num dur' }, liveDur(k.started, k.ended)),
         h('td', { class: 'marks' }, miniPipe(k)));
     });
-    app.replaceChildren(h('h1', { text: t('page.list.title') }), W.hooks.listTop(),
+    app.replaceChildren(listTabs('list') || h('h1', { text: t('page.list.title') }), W.hooks.listTop(),
       h('table', { class: 'list' },
         h('thead', null, h('tr', null, ['campaign', 'flow', 'state', 'started', 'duration', 'steps'].map((c) => h('th', { text: t('page.list.col.' + c) })))),
         h('tbody', null, rows)));

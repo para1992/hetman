@@ -223,6 +223,10 @@ cli.usage: |
     rewind   повернути похід до вузла, на якому він уже був; кроки після нього виконуються знову
     answer   відповісти на запитання, які похід ставить людині
     serve    показувати всі походи наживо на вебсторінці (Вежа)
+    task     ставити внутрішні завдання в чергу, перелічувати, показувати й
+             скасовувати їх, перевіряти файл маршрутів (усе перелічує hetman task help)
+    dispatch починати похід потоку з маршруту для кожного завдання в черзі
+             (прапорці перелічує hetman dispatch -h)
     scribe   налаштувати потік: майстер, операції над файлом наказу,
              речення через модель, походи простими словами
              (усе перелічує hetman scribe help)
@@ -938,3 +942,153 @@ page.kv.run: "Команда"
 page.kv.timeout: "Обмеження часу"
 page.kv.attempts: "Спроби"
 page.kv.questions: "Запитання"
+
+# ---- завдання і диспетчер (hetman task, hetman dispatch, вкладка «Завдання»)
+
+status.task: "завдання {id} (вид {kind}), розпочате диспетчером"
+cli.orders_of_failed: "hetman: похід {id} розпочато з наказу {orders}, який не завантажується ({error}); використовую {used}"
+flag.task_r: файл маршрутів
+flag.task_kind: вид завдання
+flag.task_key: ключ для відсіювання повторів
+flag.task_input: "JSON-файл із вхідними даними завдання; - читає стандартний вхід"
+flag.task_force: додати завдання, навіть коли його ключ уже зайнятий
+flag.task_state: показати лише завдання в цьому стані
+flag.task_once: зупинитися, коли в черзі нічого немає і нічого не виконується
+flag.task_limit: скільки походів виконується одночасно
+flag.task_poll: як часто переглядати чергу
+cli.task.usage: |
+  використання: hetman task <команда> [прапорці]
+
+  команди:
+    add     поставити завдання в чергу: hetman task add -kind KIND [-key KEY] [-input FILE] [-force]
+    list    перелічити завдання з їхніми станами
+    show    показати одне завдання і його похід: hetman task show ID
+    cancel  скасувати завдання з черги: hetman task cancel ID
+    check   перевірити файл маршрутів і кожен наказ, на який він веде
+
+  прапорці:
+    -r FILE      файл маршрутів (типово routes.yaml)
+    -kind KIND   вид завдання; файл маршрутів називає потік, що його виконує
+    -key KEY     ключ для відсіювання повторів: нічого не додається, поки існує
+                 нескасоване завдання з цим ключем, у будь-якому стані
+    -force       додати завдання, навіть коли його ключ уже зайнятий
+    -input FILE  JSON-файл із вхідними даними завдання, один об'єкт; - читає стандартний
+                 вхід; без нього вхідні дані — {}
+    -state S     показати лише завдання в цьому стані (назва стану англійською: queued,
+                 cancelled, running, waiting, done, failed, halted, error)
+cli.task.unknown_command: "hetman task: невідома команда {command}"
+cli.task.need_id: "hetman task {command}: укажіть один номер завдання, наприклад hetman task {command} 3"
+cli.task.bad_id: "hetman task {command}: {arg} не є номером завдання"
+cli.task.unexpected_argument: "hetman task {command}: зайвий аргумент {arg}"
+cli.task.check_ok: "{path}: ok (маршрутів: {n}, походів одночасно: не більше {limit})"
+cli.task.route: "  {kind} -> {file}{note}"
+cli.task.route_priority: "пріоритет {priority}"
+cli.task.route_limit: "одночасно не більше {limit}"
+cli.task.routes_rejected:
+  one: "файл маршрутів відхилено: {n} проблема"
+  few: "файл маршрутів відхилено: {n} проблеми"
+  many: "файл маршрутів відхилено: {n} проблем"
+cli.task.kind_required: "hetman task add: потрібен прапорець -kind"
+cli.task.unknown_kind: "для виду завдання {kind} немає маршруту в {path} (види з маршрутами: {kinds})"
+cli.task.nothing_added: нічого не додано
+cli.task.bad_input: "hetman task add: -input {file}: {error}"
+cli.task.input_not_object: "вхідні дані завдання мають бути одним об'єктом JSON: {error}"
+cli.task.input_null: "вхідні дані завдання мають бути одним об'єктом JSON, а не null"
+cli.task.input_reserved: "вхідні дані завдання не можуть мати поля {field}: hetman задає його сам, щоб назвати завдання"
+cli.task.duplicate: "завдання {id} уже має ключ {key} (стан: {state}); нічого не додано (-force додасть його ще раз)"
+cli.task.queued: "завдання {id} поставлено в чергу (вид {kind})"
+cli.task.list_header: "ЗАВДАННЯ\tВИД\tСТАН\tПОХІД\tВІК\tКЛЮЧ\tЧЕКАЄ НА"
+cli.task.no_tasks: завдань немає
+cli.task.state.queued: у черзі
+cli.task.state.cancelled: скасовано
+cli.task.state.running: виконується
+cli.task.state.waiting: чекає на людину
+cli.task.state.done: завершено
+cli.task.state.failed: провалено
+cli.task.state.halted: на привалі
+cli.task.state.error: помилка
+cli.task.show.head: "завдання {id}  вид {kind}"
+cli.task.show.key: "  ключ {key}"
+cli.task.show.state: "стан: {state}"
+cli.task.show.waits: "чекає на {waits}"
+cli.task.show.added: "додано {at}"
+cli.task.show.started: "розпочато {at}"
+cli.task.show.ended: "завершено {at}"
+cli.task.show.campaign: "похід {id} (потік {flow}, {orders})"
+cli.task.show.status: "  стан: {command}"
+cli.task.show.next: "  далі: {command}"
+cli.task.show.input: "вхідні дані:"
+cli.task.cancelled: "завдання {id} скасовано (вид {kind})"
+cli.task.no_such_task: "завдання {id}: такого завдання немає"
+cli.task.not_queued: "завдання {id} має стан {state}: скасувати можна лише завдання, що стоїть у черзі"
+cli.task.waits.error: "людину, яка усуне причину й продовжить похід: {error}"
+cli.task.waits.halted: людину, яка продовжить похід
+cli.task.waits.human: "рішення людини на {node} ({outcomes})"
+cli.task.waits.dialogue:
+  one: "відповідь людини на {n} запитання агентного кроку {node}"
+  few: "відповідь людини на {n} запитання агентного кроку {node}"
+  many: "відповідь людини на {n} запитань агентного кроку {node}"
+cli.task.waits.gate:
+  one: "відповідь людини на {n} запитання застави {node}"
+  few: "відповідь людини на {n} запитання застави {node}"
+  many: "відповідь людини на {n} запитань застави {node}"
+cli.task.waits.limit: людину, яка продовжить похід після вичерпання ліміту підписки на {node}
+cli.task.waits.offline: людину, яка продовжить похід після втрати зв'язку на {node}
+cli.task.waits.limit_reset: скидання ліміту підписки о {at}
+cli.dispatch.usage: |
+  використання: hetman dispatch [-r FILE] [-once] [-limit N]
+
+  Починає похід потоку з маршруту для кожного завдання в черзі, за пріоритетом,
+  а тоді за віком, і працює далі. Спершу продовжує походи, які ніхто не веде і
+  які можуть іти без людини, наприклад перервані, коли диспетчер зупинився.
+
+  прапорці:
+    -r FILE   файл маршрутів (типово routes.yaml)
+    -once     зупинитися, коли в черзі нічого немає і нічого не виконується, а не чекати нових завдань
+    -limit N  скільки походів виконується одночасно (типово ліміт файлу маршрутів, інакше 1)
+    -poll D   як часто переглядати чергу на нові завдання (типово 1s)
+cli.dispatch.unexpected_argument: "hetman dispatch: зайвий аргумент {arg}"
+cli.dispatch.bad_limit: "hetman dispatch: -limit має бути не менше 1"
+cli.dispatch.not_contained: "hetman: процеси кроків не прив'язані до цього процесу ({error}); їх приберуть, коли похід продовжиться"
+cli.dispatch.start: "диспетчер завдань {path}: маршрутів: {n}, походів одночасно: не більше {limit} ({mode})"
+cli.dispatch.mode_stay: Ctrl+C зупиняє
+cli.dispatch.mode_once: поки в черзі є завдання або щось виконується
+cli.dispatch.stopped: диспетчер зупинено
+cli.dispatch.left_waiting:
+  one: "більше нічого починати; {n} завдання чекає на людину (hetman task list)"
+  few: "більше нічого починати; {n} завдання чекають на людину (hetman task list)"
+  many: "більше нічого починати; {n} завдань чекають на людину (hetman task list)"
+cli.dispatch.left: більше нічого починати
+cli.dispatch.busy: для цієї теки вже працює інший диспетчер
+cli.dispatch.waits: "завдання {id} чекає: {error}"
+cli.dispatch.recovered: "завдання {id}: похід {campaign} було створено до того, як попередній диспетчер зупинився; він продовжується"
+cli.dispatch.rejected: "завдання {id} чекає: наказ {path} відхилено:\n{error}"
+cli.dispatch.started: "завдання {id} ({kind}): похід {campaign} розпочато (потік {flow})"
+cli.dispatch.continues: "завдання {id} ({kind}): похід {campaign} продовжується з {node}"
+cli.dispatch.task_error: "завдання {id}: {error}"
+cli.dispatch.interrupted: "завдання {id}: похід {campaign} перервано; наступний диспетчер його продовжить"
+cli.dispatch.drive_error: "завдання {id}: похід {campaign}: {error}; повтор за хвилину"
+cli.dispatch.a_person: людину
+cli.dispatch.asking: "завдання {id}: похід {campaign} чекає на {what}; відповісти: {command}"
+cli.dispatch.stopped_halted: "завдання {id}: похід {campaign} на привалі; продовжити: {command}"
+cli.dispatch.stopped_error: "завдання {id}: похід {campaign} зупинився з помилкою; продовжити: {command}"
+cli.dispatch.stopped_waiting: "завдання {id}: похід {campaign} чекає на людину; продовжити: {command}"
+cli.dispatch.ended_done: "завдання {id}: похід {campaign} завершено"
+cli.dispatch.ended_failed: "завдання {id}: похід {campaign} провалено"
+page.tasks.title: Завдання
+page.tasks.no_queue: "У цій теці немає черги завдань. Додайте завдання командою {command}."
+page.tasks.empty: Завдань ще немає.
+page.tasks.col.task: Завдання
+page.tasks.col.kind: Вид
+page.tasks.col.state: Стан
+page.tasks.col.campaign: Похід
+page.tasks.col.age: Вік
+page.tasks.col.waits: Чекає на
+page.tasks.state.queued: у черзі
+page.tasks.state.cancelled: скасовано
+page.tasks.state.running: триває
+page.tasks.state.waiting: чекає на людину
+page.tasks.state.done: завершено
+page.tasks.state.failed: провалено
+page.tasks.state.halted: на привалі
+page.tasks.state.error: помилка

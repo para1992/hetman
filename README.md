@@ -572,7 +572,8 @@ a step (`HETMAN_RUN_ID`, `HETMAN_NODE_ID`, `HETMAN_RUN_DIR`, `HETMAN_INPUT_FILE`
 
 `outcomes` is there for a human node, `questions` and `show` for a question, and
 `command` is the command that answers (for a question) or resumes (otherwise); `event`
-is the number to pass as `-ask`. The campaign never waits for the hook: it runs in the
+is the number to pass as `-ask`. For a campaign the dispatcher started (see Tasks and
+the dispatcher), `task` names its task: `{"id": 7, "kind": "reviewer-remark", "key": "..."}`. The campaign never waits for the hook: it runs in the
 background and is killed after `timeout` (30 seconds by default). Its output goes to
 `logs/notify.EVENT.log` in the campaign folder and how it ended to a `notified` event.
 A process that ends waits for hooks it started, up to their timeout. Any messenger can
@@ -585,9 +586,9 @@ An adapter is the program between Hetman and one coding-agent client: it receive
 one step, runs the client on it, and reports what the client does and answers, in
 the protocol described under Writing an adapter. The `hetman` binary contains no
 adapter and never names a client; an orders file names the adapter program of each
-executor. This repository has two: `hetman-adapter-claude` for the Claude Code
-client, and `hetman-stub-adapter`, which runs no model (see Agent steps without a
-real client).
+executor. This repository has three: `hetman-adapter-claude` for the Claude Code
+client, `hetman-adapter-opencode` for the OpenCode client, and
+`hetman-stub-adapter`, which runs no model (see Agent steps without a real client).
 
 ### Claude Code
 
@@ -668,6 +669,97 @@ log and starts a new conversation with the prompt.
 into a file, a gate that checks the file, and a review step that may send the draft
 back once. Its comments say how to run it; a run makes two to four small requests
 with the `haiku` model.
+
+### OpenCode
+
+`hetman-adapter-opencode` runs a step through the `opencode` command-line client in
+non-interactive mode (`opencode run`). Download
+`hetman-adapter-opencode-VERSION-OS-ARCH` for your system from the Releases page (it
+is in the same checksum file), or build it:
+
+```sh
+go build -o hetman-adapter-opencode ./cmd/hetman-adapter-opencode
+```
+
+It needs `opencode` on the path with a provider it can use: one of its free models, or
+a provider you logged in to with `opencode providers login` (`opencode models` lists
+what it can use). Name it under `executors`:
+
+```yaml
+executors:
+  opencode: {run: [./bin/hetman-adapter-opencode]}   # options: --client PATH, --env NAME
+
+nodes:
+  implement:
+    type: agent
+    executor: opencode
+    model: opencode/big-pickle
+    effort: high
+    tools: [read, edit, glob, grep, "bash(go test *)"]
+    ...
+```
+
+For each attempt it runs the client in the orders folder, with the prompt on
+standard input:
+
+```
+opencode run --format json --pure --print-logs --log-level INFO --agent hetman-XXXXXXXX
+  --model PROVIDER/MODEL --variant EFFORT (--session SESSION | --title TITLE)
+```
+
+and gives it, in `OPENCODE_CONFIG_CONTENT`, an agent made for this run only whose
+permissions deny everything and then allow the node's tools.
+
+- `model` is a model in the client's `provider/model` notation, as `opencode models`
+  lists it; empty means the client's default. An unknown model, or a provider the
+  client has no login for, fails the step at once.
+- `effort` is passed as the model variant, the client's only reasoning setting.
+  Variant names differ per model (`opencode models PROVIDER --verbose` lists them).
+  The adapter looks the model up in the client's catalogue first and rejects a value
+  the model does not offer, and any value for a model without variants. Without a
+  model the value is passed unchecked.
+- `tools` lists client permission names (`read`, `edit`, which also covers writing
+  and patching files, `glob`, `grep`, `list`, `bash`, `webfetch`, `websearch`,
+  `todowrite`, `lsp`, `skill`, or a tool server's tool name) and rules such as
+  `bash(git status)` or `read(*.md)`, which allow a tool only for what matches the
+  pattern. Every other tool is denied and not offered to the model, and the client
+  never asks anybody in this mode. No tools means none. The adapter never uses an
+  option that skips permission checks (`--auto`), and its file tools stay inside the
+  orders folder. `task` is refused, because the subagents it starts run with the
+  client's default permissions. External plugins are not loaded (`--pure`). The
+  restriction has limits: tool servers (MCP) from your or the project's configuration
+  are still started, although their tools are denied unless named, and an
+  organisation's remote or managed configuration is applied after the adapter's and
+  can loosen it.
+- The answer: the client has no structured output in this mode, so the adapter appends
+  the node's schema to the prompt and asks for one JSON object at the end of the
+  answer. The last JSON object in the answer is taken and checked by Hetman; no object
+  at all is a transient error.
+- Errors: a provider's usage or plan limit is `limit`, with the reset time when the
+  provider gives one; the adapter stops the client as soon as its log reports a limit
+  instead of letting it retry. A failed connection is `offline`; an unknown model or
+  provider, missing credentials and bad arguments are `permanent`; anything else is
+  `transient`.
+- The log shows what the client does: its text, each tool call and what it was
+  called on, the first line of each tool result or error, and the model steps and
+  tokens at the end.
+- The client gets only the environment it needs: the system's basic variables, its
+  configuration and data folders (`XDG_*`), where it finds its stored logins, and
+  proxy and certificate settings. Provider API keys in the environment are not
+  passed. `--env NAME` adds one more.
+
+**Session resume.** The adapter declares `resume` and reports the client's session
+id as soon as the client creates the session. When Hetman gives it a session id, the
+client continues that session with `--session` and receives the whole prompt of the
+new attempt as the next message. The client keeps sessions in its data folder on the
+computer that ran them, so a session can be continued only by the same user on the
+same computer. When the client cannot find the session, the adapter says so in the
+log and starts a new conversation with the prompt.
+
+`examples/opencode` is the same small flow as `examples/claude` with this adapter.
+Its comments say how to run it; a run makes two to four small requests and needs a
+provider with quota left. A step that hits the provider's limit makes the campaign
+wait until `hetman resume`.
 
 ## Writing an adapter
 
@@ -757,6 +849,14 @@ hetman rewind -to NODE [-f FILE] [-c ID] [-by NAME]
 hetman answer [-f FILE] [-c ID] [-a ID=ANSWER ...] [-comment ID=TEXT ...] [-outcome NAME] [-ask N] [-by NAME]
                                         answer what a campaign asks a person
 hetman serve  [-f FILE] [-addr ADDRESS] show every campaign live on a web page (Watchtower)
+hetman task add    [-r FILE] -kind KIND [-key KEY] [-input FILE|-] [-force]
+                                        queue an internal task (see Tasks and the dispatcher)
+hetman task list   [-r FILE] [-state STATE]   list the tasks with their states
+hetman task show   [-r FILE] ID         show one task, its campaign and its input
+hetman task cancel [-r FILE] ID         cancel a queued task
+hetman task check  [-r FILE]            check the routing file and every flow it routes to
+hetman dispatch    [-r FILE] [-once] [-limit N] [-poll D]
+                                        run a campaign of the routed flow for each queued task
 hetman scribe [-f FILE]                 the setup wizard (see Setup assistant)
 hetman scribe OPERATION ARGS [-f FILE] [-dry-run] [-force]
                                         one operation on the orders file
@@ -775,6 +875,8 @@ hetman version                          print the version of hetman
 - `-to NODE` is the node `rewind` sends the campaign back to; `-by NAME` records who
   asked for a retry or rewind (the user name of this computer by default).
 - `-addr ADDRESS` is where `serve` listens, `127.0.0.1:8740` by default.
+- `-r FILE` is the routing file of `task` and `dispatch`, `routes.yaml` in the current
+  folder by default.
 - `HETMAN_LANGUAGE=CODE` in the environment of `check` and `run` overrides the
   `language` key of the orders (see Language for the person). For every command it
   is also the language of Hetman's own messages (see Interface language).
@@ -878,6 +980,11 @@ one or by lost connectivity, is marked as such. A campaign waiting for a person 
 marked "waiting for a person", and so is the tile of the step that asks. Everything on it comes from the
 chronicle, as with `hetman status`, and updates while campaigns run.
 
+When the folder has a task queue (see Tasks and the dispatcher), a Tasks tab lists the
+tasks with their kind, state, campaign (a link), age and what a waiting one waits for.
+A campaign of another orders file of the same folder is shown with its own nodes.
+
+
 It has the controls Halt, Resume and Retry, which do what `hetman halt`,
 `hetman resume` and `hetman retry` do, a Rewind button on the card of every step the
 campaign has visited, and an answer form. A campaign resumed, retried, rewound or
@@ -930,6 +1037,119 @@ not fit are shown in the form and change nothing. Recorded answers are continued
 the process that drives the campaign, or by `hetman serve` when none does. Once
 answered, the card shows the answers, who gave them and when.
 
+## Tasks and the dispatcher
+
+Some work is too small for a ticket: a linter reported a finding on a commit, a
+reviewer left a remark. Hetman keeps its own queue for such tasks. Something outside
+(a scheduler, a script that watches a code review system) adds a task with one
+command; the dispatcher picks the flow by the task's kind and runs the task as an
+ordinary campaign of that flow. The work is always a campaign: it shows in
+`hetman status` and Watchtower, can be halted, resumed and answered, and follows its
+orders like any other.
+
+**Routing.** `routes.yaml`, in the same folder as the orders files it names, maps each
+kind of task to a flow:
+
+```yaml
+version: 0
+limit: 2                  # campaigns running at once over all routes (default 1)
+routes:
+  machine-finding:
+    orders: finding.yaml
+    priority: 10          # higher first (default 0)
+    limit: 1              # campaigns of this route at once (default: no limit of its own)
+  reviewer-remark:
+    orders: remark.yaml
+```
+
+Kinds use letters, digits, `_`, `-` and `.`. Every routed orders file must be in the
+folder of the routing file: the flows share the chronicle and the queue in its
+`.hetman/` (`chronicle.db` and `tasks.db`). `hetman task check` checks the routing file
+like `hetman check` checks orders, with `FILE:LINE:COLUMN` for unknown keys, bad values
+and missing orders files, and checks every routed orders file too; their problems are
+listed under the route that names them.
+
+**Adding tasks.** `hetman task add -kind KIND -input FILE` queues a task and prints its
+number; `-input -` reads the input from standard input, and without `-input` it is
+`{}`. The input is one JSON object. A kind with no route is refused and nothing is
+added. `-key KEY` gives a de-duplication key: while any task with the same key exists
+that was not cancelled, whether it is queued, running, waiting, finished or failed,
+adding it again does nothing, says which task has the key and in what state, and
+exits with 0. A cancelled task frees its key. `-force` adds the task even when its key
+is taken, for a deliberate repeat (the key then belongs to both, and a later add
+without `-force` is still a no-op).
+
+```sh
+$ echo '{"commit": "3f2a91c", "file": "notes.txt"}' | hetman task add -kind machine-finding -key lint:3f2a91c:notes.txt -input -
+task 1 queued (kind machine-finding)
+$ echo '{"commit": "3f2a91c", "file": "notes.txt"}' | hetman task add -kind machine-finding -key lint:3f2a91c:notes.txt -input -
+task 1 already has the key "lint:3f2a91c:notes.txt" and is queued; nothing added (-force adds it again)
+```
+
+**Running them.** `hetman dispatch` takes queued tasks by route priority, then age,
+and starts a campaign of the routed flow for each, with the task's input plus the
+field `hetman_task` (`{"id": 1, "kind": "machine-finding", "key": "..."}`), which
+prompt templates read as `{{input.hetman_task.kind}}` and scripts find in
+`HETMAN_INPUT_FILE`. A task input may not have that field itself. It runs up to
+`limit` campaigns at once (`-limit N` overrides the routing file) and at most a
+route's own `limit` of that route, and keeps looking for new tasks every second
+(`-poll`) until stopped; with `-once` it stops when nothing is left to start or
+running. One dispatcher runs per folder; a second one is refused. The routing file is
+read when the dispatcher starts; an orders file is read again whenever a campaign of it
+starts or continues.
+
+A campaign that waits for a person takes no place in the limits: the dispatcher lets
+go of it, and once the person has answered (`hetman answer`, or the page) it continues
+it in turn, before any new task. An answer from the page makes `hetman serve` drive the
+campaign at once, as for any campaign; the dispatcher leaves a campaign another process
+drives alone. A halted campaign, one stopped in the error state, or one waiting after a
+subscription limit or lost connectivity is left to a person: whoever resumes it drives
+it.
+
+When the dispatcher is stopped (Ctrl+C) or killed, the campaigns it drives are cut off
+as those of a stopped `hetman run`: the step that was running runs again, a finished
+step never does. A dispatcher started again continues them first, without starting any
+task a second time; a task whose campaign was being created at the moment of the kill
+gets that campaign, or a new one if it was never created.
+
+**Task states.** `hetman task list` and `hetman task show ID` show each task. A task is
+`queued` or `cancelled` until it is started; then its state is that of its campaign,
+read from the chronicle: `running` (also while the dispatcher is about to continue
+it), `waiting` (for a person: an answer, or a resume after a limit or lost
+connectivity; "waits for" says which), `halted`, `error`, `done` or `failed`. Only a
+queued task can be cancelled (`hetman task cancel ID`); a started one is halted like
+any campaign. `hetman task show` prints the campaign and the command that answers or
+resumes it.
+
+`examples/dispatch` routes two kinds: a machine finding fixed by a short loop with no
+person (a script applies one fix, a gate checks the file, back until it is clean), and
+a reviewer remark whose flow first asks a person what to do and then runs the same
+loop. `collect.sh` adds three tasks, one a duplicate:
+
+```sh
+$ go build -o examples/dispatch/bin/stub-adapter ./cmd/hetman-stub-adapter
+$ cd examples/dispatch
+$ sh collect.sh
+task 1 queued (kind machine-finding)
+task 2 queued (kind reviewer-remark)
+task 1 already has the key "lint:3f2a91c:notes.txt" and is queued; nothing added (-force adds it again)
+$ hetman dispatch -once
+...
+task 1: campaign 1 done
+task 2: campaign 2 waits for a person to decide at decide (fix, decline); answer with: hetman answer -f /path/to/examples/dispatch/remark.yaml -c 2
+nothing left to start; 1 task(s) wait for a person (hetman task list)
+$ hetman answer -f remark.yaml -c 2 -outcome fix -a how='drop the spaces'
+$ hetman dispatch -once
+task 2 (reviewer-remark): campaign 2 continues at decide
+...
+task 2: campaign 2 done
+```
+
+Watchtower shows the tasks of its folder under a Tasks tab next to the campaigns, with
+kind, state, campaign, age and what a waiting task waits for. Campaign commands
+(`status`, `halt`, `resume`, `answer`) given `-f` with another orders file of the same
+folder use the orders file the campaign was started from.
+
 ## Interface language
 
 Hetman's own messages (the command line, the wizard, campaigns in plain words and the
@@ -956,7 +1176,11 @@ of them); chronicle event kinds and the `status -events` dump; log files; the ad
 protocol; everything sent to a model (prompts, the Scribe request, the language
 instruction); environment variable names; the payload of the notification hook;
 error messages that come from the operating system, a library, the orders editor or
-the engine; and the error bodies of the page's API. Durations printed by the command
+the engine; the `FILE:LINE:COL` problems of the routing file; the state names
+`hetman task list -state` takes (`queued`, `running`, `waiting`, ...), although the
+STATE column shows them translated, as `hetman status` shows its states; and the error
+bodies of the page's API. `hetman task` and `hetman dispatch` speak the language in
+`HETMAN_LANGUAGE`, else English, since a routing file names several orders files. Durations printed by the command
 line keep Go's form, such as `1.2s`.
 
 **Translations.** The texts live in one file per language,
