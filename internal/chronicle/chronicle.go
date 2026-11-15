@@ -36,6 +36,8 @@ const (
 	Asked           = "asked"         // a step asks a person questions; the campaign waits for the answers
 	Answered        = "answered"      // a person answered the questions of an asked event
 	Notified        = "notified"      // the notification hook ran for an event that made the campaign wait for a person
+	Retried         = "retried"       // a person sent the campaign back to a failed step, with a fresh attempt budget
+	Rewound         = "rewound"       // a person sent the campaign back to a node it visited before
 )
 
 // Why a campaign waits for a person, recorded as Details.Reason of an asked
@@ -113,8 +115,8 @@ type Details struct {
 	Round     int            `json:"round,omitempty"`     // asked by a dialogue step: which round of questions
 	Answers   []ask.Answer   `json:"answers,omitempty"`   // answered: the answers, in question order
 	Ask       int64          `json:"ask,omitempty"`       // answered, notified: the seq of the event answered or announced
-	By        string         `json:"by,omitempty"`        // answered: who answered, when known
-	Via       string         `json:"via,omitempty"`       // answered: the command line or the page
+	By        string         `json:"by,omitempty"`        // answered, retried, rewound: who did it, when known
+	Via       string         `json:"via,omitempty"`       // answered, retried, rewound: the command line or the page
 }
 
 // Campaign is one execution of a flow.
@@ -406,6 +408,17 @@ func Replay(events []Event) State {
 			} else {
 				s.Node, s.Attempt = e.To, 0
 			}
+		case Retried, Rewound:
+			// The node becomes the position again as if the flow had just
+			// moved there: the end, an error stop, a halt, a wait and an
+			// open question are left behind, and the attempt budget of the
+			// visit starts afresh. Attempts keep counting, so no file of an
+			// earlier attempt is written over.
+			s.Node, s.End, s.Error = e.Node, "", ""
+			s.Running, s.Attempt, s.HasOutcome, s.Outcome, s.Failures = false, 0, false, "", 0
+			s.HaltRequested, s.Halted = false, false
+			s.Waiting, s.WaitUntil = "", time.Time{}
+			s.Ask, s.Answer = nil, nil
 		case Stopped:
 			s.Error = e.Error
 		case HaltRequested:

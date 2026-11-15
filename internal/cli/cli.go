@@ -71,6 +71,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	var events *bool
 	var addr, input *string
 	var answers *answerFlags
+	var again *againFlags
 	switch cmd {
 	case "check":
 	case "run":
@@ -85,6 +86,9 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		if cmd == "answer" {
 			answers = addAnswerFlags(p, fs)
 		}
+	case "retry", "rewind":
+		campaign = fs.Int64("c", 0, p.T("flag.c"))
+		again = addAgainFlags(p, fs, cmd == "rewind")
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage(p))
 		return exitDone
@@ -113,7 +117,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	// The commands that start steps look for their programs first, so that
 	// a missing script is reported before any step with side effects runs.
 	// Status, halt and serve work on a campaign even when a program is gone.
-	if cmd == "check" || cmd == "run" || cmd == "resume" {
+	if cmd == "check" || cmd == "run" || cmd == "resume" || cmd == "retry" || cmd == "rewind" {
 		errs, warnings := o.CheckPrograms()
 		if len(warnings) > 0 {
 			fmt.Fprintln(stderr, warnings.Error())
@@ -165,6 +169,8 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		return c.serve(*addr)
 	case "answer":
 		return c.answer(*campaign, answers)
+	case "retry", "rewind":
+		return c.again(cmd, *campaign, again)
 	default:
 		return c.resume(*campaign)
 	}

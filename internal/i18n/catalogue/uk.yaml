@@ -219,6 +219,8 @@ cli.usage: |
     status   показати, де зараз похід
     halt     стати на привал після поточного кроку походу
     resume   продовжити похід, що стоїть на привалі, зупинився чи був перерваний
+    retry    виконати провалений крок походу знову з новим запасом спроб
+    rewind   повернути похід до вузла, на якому він уже був; кроки після нього виконуються знову
     answer   відповісти на запитання, які похід ставить людині
     serve    показувати всі походи наживо на вебсторінці (Вежа)
     task     ставити внутрішні завдання в чергу, перелічувати, показувати й
@@ -230,12 +232,16 @@ cli.usage: |
              (усе перелічує hetman scribe help)
     version  показати версію hetman
 
-  прапорці (check, run, status, halt, resume, serve):
+  прапорці (check, run, status, halt, resume, retry, rewind, serve):
     -f FILE  файл наказу (типово orders.yaml)
   прапорці (run):
     -input FILE  JSON-файл із вхідними даними походу: об'єкт, на який можуть посилатися шаблони промптів
-  прапорці (status, halt, resume, answer):
+  прапорці (status, halt, resume, retry, rewind, answer):
     -c ID    номер походу (типово останній)
+  прапорці (retry, rewind):
+    -by NAME  хто просить (типово ім'я користувача цього комп'ютера)
+  прапорці (rewind):
+    -to NODE  вузол, до якого повернутися; похід мусить уже побувати на ньому
   прапорці (answer; без -a, -comment і -outcome питає в терміналі):
     -a ID=ANSWER       відповідь на одне запитання (yes чи no, варіант або текст); повторіть для кожного
     -comment ID=TEXT   коментар до однієї відповіді; повторюйте за потреби
@@ -255,7 +261,7 @@ cli.usage: |
                           (check, run), вона також замінює ключ language наказу; похід зберігає
                           мову, з якою почався
 
-  коди виходу run і resume: 0 done, 1 failed, 3 привал, 4 помилка, 5 чекає на людину, 130 перервано
+  коди виходу run, resume, retry і rewind: 0 done, 1 failed, 3 привал, 4 помилка, 5 чекає на людину, 130 перервано
 cli.unknown_command: "hetman: невідома команда {command}"
 cli.unexpected_argument: "hetman {command}: зайвий аргумент {arg}"
 cli.orders_rejected:
@@ -802,6 +808,140 @@ page.chronicle.col.check: "Перевірка"
 page.chronicle.col.attempt: "Спроба"
 page.chronicle.col.outcome: "Підсумок"
 page.chronicle.col.details: "Подробиці"
+
+# ---- повтор і повернення назад (hetman retry, hetman rewind, сторінка)
+
+engine.refuse.driven: "похід {id} зараз веде процес; спершу станьте на привал (hetman halt -c {id}), а коли привал настане, повторюйте чи повертайте назад"
+engine.refuse.nothing_failed: "у поході {id} нічого повторювати: він не провалився, не зупинився з помилкою і його поточний крок не провалився; повернення назад відправляє похід до вузла, на якому він уже був"
+engine.refuse.not_visited: "похід {id} ніколи не був на {node}; повернути його можна лише до вузла, на якому він уже був"
+engine.refuse.not_in_orders: "{node} тепер немає в наказі {path}"
+explain.where.retried: "{at} попросили{via} ({who}) виконати {node} знову з новим запасом спроб; відтоді крок ще не починався."
+explain.where.rewound: "{at} похід повернули{via} ({who}) до {node}; {node} і всі кроки після нього виконуються знову."
+explain.retried: "Попросили{via} ({who}) виконати {node} знову з новим запасом спроб."
+explain.rewound: "Похід повернули{via} ({who}) до {node}; кроки після нього виконуються знову."
+cli.retry_done: похід {id} виконує {node} знову з новим запасом спроб
+cli.rewind_done: похід {id} повернуто до {node}; кроки після нього виконуються знову
+cli.rewind_needs_to: "hetman rewind: укажіть вузол, до якого повернутися, через -to NODE"
+flag.again_by: "хто просить (типово ім'я користувача цього комп'ютера)"
+flag.to: "вузол, до якого повернутися; похід мусить уже побувати на ньому"
+
+# ---- сторінка: початок походу, повтор і повернення, редактор потоку
+
+page.cancel: "Скасувати"
+page.start.button: "Почати похід"
+page.start.title: "Почати похід"
+page.start.flow: "Файл наказу"
+page.start.language: "Мова для людини:"
+page.start.language_fact: "мова для людини {language}"
+page.start.no_language: "немає (англійська, без вказівки щодо мови)"
+page.start.input: "Вхідні дані походу"
+page.start.input_placeholder: '{"ticket": "ABC-1"}'
+page.start.input_hint: "Один JSON-об'єкт, який можуть читати шаблони промптів і скрипти; залиште порожнім, якщо даних немає. Останні вхідні дані кожного файлу наказу зберігаються в цьому браузері."
+page.start.not_json: "Вхідні дані не є JSON: {error}"
+page.start.not_object: "Вхідні дані мають бути одним JSON-об'єктом, а не списком, числом, текстом чи null."
+page.start.problems: "Наказ не проходить перевірку; похід не почато:"
+page.start.go: "Почати"
+page.start.starting: "Починаю…"
+page.start.started: "Похід {id} почато. Його веде цей сервер."
+page.retry: "Повторити"
+page.retry.title: "Виконати {node} знову з новим запасом спроб і йти далі"
+page.retry.none: "Нічого не провалилося, повторювати нічого"
+page.rewind: "Повернути до {node}"
+page.rewind.title: "Повернути похід до {node}; {node} і всі кроки після нього виконуються знову"
+page.rewind.confirm: "Повернути похід до {node}? {node} і всі кроки після нього виконаються знову. Попередні спроби, відповіді й підсумки лишаються в літописі; файли в робочій теці лишаються як є."
+page.rewind.driven: "Похід зараз веде процес; спершу станьте на привал."
+page.return.retried: "{who} попросила виконати цей крок знову з новим запасом спроб{via}, {at}."
+page.return.rewound: "{who} повернула похід до цього кроку{via}, {at}."
+page.return.who: "Людина"
+page.toast.retry_done: "Повторюю {node}. Тепер похід веде цей сервер."
+page.toast.rewind_done: "Повернуто до {node}. Тепер похід веде цей сервер."
+page.toast.retry_failed: "повтор відхилено: {error}"
+page.toast.rewind_failed: "повернення відхилено: {error}"
+page.col.budget: "запас спроб: використано {used} з {max}"
+page.col.again: "виконувався до останнього повернення"
+page.col.again_title: "Цей крок виконувався до того, як похід востаннє повернули; він виконається знову, коли потік до нього дійде."
+page.flow.edit: "Потік {file}"
+page.flow.edit_title: "Показати й змінити потік {file}"
+page.flow.title: "Потік"
+page.flow.hint: "Виберіть крок, щоб змінити його. Кожну зміну спершу показано, а записано лише після вашого підтвердження."
+page.flow.cannot_read: "Не вдається прочитати потік: {error}"
+page.flow.no_node: "У цьому файлі тепер немає вузла {node}."
+page.flow.active:
+  one: "{n} похід цього наказу не завершився ({ids}): продовжуючи, він прочитає змінений файл."
+  few: "{n} походи цього наказу не завершилися ({ids}): продовжуючи, вони прочитають змінений файл."
+  many: "{n} походів цього наказу не завершилися ({ids}): продовжуючи, вони прочитають змінений файл."
+page.scribe.label: "Скажіть Писарю"
+page.scribe.placeholder: "додай заставу з перевіркою lint після build"
+page.scribe.hint: "Одне речення стає однією зміною, яку показано нижче для підтвердження. Речення надсилається моделі, названій у наказі, лише коли ви натискаєте кнопку."
+page.scribe.ask: "Запитати Писаря"
+page.scribe.asking: "Питаю…"
+page.scribe.unclear: "Речення можна зрозуміти по-різному. Ви мали на увазі:"
+page.scribe.invalid: "Писар не зміг використати відповідь моделі; нічого не змінено: {error}"
+page.scribe.failed: "Писар не зміг звернутися до моделі; нічого не змінено: {error}"
+page.edit.operations: "Зміни"
+page.edit.show: "Показати зміну"
+page.edit.nothing_yet: "Поки що нічого не записано."
+page.edit.change: "Зміна"
+page.edit.cannot: "Цю зміну зробити не можна: {error}"
+page.edit.already: "У файлі вже так написано; записувати нічого."
+page.edit.warnings: "Попередження:"
+page.edit.problems: "Змінений наказ не проходить перевірку, тож записати нічого не можна:"
+page.edit.refused: "Сторінка не записує цю зміну:"
+page.edit.confirm: "Записати зміну"
+page.edit.writing: "Записую…"
+page.edit.written: "Зміну записано у {file}."
+page.edit.unchanged: "У {file} вже так написано; нічого не записано."
+page.edit.not_written: "Нічого не записано: {error}"
+page.edit.stale: "Файл змінився після того, як зміну показали; покажіть зміну ще раз."
+page.op.add_after: "Додати крок після цього"
+page.op.add_before: "Додати крок перед цим"
+page.op.add_gate: "Додати заставу після цього кроку"
+page.op.remove: "Вилучити цей вузол"
+page.op.rename: "Перейменувати"
+page.op.link: "Змінити перехід"
+page.op.unlink: "Вилучити перехід"
+page.op.timeout: "Задати обмеження часу"
+page.op.agent: "Змінити налаштування кроку агента"
+page.op.ask: "Додати запитання"
+page.op.gate_add: "Додати перевірку до цієї застави"
+page.op.gate_remove: "Вилучити перевірку з цієї застави"
+page.op.soft: "Зробити перевірку м'якою чи обов'язковою"
+page.field.type: "Тип"
+page.field.node: "Назва нового вузла"
+page.field.run: "Команда"
+page.field.checks: "Перевірки"
+page.field.executor: "Виконавець"
+page.field.model: "Модель"
+page.field.outcomes: "Підсумки"
+page.field.starters: "Створити початкові файли промпту й схеми"
+page.field.via: "Після підсумку"
+page.field.main_outcome: "основний підсумок"
+page.field.name: "Нова назва"
+page.field.outcome: "Підсумок"
+page.field.target: "Веде до"
+page.field.value: "Значення"
+page.field.field: "Налаштування"
+page.field.id: "Ідентифікатор запитання"
+page.field.question: "Запитання"
+page.field.kind: "Вид відповіді"
+page.field.options: "Варіанти"
+page.field.check: "Перевірка"
+page.field.at: "Позиція"
+page.field.soft: "Перевірка"
+page.field.value.soft: "м'яка (лише попереджає)"
+page.field.value.required: "обов'язкова (зупиняє заставу)"
+page.field.hint.run: "Програма та її аргументи, як у командному рядку; лапки зберігають пробіли всередині аргументу."
+page.field.hint.outcomes: "Через кому; крок агента без підсумків отримує ok."
+page.field.hint.via: "Який підсумок цього кроку веде до нового."
+page.field.hint.value: "Тривалість на кшталт 30s, 5m чи 1h; порожнє значення вилучає налаштування."
+page.field.hint.at: "Від 1; порожнє — у кінець."
+page.field.hint.starters: "Створюються лише файли, яких ще немає, поруч із наказом."
+page.field.hint.options: "Через кому."
+page.kv.type: "Тип"
+page.kv.run: "Команда"
+page.kv.timeout: "Обмеження часу"
+page.kv.attempts: "Спроби"
+page.kv.questions: "Запитання"
 
 # ---- завдання і диспетчер (hetman task, hetman dispatch, вкладка «Завдання»)
 

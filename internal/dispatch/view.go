@@ -136,15 +136,22 @@ func viewOf(p *i18n.Printer, t Task, chron *chronicle.Chronicle, dir string) (Vi
 	if err != nil {
 		return v, err
 	}
-	switch t.State {
-	case Done, Failed:
-		// An ended campaign never changes, so its outcome was kept.
-		v.State, v.Flow, v.Orders = t.State, k.Flow, k.Orders
-		if !t.Ended.IsZero() {
-			e := t.Ended
-			v.Ended = &e
+	if t.State == Done || t.State == Failed {
+		// The outcome was kept once seen. It still holds while the
+		// campaign's newest event is the transition to that end; a retry or
+		// rewind after it makes the campaign go on, so it is looked at again.
+		last, err := chron.LastEvent(t.Campaign)
+		if err != nil {
+			return v, err
 		}
-		return v, nil
+		if last.Kind == chronicle.Transition && last.To == t.State {
+			v.State, v.Flow, v.Orders = t.State, k.Flow, k.Orders
+			if !t.Ended.IsZero() {
+				e := t.Ended
+				v.Ended = &e
+			}
+			return v, nil
+		}
 	}
 	events, err := chron.Events(t.Campaign)
 	if err != nil {

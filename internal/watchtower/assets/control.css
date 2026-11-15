@@ -1,0 +1,24 @@
+/* Controls that change state: start, retry and rewind, the flow editor.
+   They reuse the colours and form styles of app.css. */
+.ctl-bar { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+.ctl-bar a.btn { text-decoration: none; color: var(--ink); }
+.ctl-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 0 0 14px; box-shadow: var(--shadow); }
+.ctl-panel ol { margin: 8px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; }
+.answer label.row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0 0 6px; }
+.answer label.row .lbl { min-width: 8em; color: var(--muted); }
+.answer label.row .hint { flex-basis: 100%; margin: 0; }
+.answer label.row input[type="text"], .answer label.row input[type="number"] { flex: 1; min-width: 10em; width: auto; }
+.answer select, .answer input[type="number"] {
+  font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px;
+}
+.answer .mono, textarea.mono { font-family: var(--mono); font-size: 12.5px; }
+.ctl-sentence { margin: 0 0 14px; }
+.ctl-sentence label.grow { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 16em; }
+.ctl-sentence input[type="text"] { flex: 1; }
+.ctl-change { border: 1px solid var(--accent); border-radius: 10px; padding: 4px 12px 12px; margin: 0 0 14px; background: var(--panel); box-shadow: var(--shadow); }
+.ctl-change .problem { white-space: pre-wrap; margin: 8px 0; }
+pre.log.diff .add { color: var(--passed); }
+pre.log.diff .del { color: var(--failed); }
+.ctl-op > summary { font-size: 13.5px; }
+.ctl-rewind { margin: 10px 0 0; }
+.ctl-note { display: block; margin: 4px 4px 0; font-size: 11.5px; color: var(--muted); }
