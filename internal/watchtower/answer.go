@@ -41,7 +41,7 @@ func (s *Server) handleShow(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no such file to show", http.StatusNotFound) // i18n: keep (API error)
 		return
 	}
-	o, _ := s.currentOrders()
+	o := s.ordersFor(id)
 	if no, err := engine.OrdersOf(o, s.Chron, id); err == nil && no != nil {
 		o = no
 	}
@@ -118,7 +118,7 @@ func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"result": AnswerRecorded})
 		return
 	}
-	o, _ := s.currentOrders()
+	o := s.ordersFor(id)
 	release, err := engine.Lock(o, id)
 	switch {
 	case errors.Is(err, engine.ErrLocked):

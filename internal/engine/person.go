@@ -279,6 +279,7 @@ type Notice struct {
 	Outcomes  []string       `json:"outcomes,omitempty"`
 	Show      []string       `json:"show,omitempty"`
 	Command   string         `json:"command"`
+	Task      *TaskRef       `json:"task,omitempty"`  // the task the campaign handles, when a dispatcher started it
 	Child     int64          `json:"child,omitempty"` // the child campaign the event comes from; Campaign is the one a person started
 	Path      string         `json:"path,omitempty"`  // where in the campaign that child runs, such as "items/b"
 }
@@ -288,7 +289,7 @@ type Notice struct {
 func (e *Engine) notice(ev chronicle.Event) (Notice, bool) {
 	top := e.top()
 	n := Notice{Campaign: top.Campaign, Flow: top.Orders.Flow, Orders: top.Orders.Path, Node: ev.Node, Event: ev.Seq, At: ev.At,
-		Command: ResumeCommand(top.Orders, top.Campaign)}
+		Command: ResumeCommand(top.Orders, top.Campaign), Task: top.task()}
 	if e.parent != nil {
 		n.Child, n.Path = e.Campaign, e.path()
 	}

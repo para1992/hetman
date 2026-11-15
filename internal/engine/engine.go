@@ -35,10 +35,11 @@ const (
 	Halted                // stopped by a halt
 	Errored               // stopped in the error state, waiting for a person
 	Waiting               // an agent step hit a subscription limit or lost connectivity; waiting for a person
+	Asking                // waits for a person to answer; returned only with StopAtAsk
 )
 
 func (r Result) String() string {
-	return [...]string{"done", "failed", "halted", "error", "waiting"}[r]
+	return [...]string{"done", "failed", "halted", "error", "waiting", "asking"}[r]
 }
 
 // ErrInterrupted is returned when the drive was cancelled during a step. The
@@ -130,6 +131,9 @@ type Engine struct {
 	Out      io.Writer     // progress lines; nil for none
 	Text     *i18n.Printer // the language of the progress lines; nil for English
 	Clock    Clock         // nil for the system clock
+	// StopAtAsk makes Drive return Asking when the campaign waits for a
+	// person to answer, instead of waiting for the answer itself.
+	StopAtAsk bool
 
 	described map[string]adapter.Description // per executor, asked once per drive
 	waitSaid  time.Time                      // the wait last announced
@@ -354,6 +358,8 @@ func (e *Engine) Drive(ctx context.Context) (Result, error) {
 		}
 		if st.Ask != nil {
 			switch {
+			case st.Answer == nil && e.StopAtAsk:
+				return Asking, nil
 			case st.Answer == nil:
 				err = e.awaitAnswer(ctx, st.Ask)
 			case st.Ask.Reason != chronicle.ReasonDialogue:
@@ -418,6 +424,9 @@ func (e *Engine) Drive(ctx context.Context) (Result, error) {
 		release()
 		if errors.Is(err, errChildWaiting) {
 			return Waiting, nil
+		}
+		if errors.Is(err, errChildAsking) {
+			return Asking, nil
 		}
 		if err != nil {
 			return 0, err

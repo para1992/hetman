@@ -21,6 +21,11 @@ import (
 // campaign waits too, and resuming it resumes the child.
 var errChildWaiting = errors.New("a child campaign waits for a person")
 
+// errChildAsking is returned with StopAtAsk when a child waits for a person
+// to answer: the campaign stops there too, and driving it again continues
+// the child once answered.
+var errChildAsking = errors.New("a child campaign waits for an answer")
+
 // Item is one entry of a for-each list, as recorded when the step starts.
 type Item struct {
 	ID    string          `json:"id"`
@@ -113,6 +118,8 @@ func (e *Engine) runSegment(ctx context.Context, node *orders.Node, attempt int,
 		return e.stopQuiet(node.ID, fmt.Sprintf("%s: campaign %d stopped in the error state: %s", node.ID, child, st.Error))
 	case Waiting:
 		return errChildWaiting
+	case Asking:
+		return errChildAsking
 	}
 	return nil // halted; the halt takes effect in this campaign next
 }
@@ -255,8 +262,13 @@ func (e *Engine) runForEach(ctx context.Context, node *orders.Node, attempt int,
 		if halted {
 			return nil // the halt takes effect in this campaign next
 		}
+		for _, b := range blocked {
+			if b.res == Waiting {
+				return errChildWaiting
+			}
+		}
 		if len(blocked) > 0 {
-			return errChildWaiting
+			return errChildAsking
 		}
 		return e.stop(node.ID, fmt.Sprintf("%s: %d item(s) can neither run nor be skipped", node.ID, left))
 	}
@@ -336,7 +348,7 @@ func (e *Engine) driveChild(ctx context.Context, node *orders.Node, child int64,
 		return 0, chronicle.State{}, fmt.Errorf("campaign %d: %w", child, err)
 	}
 	defer release()
-	ce := &Engine{Orders: node.Segment, Chron: e.Chron, Campaign: child, Out: e.Out, Clock: e.Clock, Text: e.Text, parent: e, node: node.ID, item: item}
+	ce := &Engine{Orders: node.Segment, Chron: e.Chron, Campaign: child, Out: e.Out, Clock: e.Clock, Text: e.Text, StopAtAsk: e.StopAtAsk, parent: e, node: node.ID, item: item}
 	events, err := e.Chron.Events(child)
 	if err != nil {
 		return 0, chronicle.State{}, err
